@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package orchestrator;
+
+import "types.proto";
+
+option go_package = "github.com/eghansah/orchestrator/internal/grpc/gen";
+
+// NodeService is used for node-to-node communication:
+//   - heartbeats and membership
+//   - leader → agent workload placement
+//   - agent → leader actual state reports
+service NodeService {
+  // Heartbeat is called periodically by each node to the current leader.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // ReportState is called by an agent to push its observed container state.
+  rpc ReportState(ReportStateRequest) returns (ReportStateResponse);
+
+  // PlaceWorkload instructs the agent to start a workload.
+  rpc PlaceWorkload(PlaceWorkloadRequest) returns (PlaceWorkloadResponse);
+
+  // RemoveWorkload instructs the agent to stop and remove a workload.
+  rpc RemoveWorkload(RemoveWorkloadRequest) returns (RemoveWorkloadResponse);
+}
+
+message HeartbeatRequest {
+  string node_id       = 1;
+  string address       = 2; // self gRPC address (host:port)
+  NodeResources resources = 3;
+  string raft_leader_id = 4; // who this node thinks the leader is; empty = unknown
+  string raft_address  = 5; // self Raft TCP address (host:port) — needed for AddVoter
+  string join_token    = 6; // cluster join secret; must match leader's --join-token
+  bytes  tls_cert      = 7; // DER-encoded self-signed cert; stored for mTLS key pinning
+}
+
+message HeartbeatResponse {
+  string leader_id      = 1; // confirmed leader node_id
+  string leader_address = 2; // gRPC address of the leader
+  bytes  tls_cert       = 3; // leader's DER cert; joining node pins this for future mTLS
+}
+
+message ReportStateRequest {
+  ActualWorkloadState state = 1;
+}
+
+message ReportStateResponse {}
+
+message PlaceWorkloadRequest {
+  Workload workload = 1;
+}
+
+message PlaceWorkloadResponse {
+  bool   accepted = 1;
+  string reason   = 2; // non-empty on rejection
+}
+

@@ -1,0 +1,115 @@
+syntax = "proto3";
+
+package orchestrator;
+
+option go_package = "github.com/eghansah/orchestrator/internal/grpc/gen";
+
+// ── Workload specs ────────────────────────────────────────────────────────────
+
+message ContainerSpec {
+  string name        = 1;
+  string image       = 2;
+  repeated string command   = 3;
+  repeated string env       = 4; // KEY=VALUE
+  repeated PortMapping ports = 5;
+  repeated VolumeMount volumes = 6;
+  map<string, string> labels = 7;
+  string namespace   = 8; // nerdctl namespace; defaults to "orchestrator"
+}
+
+message ComposeStackSpec {
+  string name         = 1;
+  string compose_yaml = 2; // inline compose file content
+}
+
+message PortMapping {
+  uint32 host_port      = 1;
+  uint32 container_port = 2;
+  string protocol       = 3; // tcp | udp
+}
+
+message VolumeMount {
+  string source = 1; // host path or named volume
+  string target = 2; // container path
+  bool   read_only = 3;
+}
+
+// ── Workload (union of container or stack) ────────────────────────────────────
+
+message Workload {
+  string id = 1;
+  oneof spec {
+    ContainerSpec   container = 2;
+    ComposeStackSpec stack    = 3;
+  }
+  WorkloadPhase phase       = 4;
+  string        node_id     = 5; // assigned node; empty = unscheduled
+  int64         created_at  = 6; // unix seconds
+}
+
+enum WorkloadPhase {
+  WORKLOAD_PHASE_UNSPECIFIED = 0;
+  PENDING                    = 1; // accepted, not yet placed
+  SCHEDULED                  = 2; // placed on a node, agent not yet confirmed
+  RUNNING                    = 3;
+  STOPPED                    = 4;
+  FAILED                     = 5;
+}
+
+// ── Node ─────────────────────────────────────────────────────────────────────
+
+message Node {
+  string node_id       = 1;
+  string address       = 2; // host:port for gRPC
+  NodeStatus status    = 3;
+  NodeResources resources = 4;
+  int64  last_seen_at  = 5; // unix seconds
+  bytes  tls_cert      = 6; // DER-encoded self-signed cert for mTLS key pinning
+}
+
+message NodeResources {
+  uint32 cpu_cores      = 1;
+  uint64 memory_bytes   = 2;
+  uint64 disk_bytes     = 3;
+}
+
+enum NodeStatus {
+  NODE_STATUS_UNSPECIFIED = 0;
+  HEALTHY                 = 1;
+  DRAINING                = 2;
+  UNREACHABLE             = 3;
+}
+
+// ── Shared RPC request/response types ────────────────────────────────────────
+
+message RemoveWorkloadRequest {
+  string workload_id = 1;
+}
+
+message RemoveWorkloadResponse {
+  bool   accepted = 1;
+  string reason   = 2;
+}
+
+// ── Actual state reported by agents ──────────────────────────────────────────
+
+message ActualContainer {
+  string workload_id  = 1;
+  string container_id = 2; // nerdctl container ID
+  string name         = 3;
+  string status       = 4; // nerdctl status string (running, exited, etc.)
+  int64  started_at   = 5; // unix seconds; 0 if not running
+}
+
+message ActualStack {
+  string workload_id = 1;
+  string name        = 2;
+  repeated ActualContainer services = 3;
+}
+
+message ActualWorkloadState {
+  string node_id = 1;
+  repeated ActualContainer containers = 2;
+  repeated ActualStack     stacks     = 3;
+  int64  reported_at = 4; // unix seconds
+}

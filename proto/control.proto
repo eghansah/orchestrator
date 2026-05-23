@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package orchestrator;
+
+import "types.proto";
+
+option go_package = "github.com/eghansah/orchestrator/internal/grpc/gen";
+
+// ControlService is used by the `ctl` CLI (and any external client) to
+// submit workloads, inspect cluster state, and manage nodes.
+// Requests may be sent to any node; non-leaders forward to the current leader.
+service ControlService {
+  // SubmitContainer schedules a single container workload.
+  rpc SubmitContainer(SubmitContainerRequest) returns (SubmitResponse);
+
+  // SubmitStack schedules a compose stack workload.
+  rpc SubmitStack(SubmitStackRequest) returns (SubmitResponse);
+
+  // RemoveWorkload removes a workload from the cluster.
+  rpc RemoveWorkload(RemoveWorkloadRequest) returns (RemoveWorkloadResponse);
+
+  // ListWorkloads returns all known workloads and their current phase.
+  rpc ListWorkloads(ListWorkloadsRequest) returns (ListWorkloadsResponse);
+
+  // ListNodes returns all nodes and their current status.
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+
+  // DrainNode marks a node as draining and reschedules its workloads.
+  rpc DrainNode(DrainNodeRequest) returns (DrainNodeResponse);
+
+  // GetClusterState returns a full snapshot of nodes and workloads.
+  rpc GetClusterState(GetClusterStateRequest) returns (GetClusterStateResponse);
+}
+
+message SubmitContainerRequest {
+  ContainerSpec spec = 1;
+}
+
+message SubmitStackRequest {
+  ComposeStackSpec spec = 1;
+}
+
+message SubmitResponse {
+  string workload_id = 1;
+  bool   accepted    = 2;
+  string reason      = 3; // non-empty on rejection
+}
+
+message ListWorkloadsRequest {
+  // Optional filter by phase; empty = all phases.
+  repeated WorkloadPhase phases = 1;
+}
+
+message ListWorkloadsResponse {
+  repeated Workload workloads = 1;
+}
+
+message ListNodesRequest {}
+
+message ListNodesResponse {
+  repeated Node nodes = 1;
+}
+
+message DrainNodeRequest {
+  string node_id = 1;
+}
+
+message DrainNodeResponse {
+  bool   accepted = 1;
+  string reason   = 2;
+}
+
+message GetClusterStateRequest {}
+
+message GetClusterStateResponse {
+  repeated Node     nodes     = 1;
+  repeated Workload workloads = 2;
+  string leader_id            = 3;
+}
