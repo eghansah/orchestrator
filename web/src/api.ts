@@ -46,6 +46,22 @@ export interface StackRequest {
   compose_yaml: string;
 }
 
+export interface IngressRule {
+  id: string;
+  host: string;
+  path_prefix: string;
+  workload_id: string;
+  port: number;
+  created_at: number; // unix seconds
+}
+
+export interface CreateIngressRequest {
+  host: string;
+  path_prefix: string;
+  workload_id: string;
+  port: number;
+}
+
 // ── REST client ───────────────────────────────────────────────────────────────
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -71,6 +87,15 @@ export const api = {
     request<MutationResult>("POST", `/api/workloads/${id}/remove`),
   drainNode: (id: string) =>
     request<MutationResult>("POST", `/api/nodes/${id}/drain`),
+  listIngress: () => request<IngressRule[]>("GET", "/api/ingress"),
+  createIngress: (req: CreateIngressRequest) =>
+    request<{ rule_id: string; accepted: boolean; reason?: string }>(
+      "POST",
+      "/api/ingress",
+      req
+    ),
+  deleteIngress: (id: string) =>
+    request<MutationResult>("POST", `/api/ingress/${id}/delete`),
 };
 
 // ── useClusterState hook ──────────────────────────────────────────────────────

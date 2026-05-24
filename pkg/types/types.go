@@ -97,6 +97,16 @@ type Node struct {
 	Resources  NodeResources
 	LastSeenAt time.Time
 	TLSCert    []byte // DER-encoded self-signed cert for mTLS key pinning
+	DataIP     string // routable IP for container traffic (ingress backend)
+}
+
+type IngressRule struct {
+	ID         string
+	Host       string // matched against Host header; empty = match all
+	PathPrefix string // matched against URL path prefix; empty = "/"
+	WorkloadID string
+	Port       uint32    // host port on the target node
+	CreatedAt  time.Time
 }
 
 type ActualContainer struct {

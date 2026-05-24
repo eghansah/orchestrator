@@ -35,6 +35,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/workloads/stack", s.handleStack)
 	mux.HandleFunc("POST /api/workloads/{id}/remove", s.handleRemove)
 	mux.HandleFunc("POST /api/nodes/{id}/drain", s.handleDrain)
+	mux.HandleFunc("GET /api/ingress", s.handleListIngress)
+	mux.HandleFunc("POST /api/ingress", s.handleCreateIngress)
+	mux.HandleFunc("POST /api/ingress/{id}/delete", s.handleDeleteIngress)
 
 	// SPA: serve embedded dist/ with index.html fallback for client-side routing.
 	sub, _ := fs.Sub(distFS, "dist")
@@ -181,6 +184,73 @@ func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDrain(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	resp, err := s.ctrl.DrainNode(r.Context(), &gen.DrainNodeRequest{NodeId: id})
+	if err != nil {
+		st, _ := status.FromError(err)
+		writeError(w, grpcHTTPStatus(st.Code()), st.Message())
+		return
+	}
+	writeJSON(w, resp)
+}
+
+// ── Ingress API handlers ──────────────────────────────────────────────────────
+
+func (s *Server) handleListIngress(w http.ResponseWriter, r *http.Request) {
+	resp, err := s.ctrl.ListIngress(r.Context(), &gen.ListIngressRequest{})
+	if err != nil {
+		st, _ := status.FromError(err)
+		writeError(w, grpcHTTPStatus(st.Code()), st.Message())
+		return
+	}
+	type ruleJSON struct {
+		ID         string `json:"id"`
+		Host       string `json:"host"`
+		PathPrefix string `json:"path_prefix"`
+		WorkloadID string `json:"workload_id"`
+		Port       uint32 `json:"port"`
+		CreatedAt  int64  `json:"created_at"`
+	}
+	rules := make([]ruleJSON, 0, len(resp.Rules))
+	for _, r := range resp.Rules {
+		rules = append(rules, ruleJSON{
+			ID:         r.Id,
+			Host:       r.Host,
+			PathPrefix: r.PathPrefix,
+			WorkloadID: r.WorkloadId,
+			Port:       r.Port,
+			CreatedAt:  r.CreatedAt,
+		})
+	}
+	writeJSON(w, rules)
+}
+
+func (s *Server) handleCreateIngress(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Host       string `json:"host"`
+		PathPrefix string `json:"path_prefix"`
+		WorkloadID string `json:"workload_id"`
+		Port       uint32 `json:"port"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	resp, err := s.ctrl.CreateIngress(r.Context(), &gen.CreateIngressRequest{
+		Host:       req.Host,
+		PathPrefix: req.PathPrefix,
+		WorkloadId: req.WorkloadID,
+		Port:       req.Port,
+	})
+	if err != nil {
+		st, _ := status.FromError(err)
+		writeError(w, grpcHTTPStatus(st.Code()), st.Message())
+		return
+	}
+	writeJSON(w, resp)
+}
+
+func (s *Server) handleDeleteIngress(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	resp, err := s.ctrl.DeleteIngress(r.Context(), &gen.DeleteIngressRequest{RuleId: id})
 	if err != nil {
 		st, _ := status.FromError(err)
 		writeError(w, grpcHTTPStatus(st.Code()), st.Message())

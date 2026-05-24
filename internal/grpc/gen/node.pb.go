@@ -30,6 +30,7 @@ type HeartbeatRequest struct {
 	RaftAddress   string                 `protobuf:"bytes,5,opt,name=raft_address,json=raftAddress,proto3" json:"raft_address,omitempty"`      // self Raft TCP address (host:port) — needed for AddVoter
 	JoinToken     string                 `protobuf:"bytes,6,opt,name=join_token,json=joinToken,proto3" json:"join_token,omitempty"`            // cluster join secret; must match leader's --join-token
 	TlsCert       []byte                 `protobuf:"bytes,7,opt,name=tls_cert,json=tlsCert,proto3" json:"tls_cert,omitempty"`                  // DER-encoded self-signed cert; stored for mTLS key pinning
+	DataIp        string                 `protobuf:"bytes,8,opt,name=data_ip,json=dataIp,proto3" json:"data_ip,omitempty"`                     // routable IP for container traffic (ingress backend)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -111,6 +112,13 @@ func (x *HeartbeatRequest) GetTlsCert() []byte {
 		return x.TlsCert
 	}
 	return nil
+}
+
+func (x *HeartbeatRequest) GetDataIp() string {
+	if x != nil {
+		return x.DataIp
+	}
+	return ""
 }
 
 type HeartbeatResponse struct {
@@ -354,7 +362,7 @@ var File_node_proto protoreflect.FileDescriptor
 const file_node_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"node.proto\x12\forchestrator\x1a\vtypes.proto\"\x83\x02\n" +
+	"node.proto\x12\forchestrator\x1a\vtypes.proto\"\x9c\x02\n" +
 	"\x10HeartbeatRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x129\n" +
@@ -363,7 +371,8 @@ const file_node_proto_rawDesc = "" +
 	"\fraft_address\x18\x05 \x01(\tR\vraftAddress\x12\x1d\n" +
 	"\n" +
 	"join_token\x18\x06 \x01(\tR\tjoinToken\x12\x19\n" +
-	"\btls_cert\x18\a \x01(\fR\atlsCert\"r\n" +
+	"\btls_cert\x18\a \x01(\fR\atlsCert\x12\x17\n" +
+	"\adata_ip\x18\b \x01(\tR\x06dataIp\"r\n" +
 	"\x11HeartbeatResponse\x12\x1b\n" +
 	"\tleader_id\x18\x01 \x01(\tR\bleaderId\x12%\n" +
 	"\x0eleader_address\x18\x02 \x01(\tR\rleaderAddress\x12\x19\n" +

@@ -18,6 +18,8 @@ const (
 	cmdRemoveWorkload                // remove a workload
 	cmdRegisterNode                  // node joined or updated
 	cmdAssignWorkload                // scheduler assigned workload to a node
+	cmdApplyIngress                  // add or update an ingress rule
+	cmdRemoveIngress                 // remove an ingress rule
 )
 
 type command struct {
@@ -27,14 +29,16 @@ type command struct {
 
 // ClusterState is the desired-state view maintained by the FSM.
 type ClusterState struct {
-	Workloads map[string]types.Workload `json:"workloads"`
-	Nodes     map[string]types.Node     `json:"nodes"`
+	Workloads    map[string]types.Workload    `json:"workloads"`
+	Nodes        map[string]types.Node        `json:"nodes"`
+	IngressRules map[string]types.IngressRule `json:"ingress_rules"`
 }
 
 func newClusterState() ClusterState {
 	return ClusterState{
-		Workloads: make(map[string]types.Workload),
-		Nodes:     make(map[string]types.Node),
+		Workloads:    make(map[string]types.Workload),
+		Nodes:        make(map[string]types.Node),
+		IngressRules: make(map[string]types.IngressRule),
 	}
 }
 
@@ -92,6 +96,23 @@ func (f *fsm) Apply(l *raft.Log) any {
 			wl.Phase = types.PhaseScheduled
 			f.state.Workloads[payload.WorkloadID] = wl
 		}
+
+	case cmdApplyIngress:
+		var rule types.IngressRule
+		if err := json.Unmarshal(cmd.Data, &rule); err != nil {
+			return err
+		}
+		if f.state.IngressRules == nil {
+			f.state.IngressRules = make(map[string]types.IngressRule)
+		}
+		f.state.IngressRules[rule.ID] = rule
+
+	case cmdRemoveIngress:
+		var id string
+		if err := json.Unmarshal(cmd.Data, &id); err != nil {
+			return err
+		}
+		delete(f.state.IngressRules, id)
 	}
 	return nil
 }
@@ -123,8 +144,9 @@ func (f *fsm) State() ClusterState {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	return ClusterState{
-		Workloads: f.state.Workloads,
-		Nodes:     f.state.Nodes,
+		Workloads:    f.state.Workloads,
+		Nodes:        f.state.Nodes,
+		IngressRules: f.state.IngressRules,
 	}
 }
 

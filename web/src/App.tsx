@@ -7,13 +7,15 @@ import { useClusterState } from "./api";
 import Overview from "./pages/Overview";
 import Workloads from "./pages/Workloads";
 import Nodes from "./pages/Nodes";
+import Ingress from "./pages/Ingress";
 
-type Page = "overview" | "workloads" | "nodes";
+type Page = "overview" | "workloads" | "nodes" | "ingress";
 
 const NAV_ITEMS: SideNavigationProps.Item[] = [
   { type: "link", text: "Overview", href: "#overview" },
   { type: "link", text: "Workloads", href: "#workloads" },
   { type: "link", text: "Nodes", href: "#nodes" },
+  { type: "link", text: "Ingress", href: "#ingress" },
 ];
 
 export default function App() {
@@ -26,6 +28,7 @@ export default function App() {
     overview: <Overview {...sharedProps} />,
     workloads: <Workloads {...sharedProps} />,
     nodes: <Nodes {...sharedProps} />,
+    ingress: <Ingress />,
   }[activePage];
 
   return (

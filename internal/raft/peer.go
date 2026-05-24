@@ -133,6 +133,16 @@ func (p *Peer) AssignWorkload(workloadID, nodeID string) error {
 	return p.apply(cmdAssignWorkload, payload)
 }
 
+// ApplyIngress writes an ingress rule into the Raft log.
+func (p *Peer) ApplyIngress(rule types.IngressRule) error {
+	return p.apply(cmdApplyIngress, rule)
+}
+
+// RemoveIngress removes an ingress rule from the Raft log.
+func (p *Peer) RemoveIngress(ruleID string) error {
+	return p.apply(cmdRemoveIngress, ruleID)
+}
+
 func (p *Peer) apply(t cmdType, payload any) error {
 	if !p.IsLeader() {
 		return fmt.Errorf("not the leader")

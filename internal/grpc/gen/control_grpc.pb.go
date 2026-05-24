@@ -26,6 +26,9 @@ const (
 	ControlService_ListNodes_FullMethodName       = "/orchestrator.ControlService/ListNodes"
 	ControlService_DrainNode_FullMethodName       = "/orchestrator.ControlService/DrainNode"
 	ControlService_GetClusterState_FullMethodName = "/orchestrator.ControlService/GetClusterState"
+	ControlService_CreateIngress_FullMethodName   = "/orchestrator.ControlService/CreateIngress"
+	ControlService_DeleteIngress_FullMethodName   = "/orchestrator.ControlService/DeleteIngress"
+	ControlService_ListIngress_FullMethodName     = "/orchestrator.ControlService/ListIngress"
 )
 
 // ControlServiceClient is the client API for ControlService service.
@@ -50,6 +53,12 @@ type ControlServiceClient interface {
 	DrainNode(ctx context.Context, in *DrainNodeRequest, opts ...grpc.CallOption) (*DrainNodeResponse, error)
 	// GetClusterState returns a full snapshot of nodes and workloads.
 	GetClusterState(ctx context.Context, in *GetClusterStateRequest, opts ...grpc.CallOption) (*GetClusterStateResponse, error)
+	// CreateIngress adds an ingress routing rule.
+	CreateIngress(ctx context.Context, in *CreateIngressRequest, opts ...grpc.CallOption) (*CreateIngressResponse, error)
+	// DeleteIngress removes an ingress routing rule.
+	DeleteIngress(ctx context.Context, in *DeleteIngressRequest, opts ...grpc.CallOption) (*DeleteIngressResponse, error)
+	// ListIngress returns all ingress routing rules.
+	ListIngress(ctx context.Context, in *ListIngressRequest, opts ...grpc.CallOption) (*ListIngressResponse, error)
 }
 
 type controlServiceClient struct {
@@ -130,6 +139,36 @@ func (c *controlServiceClient) GetClusterState(ctx context.Context, in *GetClust
 	return out, nil
 }
 
+func (c *controlServiceClient) CreateIngress(ctx context.Context, in *CreateIngressRequest, opts ...grpc.CallOption) (*CreateIngressResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateIngressResponse)
+	err := c.cc.Invoke(ctx, ControlService_CreateIngress_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlServiceClient) DeleteIngress(ctx context.Context, in *DeleteIngressRequest, opts ...grpc.CallOption) (*DeleteIngressResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteIngressResponse)
+	err := c.cc.Invoke(ctx, ControlService_DeleteIngress_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlServiceClient) ListIngress(ctx context.Context, in *ListIngressRequest, opts ...grpc.CallOption) (*ListIngressResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListIngressResponse)
+	err := c.cc.Invoke(ctx, ControlService_ListIngress_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ControlServiceServer is the server API for ControlService service.
 // All implementations must embed UnimplementedControlServiceServer
 // for forward compatibility.
@@ -152,6 +191,12 @@ type ControlServiceServer interface {
 	DrainNode(context.Context, *DrainNodeRequest) (*DrainNodeResponse, error)
 	// GetClusterState returns a full snapshot of nodes and workloads.
 	GetClusterState(context.Context, *GetClusterStateRequest) (*GetClusterStateResponse, error)
+	// CreateIngress adds an ingress routing rule.
+	CreateIngress(context.Context, *CreateIngressRequest) (*CreateIngressResponse, error)
+	// DeleteIngress removes an ingress routing rule.
+	DeleteIngress(context.Context, *DeleteIngressRequest) (*DeleteIngressResponse, error)
+	// ListIngress returns all ingress routing rules.
+	ListIngress(context.Context, *ListIngressRequest) (*ListIngressResponse, error)
 	mustEmbedUnimplementedControlServiceServer()
 }
 
@@ -182,6 +227,15 @@ func (UnimplementedControlServiceServer) DrainNode(context.Context, *DrainNodeRe
 }
 func (UnimplementedControlServiceServer) GetClusterState(context.Context, *GetClusterStateRequest) (*GetClusterStateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetClusterState not implemented")
+}
+func (UnimplementedControlServiceServer) CreateIngress(context.Context, *CreateIngressRequest) (*CreateIngressResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateIngress not implemented")
+}
+func (UnimplementedControlServiceServer) DeleteIngress(context.Context, *DeleteIngressRequest) (*DeleteIngressResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteIngress not implemented")
+}
+func (UnimplementedControlServiceServer) ListIngress(context.Context, *ListIngressRequest) (*ListIngressResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListIngress not implemented")
 }
 func (UnimplementedControlServiceServer) mustEmbedUnimplementedControlServiceServer() {}
 func (UnimplementedControlServiceServer) testEmbeddedByValue()                        {}
@@ -330,6 +384,60 @@ func _ControlService_GetClusterState_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlService_CreateIngress_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateIngressRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).CreateIngress(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_CreateIngress_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).CreateIngress(ctx, req.(*CreateIngressRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlService_DeleteIngress_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteIngressRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).DeleteIngress(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_DeleteIngress_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).DeleteIngress(ctx, req.(*DeleteIngressRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlService_ListIngress_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListIngressRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).ListIngress(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_ListIngress_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).ListIngress(ctx, req.(*ListIngressRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ControlService_ServiceDesc is the grpc.ServiceDesc for ControlService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -364,6 +472,18 @@ var ControlService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetClusterState",
 			Handler:    _ControlService_GetClusterState_Handler,
+		},
+		{
+			MethodName: "CreateIngress",
+			Handler:    _ControlService_CreateIngress_Handler,
+		},
+		{
+			MethodName: "DeleteIngress",
+			Handler:    _ControlService_DeleteIngress_Handler,
+		},
+		{
+			MethodName: "ListIngress",
+			Handler:    _ControlService_ListIngress_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

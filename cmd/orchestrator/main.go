@@ -29,6 +29,7 @@ import (
 	"github.com/eghansah/orchestrator/internal/agent"
 	"github.com/eghansah/orchestrator/internal/control"
 	gen "github.com/eghansah/orchestrator/internal/grpc/gen"
+	"github.com/eghansah/orchestrator/internal/ingress"
 	"github.com/eghansah/orchestrator/internal/nerdctl"
 	internraft "github.com/eghansah/orchestrator/internal/raft"
 	"github.com/eghansah/orchestrator/internal/tlsutil"
@@ -39,16 +40,18 @@ import (
 // ── Config ────────────────────────────────────────────────────────────────────
 
 type config struct {
-	nodeID     string
-	grpcAddr   string
-	raftAddr   string
-	webAddr    string
-	dataDir    string
-	bootstrap  bool
-	joinAddr   string // gRPC address of an existing node to join through
-	joinToken  string // shared secret required to join the cluster
-	nerdctlBin string
-	namespace  string
+	nodeID      string
+	grpcAddr    string
+	raftAddr    string
+	webAddr     string
+	ingressAddr string // HTTP ingress proxy listen address; empty = disabled
+	dataAddr    string // routable IP for container traffic; auto-detected if empty
+	dataDir     string
+	bootstrap   bool
+	joinAddr    string // gRPC address of an existing node to join through
+	joinToken   string // shared secret required to join the cluster
+	nerdctlBin  string
+	namespace   string
 }
 
 func parseFlags() config {
@@ -61,6 +64,8 @@ func parseFlags() config {
 	flag.StringVar(&cfg.joinAddr, "join", "", "gRPC address of an existing cluster node to join")
 	flag.StringVar(&cfg.joinToken, "join-token", "", "shared secret required to join the cluster")
 	flag.StringVar(&cfg.webAddr, "web-addr", ":7948", "web console HTTP listen address (empty to disable)")
+	flag.StringVar(&cfg.ingressAddr, "ingress-addr", ":8080", "HTTP ingress proxy listen address (empty to disable)")
+	flag.StringVar(&cfg.dataAddr, "data-addr", "", "routable IP for container traffic (auto-detected if empty)")
 	flag.StringVar(&cfg.nerdctlBin, "nerdctl", "nerdctl", "path to nerdctl binary")
 	flag.StringVar(&cfg.namespace, "namespace", "orchestrator", "nerdctl namespace for managed containers")
 	flag.Parse()
@@ -83,6 +88,9 @@ func parseFlags() config {
 func main() {
 	cfg := parseFlags()
 	cfg.joinToken = resolveJoinToken(cfg.dataDir, cfg.joinToken, cfg.bootstrap)
+	if cfg.dataAddr == "" {
+		cfg.dataAddr = detectDataIP()
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -155,6 +163,19 @@ func main() {
 		defer httpSrv.Shutdown(context.Background()) //nolint:errcheck
 	}
 
+	// 5c. Ingress proxy (optional) --------------------------------------------
+	if cfg.ingressAddr != "" {
+		proxy := ingress.New(peer)
+		ingressSrv := &http.Server{Addr: cfg.ingressAddr, Handler: proxy}
+		go func() {
+			slog.Info("ingress proxy listening", "addr", cfg.ingressAddr)
+			if err := ingressSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("ingress proxy error", "err", err)
+			}
+		}()
+		defer ingressSrv.Shutdown(context.Background()) //nolint:errcheck
+	}
+
 	serverTLS := tlsutil.ServerTLSConfig(tlsCert, isPinned)
 	grpcSrv := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(serverTLS)),
@@ -182,7 +203,7 @@ func main() {
 	}()
 
 	// Once we are leader, register this node in the cluster state.
-	go selfRegisterLoop(ctx, peer, cfg.nodeID, cfg.grpcAddr, ownCertDER)
+	go selfRegisterLoop(ctx, peer, cfg.nodeID, cfg.grpcAddr, cfg.dataAddr, ownCertDER)
 
 	// Periodically forward actual state to the leader's ReportState RPC.
 	go stateReportLoop(ctx, peer, tlsCert, cfg.nodeID, cfg.grpcAddr, stateCh)
@@ -190,7 +211,7 @@ func main() {
 	// If joining an existing cluster, heartbeat the given node so the leader
 	// can add us as a Raft voter and register us in the cluster state.
 	if cfg.joinAddr != "" {
-		go heartbeatLoop(ctx, peer, tlsCert, ownCertDER, cfg.nodeID, cfg.grpcAddr, cfg.raftAddr, cfg.joinAddr, cfg.joinToken)
+		go heartbeatLoop(ctx, peer, tlsCert, ownCertDER, cfg.nodeID, cfg.grpcAddr, cfg.raftAddr, cfg.dataAddr, cfg.joinAddr, cfg.joinToken)
 	}
 
 	slog.Info("orchestrator running", "node-id", cfg.nodeID)
@@ -237,6 +258,7 @@ func (ns *nodeServer) Heartbeat(_ context.Context, req *gen.HeartbeatRequest) (*
 				Address:    req.Address,
 				Status:     types.NodeHealthy,
 				TLSCert:    req.TlsCert,
+				DataIP:     req.DataIp,
 				LastSeenAt: time.Now(),
 			}
 			if req.Resources != nil {
@@ -278,7 +300,7 @@ func (ns *nodeServer) Heartbeat(_ context.Context, req *gen.HeartbeatRequest) (*
 
 // selfRegisterLoop polls until this node becomes leader, then writes its own
 // Node record into the Raft state so the cluster knows its gRPC address and cert.
-func selfRegisterLoop(ctx context.Context, peer *internraft.Peer, nodeID, grpcAddr string, ownCertDER []byte) {
+func selfRegisterLoop(ctx context.Context, peer *internraft.Peer, nodeID, grpcAddr, dataIP string, ownCertDER []byte) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -297,6 +319,7 @@ func selfRegisterLoop(ctx context.Context, peer *internraft.Peer, nodeID, grpcAd
 				Address: grpcAddr,
 				Status:  types.NodeHealthy,
 				TLSCert: ownCertDER,
+				DataIP:  dataIP,
 				Resources: types.NodeResources{
 					CPUCores: uint32(runtime.NumCPU()),
 				},
@@ -322,7 +345,7 @@ func heartbeatLoop(
 	peer *internraft.Peer,
 	ownCert tls.Certificate,
 	ownCertDER []byte,
-	nodeID, grpcAddr, raftAddr, seedAddr, token string,
+	nodeID, grpcAddr, raftAddr, dataIP, seedAddr, token string,
 ) {
 	knownLeaderAddr := seedAddr
 	var knownLeaderCert []byte // nil = TOFU until first successful heartbeat
@@ -331,7 +354,7 @@ func heartbeatLoop(
 	defer ticker.Stop()
 
 	// Send an immediate first heartbeat without waiting for the ticker.
-	addr, cert := doHeartbeat(ctx, knownLeaderAddr, knownLeaderCert, ownCert, ownCertDER, nodeID, grpcAddr, raftAddr, token)
+	addr, cert := doHeartbeat(ctx, knownLeaderAddr, knownLeaderCert, ownCert, ownCertDER, nodeID, grpcAddr, raftAddr, dataIP, token)
 	if addr != "" {
 		knownLeaderAddr = addr
 	}
@@ -347,7 +370,7 @@ func heartbeatLoop(
 			if peer.IsLeader() {
 				return // we became leader; no need to heartbeat outward
 			}
-			addr, cert := doHeartbeat(ctx, knownLeaderAddr, knownLeaderCert, ownCert, ownCertDER, nodeID, grpcAddr, raftAddr, token)
+			addr, cert := doHeartbeat(ctx, knownLeaderAddr, knownLeaderCert, ownCert, ownCertDER, nodeID, grpcAddr, raftAddr, dataIP, token)
 			if addr != "" {
 				knownLeaderAddr = addr
 				knownLeaderCert = nil // reset pin when following a redirect to a new leader
@@ -368,7 +391,7 @@ func doHeartbeat(
 	targetCertDER []byte,
 	ownCert tls.Certificate,
 	ownCertDER []byte,
-	nodeID, grpcAddr, raftAddr, token string,
+	nodeID, grpcAddr, raftAddr, dataIP, token string,
 ) (newLeaderAddr string, leaderCert []byte) {
 	tlsCfg := tlsutil.ClientTLSConfig(ownCert, targetCertDER)
 	conn, err := grpc.NewClient(targetAddr, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
@@ -384,6 +407,7 @@ func doHeartbeat(
 		RaftAddress: raftAddr,
 		JoinToken:   token,
 		TlsCert:     ownCertDER,
+		DataIp:      dataIP,
 	})
 	if err != nil {
 		slog.Warn("heartbeat RPC failed", "target", targetAddr, "err", err)
@@ -496,6 +520,22 @@ func generateToken() string {
 		panic("crypto/rand unavailable: " + err.Error())
 	}
 	return hex.EncodeToString(b)
+}
+
+func detectDataIP() string {
+	ifaces, _ := net.Interfaces()
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := iface.Addrs()
+		for _, addr := range addrs {
+			if ip, _, err := net.ParseCIDR(addr.String()); err == nil && ip.To4() != nil {
+				return ip.String()
+			}
+		}
+	}
+	return "127.0.0.1"
 }
 
 func dieOnErr(err error, msg string) {

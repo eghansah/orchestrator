@@ -107,6 +107,7 @@ func NodeToProto(n Node) *gen.Node {
 		},
 		LastSeenAt: n.LastSeenAt.Unix(),
 		TlsCert:    n.TLSCert,
+		DataIp:     n.DataIP,
 	}
 }
 
@@ -117,6 +118,7 @@ func NodeFromProto(pn *gen.Node) Node {
 		Status:     NodeStatus(pn.Status),
 		LastSeenAt: time.Unix(pn.LastSeenAt, 0),
 		TLSCert:    pn.TlsCert,
+		DataIP:     pn.DataIp,
 	}
 	if pn.Resources != nil {
 		n.Resources = NodeResources{
@@ -126,6 +128,28 @@ func NodeFromProto(pn *gen.Node) Node {
 		}
 	}
 	return n
+}
+
+func IngressRuleToProto(r IngressRule) *gen.IngressRule {
+	return &gen.IngressRule{
+		Id:         r.ID,
+		Host:       r.Host,
+		PathPrefix: r.PathPrefix,
+		WorkloadId: r.WorkloadID,
+		Port:       r.Port,
+		CreatedAt:  r.CreatedAt.Unix(),
+	}
+}
+
+func IngressRuleFromProto(pr *gen.IngressRule) IngressRule {
+	return IngressRule{
+		ID:         pr.Id,
+		Host:       pr.Host,
+		PathPrefix: pr.PathPrefix,
+		WorkloadID: pr.WorkloadId,
+		Port:       pr.Port,
+		CreatedAt:  time.Unix(pr.CreatedAt, 0),
+	}
 }
 
 func ActualWorkloadStateToProto(s ActualWorkloadState) *gen.ActualWorkloadState {

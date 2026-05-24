@@ -30,6 +30,15 @@ service ControlService {
 
   // GetClusterState returns a full snapshot of nodes and workloads.
   rpc GetClusterState(GetClusterStateRequest) returns (GetClusterStateResponse);
+
+  // CreateIngress adds an ingress routing rule.
+  rpc CreateIngress(CreateIngressRequest) returns (CreateIngressResponse);
+
+  // DeleteIngress removes an ingress routing rule.
+  rpc DeleteIngress(DeleteIngressRequest) returns (DeleteIngressResponse);
+
+  // ListIngress returns all ingress routing rules.
+  rpc ListIngress(ListIngressRequest) returns (ListIngressResponse);
 }
 
 message SubmitContainerRequest {
@@ -76,4 +85,32 @@ message GetClusterStateResponse {
   repeated Node     nodes     = 1;
   repeated Workload workloads = 2;
   string leader_id            = 3;
+}
+
+message CreateIngressRequest {
+  string host        = 1; // Host header to match; empty = match all
+  string path_prefix = 2; // URL path prefix; empty = "/"
+  string workload_id = 3;
+  uint32 port        = 4; // host port on the target node
+}
+
+message CreateIngressResponse {
+  string rule_id  = 1;
+  bool   accepted = 2;
+  string reason   = 3;
+}
+
+message DeleteIngressRequest {
+  string rule_id = 1;
+}
+
+message DeleteIngressResponse {
+  bool   accepted = 1;
+  string reason   = 2;
+}
+
+message ListIngressRequest {}
+
+message ListIngressResponse {
+  repeated IngressRule rules = 1;
 }

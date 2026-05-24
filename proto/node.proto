@@ -32,6 +32,7 @@ message HeartbeatRequest {
   string raft_address  = 5; // self Raft TCP address (host:port) — needed for AddVoter
   string join_token    = 6; // cluster join secret; must match leader's --join-token
   bytes  tls_cert      = 7; // DER-encoded self-signed cert; stored for mTLS key pinning
+  string data_ip       = 8; // routable IP for container traffic (ingress backend)
 }
 
 message HeartbeatResponse {

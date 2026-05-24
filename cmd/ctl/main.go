@@ -48,6 +48,8 @@ func main() {
 		drainCmd(server, rest)
 	case "status":
 		statusCmd(server, rest)
+	case "ingress":
+		ingressCmd(server, rest)
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -71,6 +73,7 @@ Commands:
   rm      Remove workloads by ID
   drain   Mark a node as draining
   status  Show full cluster state
+  ingress Manage ingress routing rules
 
 Flags:
   --server HOST:PORT   orchestrator gRPC address (default: localhost:7946)

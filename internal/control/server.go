@@ -255,6 +255,54 @@ func (s *Server) removeFromNode(ctx context.Context, addr string, certDER []byte
 	return nil
 }
 
+// ── Ingress ───────────────────────────────────────────────────────────────────
+
+func (s *Server) CreateIngress(_ context.Context, req *gen.CreateIngressRequest) (*gen.CreateIngressResponse, error) {
+	if req.WorkloadId == "" {
+		return nil, status.Error(codes.InvalidArgument, "workload_id is required")
+	}
+	if req.Port == 0 {
+		return nil, status.Error(codes.InvalidArgument, "port is required")
+	}
+	if err := s.requireLeader(); err != nil {
+		return nil, err
+	}
+	rule := types.IngressRule{
+		ID:         newID(),
+		Host:       req.Host,
+		PathPrefix: req.PathPrefix,
+		WorkloadID: req.WorkloadId,
+		Port:       req.Port,
+		CreatedAt:  time.Now(),
+	}
+	if err := s.peer.ApplyIngress(rule); err != nil {
+		return nil, status.Errorf(codes.Internal, "apply ingress: %v", err)
+	}
+	return &gen.CreateIngressResponse{RuleId: rule.ID, Accepted: true}, nil
+}
+
+func (s *Server) DeleteIngress(_ context.Context, req *gen.DeleteIngressRequest) (*gen.DeleteIngressResponse, error) {
+	if req.RuleId == "" {
+		return nil, status.Error(codes.InvalidArgument, "rule_id is required")
+	}
+	if err := s.requireLeader(); err != nil {
+		return nil, err
+	}
+	if err := s.peer.RemoveIngress(req.RuleId); err != nil {
+		return nil, status.Errorf(codes.Internal, "remove ingress: %v", err)
+	}
+	return &gen.DeleteIngressResponse{Accepted: true}, nil
+}
+
+func (s *Server) ListIngress(_ context.Context, _ *gen.ListIngressRequest) (*gen.ListIngressResponse, error) {
+	state := s.peer.State()
+	rules := make([]*gen.IngressRule, 0, len(state.IngressRules))
+	for _, r := range state.IngressRules {
+		rules = append(rules, types.IngressRuleToProto(r))
+	}
+	return &gen.ListIngressResponse{Rules: rules}, nil
+}
+
 func phaseIn(phase types.WorkloadPhase, phases []gen.WorkloadPhase) bool {
 	for _, p := range phases {
 		if types.WorkloadPhase(p) == phase {
