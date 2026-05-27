@@ -65,14 +65,22 @@ type VolumeMount struct {
 	ReadOnly bool
 }
 
+// PortAllocation records the host port auto-assigned for one container port.
+type PortAllocation struct {
+	ContainerPort uint32
+	AllocatedPort uint32 // bound on the node's dataIP; auto-assigned by the leader
+	Protocol      string // "tcp" | "udp"
+}
+
 type Workload struct {
-	ID        string
-	Kind      WorkloadKind
-	Container *ContainerSpec   // non-nil when Kind == KindContainer
-	Stack     *ComposeStackSpec // non-nil when Kind == KindStack
-	Phase     WorkloadPhase
-	NodeID    string // empty = unscheduled
-	CreatedAt time.Time
+	ID              string
+	Kind            WorkloadKind
+	Container       *ContainerSpec    // non-nil when Kind == KindContainer
+	Stack           *ComposeStackSpec // non-nil when Kind == KindStack
+	Phase           WorkloadPhase
+	NodeID          string // empty = unscheduled
+	CreatedAt       time.Time
+	PortAllocations []PortAllocation // auto-assigned host ports (containers only)
 }
 
 type NodeStatus int32
@@ -106,6 +114,18 @@ type IngressRule struct {
 	PathPrefix string // matched against URL path prefix; empty = "/"
 	WorkloadID string
 	Port       uint32    // host port on the target node
+	CreatedAt  time.Time
+}
+
+// Service is a named TCP endpoint backed by a workload. The system auto-assigns
+// a host port in the service pool (40000–42767). Containers resolve the service
+// via DNS <name>.svc.local and connect on SystemPort.
+type Service struct {
+	ID         string
+	Name       string    // short DNS label, e.g. "api"
+	WorkloadID string
+	TargetPort uint32    // container port to proxy to
+	SystemPort uint32    // auto-assigned host port
 	CreatedAt  time.Time
 }
 

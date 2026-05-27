@@ -18,6 +18,13 @@ func WorkloadToProto(w Workload) *gen.Workload {
 	} else if w.Stack != nil {
 		pw.Spec = &gen.Workload_Stack{Stack: ComposeStackSpecToProto(*w.Stack)}
 	}
+	for _, pa := range w.PortAllocations {
+		pw.PortAllocations = append(pw.PortAllocations, &gen.PortAllocation{
+			ContainerPort: pa.ContainerPort,
+			AllocatedPort: pa.AllocatedPort,
+			Protocol:      pa.Protocol,
+		})
+	}
 	return pw
 }
 
@@ -37,6 +44,13 @@ func WorkloadFromProto(pw *gen.Workload) Workload {
 		spec := ComposeStackSpecFromProto(s.Stack)
 		w.Kind = KindStack
 		w.Stack = &spec
+	}
+	for _, pa := range pw.PortAllocations {
+		w.PortAllocations = append(w.PortAllocations, PortAllocation{
+			ContainerPort: pa.ContainerPort,
+			AllocatedPort: pa.AllocatedPort,
+			Protocol:      pa.Protocol,
+		})
 	}
 	return w
 }
@@ -128,6 +142,28 @@ func NodeFromProto(pn *gen.Node) Node {
 		}
 	}
 	return n
+}
+
+func ServiceToProto(s Service) *gen.Service {
+	return &gen.Service{
+		Id:         s.ID,
+		Name:       s.Name,
+		WorkloadId: s.WorkloadID,
+		TargetPort: s.TargetPort,
+		SystemPort: s.SystemPort,
+		CreatedAt:  s.CreatedAt.Unix(),
+	}
+}
+
+func ServiceFromProto(ps *gen.Service) Service {
+	return Service{
+		ID:         ps.Id,
+		Name:       ps.Name,
+		WorkloadID: ps.WorkloadId,
+		TargetPort: ps.TargetPort,
+		SystemPort: ps.SystemPort,
+		CreatedAt:  time.Unix(ps.CreatedAt, 0),
+	}
 }
 
 func IngressRuleToProto(r IngressRule) *gen.IngressRule {

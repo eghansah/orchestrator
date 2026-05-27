@@ -159,7 +159,7 @@ func (a *Agent) PlaceWorkload(ctx context.Context, req *gen.PlaceWorkloadRequest
 		if wl.Container == nil {
 			return nil, status.Error(codes.InvalidArgument, "container spec is required")
 		}
-		runErr = a.nc.RunContainer(ctx, wl.ID, *wl.Container)
+		runErr = a.nc.RunContainer(ctx, wl.ID, *wl.Container, wl.PortAllocations)
 	case types.KindStack:
 		if wl.Stack == nil {
 			return nil, status.Error(codes.InvalidArgument, "stack spec is required")

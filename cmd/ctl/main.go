@@ -5,6 +5,8 @@ import (
 	"crypto/tls"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -15,16 +17,39 @@ import (
 
 const defaultServer = "localhost:7946"
 
-var dialTimeout = 10 * time.Second
+var (
+	dialTimeout = 10 * time.Second
+	adminToken  string // set in main() from --token flag / env / file
+)
+
+// tokenCreds attaches the admin token to every gRPC call as a Bearer header.
+type tokenCreds struct{ token string }
+
+func (t tokenCreds) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
+	return map[string]string{"authorization": "Bearer " + t.token}, nil
+}
+func (t tokenCreds) RequireTransportSecurity() bool { return true }
 
 func main() {
 	server := defaultServer
 	args := os.Args[1:]
 
-	// Consume --server/-server before the subcommand.
-	for len(args) >= 2 && (args[0] == "--server" || args[0] == "-server") {
-		server = args[1]
-		args = args[2:]
+	// Consume --server and --token before the subcommand.
+	for len(args) >= 1 {
+		switch {
+		case (args[0] == "--server" || args[0] == "-server") && len(args) >= 2:
+			server = args[1]
+			args = args[2:]
+		case (args[0] == "--token" || args[0] == "-token") && len(args) >= 2:
+			adminToken = args[1]
+			args = args[2:]
+		default:
+			goto doneFlags
+		}
+	}
+doneFlags:
+	if adminToken == "" {
+		adminToken = resolveToken()
 	}
 
 	if len(args) == 0 {
@@ -50,6 +75,8 @@ func main() {
 		statusCmd(server, rest)
 	case "ingress":
 		ingressCmd(server, rest)
+	case "service":
+		serviceCmd(server, rest)
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -74,9 +101,11 @@ Commands:
   drain   Mark a node as draining
   status  Show full cluster state
   ingress Manage ingress routing rules
+  service Manage named service endpoints (DNS + TCP proxy)
 
 Flags:
   --server HOST:PORT   orchestrator gRPC address (default: localhost:7946)
+  --token TOKEN        admin token (default: ORCHESTRATOR_TOKEN env or ~/.config/orchestrator/token)
 
 Run 'ctl COMMAND --help' for per-command flags.
 `)
@@ -88,11 +117,32 @@ Run 'ctl COMMAND --help' for per-command flags.
 // The caller is responsible for closing the connection.
 func dial(server string) (*grpc.ClientConn, gen.ControlServiceClient) {
 	tlsCfg := &tls.Config{InsecureSkipVerify: true} //nolint:gosec
-	conn, err := grpc.NewClient(server, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg))}
+	if adminToken != "" {
+		opts = append(opts, grpc.WithPerRPCCredentials(tokenCreds{adminToken}))
+	}
+	conn, err := grpc.NewClient(server, opts...)
 	if err != nil {
 		die("connect to %s: %v", server, err)
 	}
 	return conn, gen.NewControlServiceClient(conn)
+}
+
+// resolveToken returns the admin token from environment or config file.
+// Precedence: ORCHESTRATOR_TOKEN env → ~/.config/orchestrator/token file.
+func resolveToken() string {
+	if t := os.Getenv("ORCHESTRATOR_TOKEN"); t != "" {
+		return t
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(home, ".config", "orchestrator", "token"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 // reqCtx returns a context with a 10-second deadline, suitable for a single RPC.

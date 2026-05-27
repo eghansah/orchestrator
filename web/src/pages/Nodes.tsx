@@ -66,7 +66,7 @@ export default function Nodes({ state, loading, refetch }: Props) {
 
   return (
     <ContentLayout
-      header={<Header variant="h1">Nodes</Header>}
+      header={<Header variant="h1" description="All cluster members and their health status. Drain a node to stop new workloads from being placed on it.">Nodes</Header>}
       notifications={<Flashbar items={notifications} />}
     >
       <Table<NodeInfo>

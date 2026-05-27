@@ -29,6 +29,9 @@ const (
 	ControlService_CreateIngress_FullMethodName   = "/orchestrator.ControlService/CreateIngress"
 	ControlService_DeleteIngress_FullMethodName   = "/orchestrator.ControlService/DeleteIngress"
 	ControlService_ListIngress_FullMethodName     = "/orchestrator.ControlService/ListIngress"
+	ControlService_CreateService_FullMethodName   = "/orchestrator.ControlService/CreateService"
+	ControlService_DeleteService_FullMethodName   = "/orchestrator.ControlService/DeleteService"
+	ControlService_ListService_FullMethodName     = "/orchestrator.ControlService/ListService"
 )
 
 // ControlServiceClient is the client API for ControlService service.
@@ -59,6 +62,12 @@ type ControlServiceClient interface {
 	DeleteIngress(ctx context.Context, in *DeleteIngressRequest, opts ...grpc.CallOption) (*DeleteIngressResponse, error)
 	// ListIngress returns all ingress routing rules.
 	ListIngress(ctx context.Context, in *ListIngressRequest, opts ...grpc.CallOption) (*ListIngressResponse, error)
+	// CreateService creates a named service with a system-assigned TCP port.
+	CreateService(ctx context.Context, in *CreateServiceRequest, opts ...grpc.CallOption) (*CreateServiceResponse, error)
+	// DeleteService removes a service.
+	DeleteService(ctx context.Context, in *DeleteServiceRequest, opts ...grpc.CallOption) (*DeleteServiceResponse, error)
+	// ListService returns all services.
+	ListService(ctx context.Context, in *ListServiceRequest, opts ...grpc.CallOption) (*ListServiceResponse, error)
 }
 
 type controlServiceClient struct {
@@ -169,6 +178,36 @@ func (c *controlServiceClient) ListIngress(ctx context.Context, in *ListIngressR
 	return out, nil
 }
 
+func (c *controlServiceClient) CreateService(ctx context.Context, in *CreateServiceRequest, opts ...grpc.CallOption) (*CreateServiceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateServiceResponse)
+	err := c.cc.Invoke(ctx, ControlService_CreateService_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlServiceClient) DeleteService(ctx context.Context, in *DeleteServiceRequest, opts ...grpc.CallOption) (*DeleteServiceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteServiceResponse)
+	err := c.cc.Invoke(ctx, ControlService_DeleteService_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlServiceClient) ListService(ctx context.Context, in *ListServiceRequest, opts ...grpc.CallOption) (*ListServiceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListServiceResponse)
+	err := c.cc.Invoke(ctx, ControlService_ListService_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ControlServiceServer is the server API for ControlService service.
 // All implementations must embed UnimplementedControlServiceServer
 // for forward compatibility.
@@ -197,6 +236,12 @@ type ControlServiceServer interface {
 	DeleteIngress(context.Context, *DeleteIngressRequest) (*DeleteIngressResponse, error)
 	// ListIngress returns all ingress routing rules.
 	ListIngress(context.Context, *ListIngressRequest) (*ListIngressResponse, error)
+	// CreateService creates a named service with a system-assigned TCP port.
+	CreateService(context.Context, *CreateServiceRequest) (*CreateServiceResponse, error)
+	// DeleteService removes a service.
+	DeleteService(context.Context, *DeleteServiceRequest) (*DeleteServiceResponse, error)
+	// ListService returns all services.
+	ListService(context.Context, *ListServiceRequest) (*ListServiceResponse, error)
 	mustEmbedUnimplementedControlServiceServer()
 }
 
@@ -236,6 +281,15 @@ func (UnimplementedControlServiceServer) DeleteIngress(context.Context, *DeleteI
 }
 func (UnimplementedControlServiceServer) ListIngress(context.Context, *ListIngressRequest) (*ListIngressResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListIngress not implemented")
+}
+func (UnimplementedControlServiceServer) CreateService(context.Context, *CreateServiceRequest) (*CreateServiceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateService not implemented")
+}
+func (UnimplementedControlServiceServer) DeleteService(context.Context, *DeleteServiceRequest) (*DeleteServiceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteService not implemented")
+}
+func (UnimplementedControlServiceServer) ListService(context.Context, *ListServiceRequest) (*ListServiceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListService not implemented")
 }
 func (UnimplementedControlServiceServer) mustEmbedUnimplementedControlServiceServer() {}
 func (UnimplementedControlServiceServer) testEmbeddedByValue()                        {}
@@ -438,6 +492,60 @@ func _ControlService_ListIngress_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlService_CreateService_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateServiceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).CreateService(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_CreateService_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).CreateService(ctx, req.(*CreateServiceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlService_DeleteService_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteServiceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).DeleteService(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_DeleteService_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).DeleteService(ctx, req.(*DeleteServiceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlService_ListService_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListServiceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).ListService(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_ListService_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).ListService(ctx, req.(*ListServiceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ControlService_ServiceDesc is the grpc.ServiceDesc for ControlService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -484,6 +592,18 @@ var ControlService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListIngress",
 			Handler:    _ControlService_ListIngress_Handler,
+		},
+		{
+			MethodName: "CreateService",
+			Handler:    _ControlService_CreateService_Handler,
+		},
+		{
+			MethodName: "DeleteService",
+			Handler:    _ControlService_DeleteService_Handler,
+		},
+		{
+			MethodName: "ListService",
+			Handler:    _ControlService_ListService_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

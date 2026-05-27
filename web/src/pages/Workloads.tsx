@@ -76,7 +76,7 @@ export default function Workloads({ state, loading, refetch }: Props) {
 
   return (
     <ContentLayout
-      header={<Header variant="h1">Workloads</Header>}
+      header={<Header variant="h1" description="Containers and Compose stacks running across the cluster. Submit new workloads or remove existing ones.">Workloads</Header>}
       notifications={<Flashbar items={notifications} />}
     >
       <SpaceBetween size="m">

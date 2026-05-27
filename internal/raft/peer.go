@@ -143,6 +143,16 @@ func (p *Peer) RemoveIngress(ruleID string) error {
 	return p.apply(cmdRemoveIngress, ruleID)
 }
 
+// ApplyService writes a service into the Raft log.
+func (p *Peer) ApplyService(svc types.Service) error {
+	return p.apply(cmdApplyService, svc)
+}
+
+// RemoveService removes a service from the Raft log.
+func (p *Peer) RemoveService(serviceID string) error {
+	return p.apply(cmdRemoveService, serviceID)
+}
+
 func (p *Peer) apply(t cmdType, payload any) error {
 	if !p.IsLeader() {
 		return fmt.Errorf("not the leader")

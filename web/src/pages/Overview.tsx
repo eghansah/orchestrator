@@ -25,7 +25,7 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
 export default function Overview({ state, loading, error }: Props) {
   if (loading && !state) {
     return (
-      <ContentLayout header={<Header variant="h1">Overview</Header>}>
+      <ContentLayout header={<Header variant="h1" description="A snapshot of the current cluster state — leader, node count, and workload health at a glance.">Cluster Overview</Header>}>
         <Spinner size="large" />
       </ContentLayout>
     );
@@ -33,18 +33,18 @@ export default function Overview({ state, loading, error }: Props) {
 
   if (error) {
     return (
-      <ContentLayout header={<Header variant="h1">Overview</Header>}>
+      <ContentLayout header={<Header variant="h1" description="A snapshot of the current cluster state — leader, node count, and workload health at a glance.">Cluster Overview</Header>}>
         <StatusIndicator type="error">{error}</StatusIndicator>
       </ContentLayout>
     );
   }
 
-  const running = state?.workloads.filter((w) => w.phase === "running").length ?? 0;
-  const total = state?.workloads.length ?? 0;
-  const nodes = state?.nodes.length ?? 0;
+  const running = state?.workloads?.filter((w) => w.phase === "running").length ?? 0;
+  const total = state?.workloads?.length ?? 0;
+  const nodes = state?.nodes?.length ?? 0;
 
   return (
-    <ContentLayout header={<Header variant="h1">Cluster Overview</Header>}>
+    <ContentLayout header={<Header variant="h1" description="A snapshot of the current cluster state — leader, node count, and workload health at a glance.">Cluster Overview</Header>}>
       <Container>
         <ColumnLayout columns={3} variant="text-grid">
           <Metric

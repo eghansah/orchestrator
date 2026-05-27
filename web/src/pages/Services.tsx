@@ -12,26 +12,25 @@ import {
   SpaceBetween,
   Table,
 } from "@cloudscape-design/components";
-import { api, IngressRule } from "../api";
+import { api, Service } from "../api";
 import { formatAge } from "../api";
 
-export default function Ingress() {
-  const [rules, setRules] = useState<IngressRule[]>([]);
+export default function Services() {
+  const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState({
-    host: "",
-    path_prefix: "/",
+    name: "",
     workload_id: "",
-    port: "",
+    target_port: "",
   });
-  const [selected, setSelected] = useState<IngressRule[]>([]);
+  const [selected, setSelected] = useState<Service[]>([]);
 
   const load = useCallback(async () => {
     try {
-      const data = await api.listIngress();
-      setRules(data ?? []);
+      const data = await api.listServices();
+      setServices(data ?? []);
     } catch (e) {
       addFlash("error", String(e));
     } finally {
@@ -54,24 +53,23 @@ export default function Ingress() {
   }
 
   async function handleCreate() {
-    const port = parseInt(createForm.port, 10);
-    if (!createForm.workload_id || isNaN(port) || port <= 0) {
-      addFlash("error", "Workload ID and a valid port are required");
+    const port = parseInt(createForm.target_port, 10);
+    if (!createForm.name || !createForm.workload_id || isNaN(port) || port <= 0) {
+      addFlash("error", "Name, workload ID, and a valid container port are required");
       return;
     }
     try {
-      const resp = await api.createIngress({
-        host: createForm.host,
-        path_prefix: createForm.path_prefix || "/",
+      const resp = await api.createService({
+        name: createForm.name,
         workload_id: createForm.workload_id,
-        port,
+        target_port: port,
       });
       if (!resp.accepted) {
         addFlash("error", resp.reason ?? "rejected");
       } else {
-        addFlash("success", `Rule ${resp.rule_id} created`);
+        addFlash("success", `Service ${resp.service_id} created (port ${resp.system_port})`);
         setCreating(false);
-        setCreateForm({ host: "", path_prefix: "/", workload_id: "", port: "" });
+        setCreateForm({ name: "", workload_id: "", target_port: "" });
         load();
       }
     } catch (e) {
@@ -80,10 +78,10 @@ export default function Ingress() {
   }
 
   async function handleDelete() {
-    for (const rule of selected) {
+    for (const svc of selected) {
       try {
-        await api.deleteIngress(rule.id);
-        addFlash("success", `Deleted ${rule.id}`);
+        await api.deleteService(svc.id);
+        addFlash("success", `Deleted ${svc.id}`);
       } catch (e) {
         addFlash("error", String(e));
       }
@@ -95,28 +93,25 @@ export default function Ingress() {
   return (
     <ContentLayout
       notifications={<Flashbar items={flash} />}
-      header={<Header variant="h1" description="HTTP routing rules that direct inbound traffic to containers by Host header or URL path prefix. Longest prefix wins.">Ingress</Header>}
+      header={<Header variant="h1" description="Named TCP endpoints for container-to-container communication. Each service gets a stable port and is reachable via DNS at <name>.svc.local.">Services</Header>}
     >
       <Table
         loading={loading}
-        loadingText="Loading ingress rules"
+        loadingText="Loading services"
         header={
           <Header
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <Button
-                  disabled={selected.length === 0}
-                  onClick={handleDelete}
-                >
+                <Button disabled={selected.length === 0} onClick={handleDelete}>
                   Delete
                 </Button>
                 <Button variant="primary" onClick={() => setCreating(true)}>
-                  Create rule
+                  Create service
                 </Button>
               </SpaceBetween>
             }
           >
-            Ingress rules
+            Services
           </Header>
         }
         selectionType="multi"
@@ -124,21 +119,22 @@ export default function Ingress() {
         onSelectionChange={(e) => setSelected(e.detail.selectedItems)}
         trackBy="id"
         columnDefinitions={[
-          { id: "id", header: "ID", cell: (r) => r.id },
-          { id: "host", header: "Host", cell: (r) => r.host || "—" },
-          { id: "path", header: "Path", cell: (r) => r.path_prefix || "/" },
-          { id: "workload", header: "Workload", cell: (r) => r.workload_id },
-          { id: "port", header: "Port", cell: (r) => r.port },
-          { id: "age", header: "Age", cell: (r) => formatAge(r.created_at) },
+          { id: "id", header: "ID", cell: (s) => s.id },
+          { id: "name", header: "Name", cell: (s) => s.name },
+          { id: "system_port", header: "System port", cell: (s) => s.system_port },
+          { id: "workload", header: "Workload", cell: (s) => s.workload_id },
+          { id: "target_port", header: "Target port", cell: (s) => s.target_port },
+          { id: "dns", header: "DNS", cell: (s) => `${s.name}.svc.local` },
+          { id: "age", header: "Age", cell: (s) => formatAge(s.created_at) },
         ]}
-        items={rules}
-        empty="No ingress rules"
+        items={services}
+        empty="No services"
       />
 
       <Modal
         visible={creating}
         onDismiss={() => setCreating(false)}
-        header="Create ingress rule"
+        header="Create service"
         footer={
           <SpaceBetween direction="horizontal" size="xs">
             <Button variant="link" onClick={() => setCreating(false)}>
@@ -152,18 +148,11 @@ export default function Ingress() {
       >
         <Form>
           <SpaceBetween size="m">
-            <FormField label="Host" description="Host header to match (leave empty to match all)">
+            <FormField label="Name" description="Short DNS label (e.g. api, db)" constraintText="Required">
               <Input
-                value={createForm.host}
-                onChange={(e) => setCreateForm((f) => ({ ...f, host: e.detail.value }))}
-                placeholder="example.com"
-              />
-            </FormField>
-            <FormField label="Path prefix" description="URL path prefix to match">
-              <Input
-                value={createForm.path_prefix}
-                onChange={(e) => setCreateForm((f) => ({ ...f, path_prefix: e.detail.value }))}
-                placeholder="/"
+                value={createForm.name}
+                onChange={(e) => setCreateForm((f) => ({ ...f, name: e.detail.value }))}
+                placeholder="api"
               />
             </FormField>
             <FormField label="Workload ID" constraintText="Required">
@@ -172,12 +161,12 @@ export default function Ingress() {
                 onChange={(e) => setCreateForm((f) => ({ ...f, workload_id: e.detail.value }))}
               />
             </FormField>
-            <FormField label="Container port" description="Port the container listens on (e.g. 80 for nginx)" constraintText="Required">
+            <FormField label="Container port" description="Port the container listens on" constraintText="Required">
               <Input
                 type="number"
-                value={createForm.port}
-                onChange={(e) => setCreateForm((f) => ({ ...f, port: e.detail.value }))}
-                placeholder="8888"
+                value={createForm.target_port}
+                onChange={(e) => setCreateForm((f) => ({ ...f, target_port: e.detail.value }))}
+                placeholder="3000"
               />
             </FormField>
           </SpaceBetween>

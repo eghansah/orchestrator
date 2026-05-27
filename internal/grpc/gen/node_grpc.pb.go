@@ -23,6 +23,8 @@ const (
 	NodeService_ReportState_FullMethodName    = "/orchestrator.NodeService/ReportState"
 	NodeService_PlaceWorkload_FullMethodName  = "/orchestrator.NodeService/PlaceWorkload"
 	NodeService_RemoveWorkload_FullMethodName = "/orchestrator.NodeService/RemoveWorkload"
+	NodeService_ForwardHTTP_FullMethodName    = "/orchestrator.NodeService/ForwardHTTP"
+	NodeService_ForwardTCP_FullMethodName     = "/orchestrator.NodeService/ForwardTCP"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -42,6 +44,12 @@ type NodeServiceClient interface {
 	PlaceWorkload(ctx context.Context, in *PlaceWorkloadRequest, opts ...grpc.CallOption) (*PlaceWorkloadResponse, error)
 	// RemoveWorkload instructs the agent to stop and remove a workload.
 	RemoveWorkload(ctx context.Context, in *RemoveWorkloadRequest, opts ...grpc.CallOption) (*RemoveWorkloadResponse, error)
+	// ForwardHTTP tunnels an HTTP request to a container on this node.
+	// Used by the ingress proxy on a remote node to reach a locally-bound container.
+	ForwardHTTP(ctx context.Context, in *ForwardHTTPRequest, opts ...grpc.CallOption) (*ForwardHTTPResponse, error)
+	// ForwardTCP tunnels raw TCP bytes to a locally-bound container port.
+	// The first client message must set allocated_port; subsequent messages carry data.
+	ForwardTCP(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPChunk], error)
 }
 
 type nodeServiceClient struct {
@@ -92,6 +100,29 @@ func (c *nodeServiceClient) RemoveWorkload(ctx context.Context, in *RemoveWorklo
 	return out, nil
 }
 
+func (c *nodeServiceClient) ForwardHTTP(ctx context.Context, in *ForwardHTTPRequest, opts ...grpc.CallOption) (*ForwardHTTPResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ForwardHTTPResponse)
+	err := c.cc.Invoke(ctx, NodeService_ForwardHTTP_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) ForwardTCP(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPChunk], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[0], NodeService_ForwardTCP_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ForwardTCPRequest, ForwardTCPChunk]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_ForwardTCPClient = grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPChunk]
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -109,6 +140,12 @@ type NodeServiceServer interface {
 	PlaceWorkload(context.Context, *PlaceWorkloadRequest) (*PlaceWorkloadResponse, error)
 	// RemoveWorkload instructs the agent to stop and remove a workload.
 	RemoveWorkload(context.Context, *RemoveWorkloadRequest) (*RemoveWorkloadResponse, error)
+	// ForwardHTTP tunnels an HTTP request to a container on this node.
+	// Used by the ingress proxy on a remote node to reach a locally-bound container.
+	ForwardHTTP(context.Context, *ForwardHTTPRequest) (*ForwardHTTPResponse, error)
+	// ForwardTCP tunnels raw TCP bytes to a locally-bound container port.
+	// The first client message must set allocated_port; subsequent messages carry data.
+	ForwardTCP(grpc.BidiStreamingServer[ForwardTCPRequest, ForwardTCPChunk]) error
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -130,6 +167,12 @@ func (UnimplementedNodeServiceServer) PlaceWorkload(context.Context, *PlaceWorkl
 }
 func (UnimplementedNodeServiceServer) RemoveWorkload(context.Context, *RemoveWorkloadRequest) (*RemoveWorkloadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemoveWorkload not implemented")
+}
+func (UnimplementedNodeServiceServer) ForwardHTTP(context.Context, *ForwardHTTPRequest) (*ForwardHTTPResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ForwardHTTP not implemented")
+}
+func (UnimplementedNodeServiceServer) ForwardTCP(grpc.BidiStreamingServer[ForwardTCPRequest, ForwardTCPChunk]) error {
+	return status.Error(codes.Unimplemented, "method ForwardTCP not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -224,6 +267,31 @@ func _NodeService_RemoveWorkload_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_ForwardHTTP_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ForwardHTTPRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).ForwardHTTP(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_ForwardHTTP_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).ForwardHTTP(ctx, req.(*ForwardHTTPRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_ForwardTCP_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(NodeServiceServer).ForwardTCP(&grpc.GenericServerStream[ForwardTCPRequest, ForwardTCPChunk]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_ForwardTCPServer = grpc.BidiStreamingServer[ForwardTCPRequest, ForwardTCPChunk]
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -247,7 +315,18 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "RemoveWorkload",
 			Handler:    _NodeService_RemoveWorkload_Handler,
 		},
+		{
+			MethodName: "ForwardHTTP",
+			Handler:    _NodeService_ForwardHTTP_Handler,
+		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "ForwardTCP",
+			Handler:       _NodeService_ForwardTCP_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+	},
 	Metadata: "node.proto",
 }

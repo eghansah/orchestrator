@@ -101,6 +101,11 @@ func (s *Server) scheduleAndPlace(ctx context.Context, wl types.Workload) (*gen.
 		return nil, status.Errorf(codes.Internal, "apply workload: %v", err)
 	}
 
+	// Read back from state so we have the FSM-assigned port allocations.
+	if committed, ok := s.peer.State().Workloads[wl.ID]; ok {
+		wl = committed
+	}
+
 	if err := s.placeOnNode(ctx, nodeAddr, nodeCert, wl); err != nil {
 		// Mark failed in Raft — the agent never ran it.
 		wl.Phase = types.PhaseFailed
@@ -301,6 +306,58 @@ func (s *Server) ListIngress(_ context.Context, _ *gen.ListIngressRequest) (*gen
 		rules = append(rules, types.IngressRuleToProto(r))
 	}
 	return &gen.ListIngressResponse{Rules: rules}, nil
+}
+
+// ── Services ──────────────────────────────────────────────────────────────────
+
+func (s *Server) CreateService(_ context.Context, req *gen.CreateServiceRequest) (*gen.CreateServiceResponse, error) {
+	if req.Name == "" {
+		return nil, status.Error(codes.InvalidArgument, "name is required")
+	}
+	if req.WorkloadId == "" {
+		return nil, status.Error(codes.InvalidArgument, "workload_id is required")
+	}
+	if req.TargetPort == 0 {
+		return nil, status.Error(codes.InvalidArgument, "target_port is required")
+	}
+	if err := s.requireLeader(); err != nil {
+		return nil, err
+	}
+	svc := types.Service{
+		ID:         newID(),
+		Name:       req.Name,
+		WorkloadID: req.WorkloadId,
+		TargetPort: req.TargetPort,
+		CreatedAt:  time.Now(),
+	}
+	if err := s.peer.ApplyService(svc); err != nil {
+		return nil, status.Errorf(codes.Internal, "apply service: %v", err)
+	}
+	// Read back to get FSM-assigned system port.
+	committed := s.peer.State().Services[svc.ID]
+	return &gen.CreateServiceResponse{ServiceId: svc.ID, SystemPort: committed.SystemPort, Accepted: true}, nil
+}
+
+func (s *Server) DeleteService(_ context.Context, req *gen.DeleteServiceRequest) (*gen.DeleteServiceResponse, error) {
+	if req.ServiceId == "" {
+		return nil, status.Error(codes.InvalidArgument, "service_id is required")
+	}
+	if err := s.requireLeader(); err != nil {
+		return nil, err
+	}
+	if err := s.peer.RemoveService(req.ServiceId); err != nil {
+		return nil, status.Errorf(codes.Internal, "remove service: %v", err)
+	}
+	return &gen.DeleteServiceResponse{Accepted: true}, nil
+}
+
+func (s *Server) ListService(_ context.Context, _ *gen.ListServiceRequest) (*gen.ListServiceResponse, error) {
+	state := s.peer.State()
+	svcs := make([]*gen.Service, 0, len(state.Services))
+	for _, svc := range state.Services {
+		svcs = append(svcs, types.ServiceToProto(svc))
+	}
+	return &gen.ListServiceResponse{Services: svcs}, nil
 }
 
 func phaseIn(phase types.WorkloadPhase, phases []gen.WorkloadPhase) bool {

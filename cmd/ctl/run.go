@@ -20,7 +20,7 @@ func runContainerCmd(server string, args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	name := fs.String("name", "", "container name (required)")
 	var ports, envs, volumes, labels stringList
-	fs.Var(&ports, "p", "port mapping `HOST:CONTAINER[/PROTO]` (repeatable)")
+	fs.Var(&ports, "p", "container port to expose `PORT[/PROTO]` (repeatable); host port is auto-assigned")
 	fs.Var(&envs, "e", "environment variable `KEY=VALUE` (repeatable)")
 	fs.Var(&volumes, "v", "volume `SOURCE:TARGET[:ro]` (repeatable)")
 	fs.Var(&labels, "l", "label `KEY=VALUE` (repeatable)")
@@ -40,7 +40,34 @@ func runContainerCmd(server string, args []string) {
 		fs.Usage()
 		os.Exit(1)
 	}
-	image, command := fs.Arg(0), fs.Args()[1:]
+	image := fs.Arg(0)
+
+	// Go's flag package stops at the first non-flag arg, so flags placed
+	// after IMAGE (e.g. `ctl run --name foo nginx -p 80`) end up in the
+	// trailing args.  Extract any -p/-e/-v/-l flags that landed there.
+	rest := fs.Args()[1:]
+	command := make([]string, 0, len(rest))
+	for i := 0; i < len(rest); i++ {
+		arg := rest[i]
+		switch {
+		case arg == "-p" || arg == "-e" || arg == "-v" || arg == "-l":
+			if i+1 < len(rest) {
+				switch arg {
+				case "-p":
+					ports = append(ports, rest[i+1])
+				case "-e":
+					envs = append(envs, rest[i+1])
+				case "-v":
+					volumes = append(volumes, rest[i+1])
+				case "-l":
+					labels = append(labels, rest[i+1])
+				}
+				i++ // skip the value
+			}
+		default:
+			command = append(command, arg)
+		}
+	}
 
 	portMappings, err := parsePorts(ports)
 	if err != nil {
@@ -124,20 +151,20 @@ func parsePorts(ports []string) ([]*gen.PortMapping, error) {
 			proto = p[i+1:]
 			p = p[:i]
 		}
+		// Accept both CONTAINER and HOST:CONTAINER (host port is ignored by the
+		// orchestrator — it auto-assigns one from the port pool).
 		halves := strings.SplitN(p, ":", 2)
-		if len(halves) != 2 {
-			return nil, fmt.Errorf("invalid port mapping %q — want HOST:CONTAINER[/PROTO]", raw)
+		var ctrStr string
+		if len(halves) == 2 {
+			ctrStr = halves[1]
+		} else {
+			ctrStr = halves[0]
 		}
-		host, err := strconv.ParseUint(halves[0], 10, 32)
-		if err != nil {
-			return nil, fmt.Errorf("bad host port in %q: %v", raw, err)
-		}
-		ctr, err := strconv.ParseUint(halves[1], 10, 32)
+		ctr, err := strconv.ParseUint(ctrStr, 10, 32)
 		if err != nil {
 			return nil, fmt.Errorf("bad container port in %q: %v", raw, err)
 		}
 		out = append(out, &gen.PortMapping{
-			HostPort:      uint32(host),
 			ContainerPort: uint32(ctr),
 			Protocol:      proto,
 		})

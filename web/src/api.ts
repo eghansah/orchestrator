@@ -62,14 +62,61 @@ export interface CreateIngressRequest {
   port: number;
 }
 
+export interface Service {
+  id: string;
+  name: string;
+  workload_id: string;
+  target_port: number;
+  system_port: number;
+  created_at: number; // unix seconds
+}
+
+export interface CreateServiceRequest {
+  name: string;
+  workload_id: string;
+  target_port: number;
+}
+
+// ── Auth token ────────────────────────────────────────────────────────────────
+
+const TOKEN_KEY = "orchestrator_token";
+
+let _token: string = localStorage.getItem(TOKEN_KEY) ?? "";
+let _onAuthError: (() => void) | null = null;
+
+export function setToken(t: string) {
+  _token = t;
+  if (t) localStorage.setItem(TOKEN_KEY, t);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+export function getToken(): string { return _token; }
+export function hasToken(): boolean { return !!_token; }
+
+/** Called by App to be notified when any API call returns 401. */
+export function setAuthErrorHandler(fn: () => void) { _onAuthError = fn; }
+
+export class AuthError extends Error {}
+
 // ── REST client ───────────────────────────────────────────────────────────────
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (body) headers["Content-Type"] = "application/json";
+  if (_token) headers["Authorization"] = `Bearer ${_token}`;
+
   const res = await fetch(path, {
     method,
-    headers: body ? { "Content-Type": "application/json" } : {},
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+
+  if (res.status === 401) {
+    setToken("");
+    _onAuthError?.();
+    throw new AuthError("Unauthorized — token invalid or expired");
+  }
+
   const data = await res.json();
   if (!res.ok) {
     throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
@@ -78,6 +125,17 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
+  login: async (username: string, password: string): Promise<{ token: string }> => {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
+    return data as { token: string };
+  },
+  logout: () => request<{ ok: boolean }>("POST", "/api/auth/logout"),
   getState: () => request<ClusterState>("GET", "/api/state"),
   submitContainer: (req: RunRequest) =>
     request<MutationResult>("POST", "/api/workloads/run", req),
@@ -96,6 +154,15 @@ export const api = {
     ),
   deleteIngress: (id: string) =>
     request<MutationResult>("POST", `/api/ingress/${id}/delete`),
+  listServices: () => request<Service[]>("GET", "/api/services"),
+  createService: (req: CreateServiceRequest) =>
+    request<{ service_id: string; system_port: number; accepted: boolean; reason?: string }>(
+      "POST",
+      "/api/services",
+      req
+    ),
+  deleteService: (id: string) =>
+    request<MutationResult>("POST", `/api/services/${id}/delete`),
 };
 
 // ── useClusterState hook ──────────────────────────────────────────────────────

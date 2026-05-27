@@ -36,17 +36,19 @@ const (
 type Client struct {
 	binary    string
 	namespace string
-	dataDir   string // root for compose file storage
+	dataDir   string   // root for compose file storage
+	dnsIP     string   // injected into containers for svc.local resolution
+	dnsPort   uint32   // DNS port; if != 53, adds resolv.conf "options port:N"
 }
 
-func NewClient(binary, namespace, dataDir string) (*Client, error) {
+func NewClient(binary, namespace, dataDir, dnsIP string, dnsPort uint32) (*Client, error) {
 	if binary == "" {
 		binary = "nerdctl"
 	}
 	if namespace == "" {
 		namespace = defaultNamespace
 	}
-	return &Client{binary: binary, namespace: namespace, dataDir: dataDir}, nil
+	return &Client{binary: binary, namespace: namespace, dataDir: dataDir, dnsIP: dnsIP, dnsPort: dnsPort}, nil
 }
 
 // Probe verifies the nerdctl binary is reachable and prints its version.
@@ -79,16 +81,29 @@ func (c *Client) Pull(ctx context.Context, image string) error {
 }
 
 // RunContainer starts a detached container from the given spec, tagged with workloadID.
-func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types.ContainerSpec) error {
+// portAllocations maps container ports to auto-assigned host ports, always bound on
+// 127.0.0.1 so containers are only reachable via the ingress proxy.
+func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types.ContainerSpec, portAllocations []types.PortAllocation) error {
 	if err := validateName(spec.Name); err != nil {
 		return err
 	}
+
+	// Build containerPort → allocatedPort lookup from auto-assigned allocations.
+	allocMap := make(map[uint32]uint32, len(portAllocations))
+	for _, pa := range portAllocations {
+		allocMap[pa.ContainerPort] = pa.AllocatedPort
+	}
+
 	args := []string{"run", "-d", "--name", spec.Name}
 	for _, env := range spec.Env {
 		args = append(args, "-e", env)
 	}
 	for _, p := range spec.Ports {
-		args = append(args, "-p", fmt.Sprintf("%d:%d/%s", p.HostPort, p.ContainerPort, p.Protocol))
+		if alloc, ok := allocMap[p.ContainerPort]; ok && alloc > 0 {
+			// Bind on loopback only — containers are not reachable from the network.
+			args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d/%s", alloc, p.ContainerPort, p.Protocol))
+		}
+		// Ports without an allocation are intentionally not bound.
 	}
 	for _, v := range spec.Volumes {
 		mount := fmt.Sprintf("%s:%s", v.Source, v.Target)
@@ -101,6 +116,12 @@ func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types
 		args = append(args, "--label", fmt.Sprintf("%s=%s", k, v))
 	}
 	args = append(args, "--label", fmt.Sprintf("%s=%s", workloadIDLabel, workloadID))
+	if c.dnsIP != "" {
+		args = append(args, "--dns", c.dnsIP, "--dns-search", "svc.local")
+		if c.dnsPort != 0 && c.dnsPort != 53 {
+			args = append(args, "--dns-opt", fmt.Sprintf("port:%d", c.dnsPort))
+		}
+	}
 	args = append(args, spec.Image)
 	args = append(args, spec.Command...)
 

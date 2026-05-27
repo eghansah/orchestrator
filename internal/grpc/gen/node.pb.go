@@ -21,6 +21,194 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type HttpHeader struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HttpHeader) Reset() {
+	*x = HttpHeader{}
+	mi := &file_node_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HttpHeader) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HttpHeader) ProtoMessage() {}
+
+func (x *HttpHeader) ProtoReflect() protoreflect.Message {
+	mi := &file_node_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HttpHeader.ProtoReflect.Descriptor instead.
+func (*HttpHeader) Descriptor() ([]byte, []int) {
+	return file_node_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *HttpHeader) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *HttpHeader) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+type ForwardHTTPRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AllocatedPort uint32                 `protobuf:"varint,1,opt,name=allocated_port,json=allocatedPort,proto3" json:"allocated_port,omitempty"` // host port bound on 127.0.0.1
+	Method        string                 `protobuf:"bytes,2,opt,name=method,proto3" json:"method,omitempty"`
+	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"` // URL path + raw query
+	Headers       []*HttpHeader          `protobuf:"bytes,4,rep,name=headers,proto3" json:"headers,omitempty"`
+	Body          []byte                 `protobuf:"bytes,5,opt,name=body,proto3" json:"body,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ForwardHTTPRequest) Reset() {
+	*x = ForwardHTTPRequest{}
+	mi := &file_node_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForwardHTTPRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForwardHTTPRequest) ProtoMessage() {}
+
+func (x *ForwardHTTPRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_node_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForwardHTTPRequest.ProtoReflect.Descriptor instead.
+func (*ForwardHTTPRequest) Descriptor() ([]byte, []int) {
+	return file_node_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ForwardHTTPRequest) GetAllocatedPort() uint32 {
+	if x != nil {
+		return x.AllocatedPort
+	}
+	return 0
+}
+
+func (x *ForwardHTTPRequest) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *ForwardHTTPRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *ForwardHTTPRequest) GetHeaders() []*HttpHeader {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *ForwardHTTPRequest) GetBody() []byte {
+	if x != nil {
+		return x.Body
+	}
+	return nil
+}
+
+type ForwardHTTPResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	StatusCode    int32                  `protobuf:"varint,1,opt,name=status_code,json=statusCode,proto3" json:"status_code,omitempty"`
+	Headers       []*HttpHeader          `protobuf:"bytes,2,rep,name=headers,proto3" json:"headers,omitempty"`
+	Body          []byte                 `protobuf:"bytes,3,opt,name=body,proto3" json:"body,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ForwardHTTPResponse) Reset() {
+	*x = ForwardHTTPResponse{}
+	mi := &file_node_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForwardHTTPResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForwardHTTPResponse) ProtoMessage() {}
+
+func (x *ForwardHTTPResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_node_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForwardHTTPResponse.ProtoReflect.Descriptor instead.
+func (*ForwardHTTPResponse) Descriptor() ([]byte, []int) {
+	return file_node_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ForwardHTTPResponse) GetStatusCode() int32 {
+	if x != nil {
+		return x.StatusCode
+	}
+	return 0
+}
+
+func (x *ForwardHTTPResponse) GetHeaders() []*HttpHeader {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *ForwardHTTPResponse) GetBody() []byte {
+	if x != nil {
+		return x.Body
+	}
+	return nil
+}
+
 type HeartbeatRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
@@ -37,7 +225,7 @@ type HeartbeatRequest struct {
 
 func (x *HeartbeatRequest) Reset() {
 	*x = HeartbeatRequest{}
-	mi := &file_node_proto_msgTypes[0]
+	mi := &file_node_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -49,7 +237,7 @@ func (x *HeartbeatRequest) String() string {
 func (*HeartbeatRequest) ProtoMessage() {}
 
 func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_node_proto_msgTypes[0]
+	mi := &file_node_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -62,7 +250,7 @@ func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
 func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
-	return file_node_proto_rawDescGZIP(), []int{0}
+	return file_node_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *HeartbeatRequest) GetNodeId() string {
@@ -132,7 +320,7 @@ type HeartbeatResponse struct {
 
 func (x *HeartbeatResponse) Reset() {
 	*x = HeartbeatResponse{}
-	mi := &file_node_proto_msgTypes[1]
+	mi := &file_node_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -144,7 +332,7 @@ func (x *HeartbeatResponse) String() string {
 func (*HeartbeatResponse) ProtoMessage() {}
 
 func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_node_proto_msgTypes[1]
+	mi := &file_node_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -157,7 +345,7 @@ func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_node_proto_rawDescGZIP(), []int{1}
+	return file_node_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *HeartbeatResponse) GetLeaderId() string {
@@ -190,7 +378,7 @@ type ReportStateRequest struct {
 
 func (x *ReportStateRequest) Reset() {
 	*x = ReportStateRequest{}
-	mi := &file_node_proto_msgTypes[2]
+	mi := &file_node_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -202,7 +390,7 @@ func (x *ReportStateRequest) String() string {
 func (*ReportStateRequest) ProtoMessage() {}
 
 func (x *ReportStateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_node_proto_msgTypes[2]
+	mi := &file_node_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -215,7 +403,7 @@ func (x *ReportStateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportStateRequest.ProtoReflect.Descriptor instead.
 func (*ReportStateRequest) Descriptor() ([]byte, []int) {
-	return file_node_proto_rawDescGZIP(), []int{2}
+	return file_node_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ReportStateRequest) GetState() *ActualWorkloadState {
@@ -233,7 +421,7 @@ type ReportStateResponse struct {
 
 func (x *ReportStateResponse) Reset() {
 	*x = ReportStateResponse{}
-	mi := &file_node_proto_msgTypes[3]
+	mi := &file_node_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -245,7 +433,7 @@ func (x *ReportStateResponse) String() string {
 func (*ReportStateResponse) ProtoMessage() {}
 
 func (x *ReportStateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_node_proto_msgTypes[3]
+	mi := &file_node_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -258,7 +446,7 @@ func (x *ReportStateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportStateResponse.ProtoReflect.Descriptor instead.
 func (*ReportStateResponse) Descriptor() ([]byte, []int) {
-	return file_node_proto_rawDescGZIP(), []int{3}
+	return file_node_proto_rawDescGZIP(), []int{6}
 }
 
 type PlaceWorkloadRequest struct {
@@ -270,7 +458,7 @@ type PlaceWorkloadRequest struct {
 
 func (x *PlaceWorkloadRequest) Reset() {
 	*x = PlaceWorkloadRequest{}
-	mi := &file_node_proto_msgTypes[4]
+	mi := &file_node_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -282,7 +470,7 @@ func (x *PlaceWorkloadRequest) String() string {
 func (*PlaceWorkloadRequest) ProtoMessage() {}
 
 func (x *PlaceWorkloadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_node_proto_msgTypes[4]
+	mi := &file_node_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -295,7 +483,7 @@ func (x *PlaceWorkloadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaceWorkloadRequest.ProtoReflect.Descriptor instead.
 func (*PlaceWorkloadRequest) Descriptor() ([]byte, []int) {
-	return file_node_proto_rawDescGZIP(), []int{4}
+	return file_node_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *PlaceWorkloadRequest) GetWorkload() *Workload {
@@ -315,7 +503,7 @@ type PlaceWorkloadResponse struct {
 
 func (x *PlaceWorkloadResponse) Reset() {
 	*x = PlaceWorkloadResponse{}
-	mi := &file_node_proto_msgTypes[5]
+	mi := &file_node_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -327,7 +515,7 @@ func (x *PlaceWorkloadResponse) String() string {
 func (*PlaceWorkloadResponse) ProtoMessage() {}
 
 func (x *PlaceWorkloadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_node_proto_msgTypes[5]
+	mi := &file_node_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -340,7 +528,7 @@ func (x *PlaceWorkloadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaceWorkloadResponse.ProtoReflect.Descriptor instead.
 func (*PlaceWorkloadResponse) Descriptor() ([]byte, []int) {
-	return file_node_proto_rawDescGZIP(), []int{5}
+	return file_node_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *PlaceWorkloadResponse) GetAccepted() bool {
@@ -357,12 +545,153 @@ func (x *PlaceWorkloadResponse) GetReason() string {
 	return ""
 }
 
+type ForwardTCPRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Payload:
+	//
+	//	*ForwardTCPRequest_AllocatedPort
+	//	*ForwardTCPRequest_Data
+	Payload       isForwardTCPRequest_Payload `protobuf_oneof:"payload"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ForwardTCPRequest) Reset() {
+	*x = ForwardTCPRequest{}
+	mi := &file_node_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForwardTCPRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForwardTCPRequest) ProtoMessage() {}
+
+func (x *ForwardTCPRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_node_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForwardTCPRequest.ProtoReflect.Descriptor instead.
+func (*ForwardTCPRequest) Descriptor() ([]byte, []int) {
+	return file_node_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ForwardTCPRequest) GetPayload() isForwardTCPRequest_Payload {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *ForwardTCPRequest) GetAllocatedPort() uint32 {
+	if x != nil {
+		if x, ok := x.Payload.(*ForwardTCPRequest_AllocatedPort); ok {
+			return x.AllocatedPort
+		}
+	}
+	return 0
+}
+
+func (x *ForwardTCPRequest) GetData() []byte {
+	if x != nil {
+		if x, ok := x.Payload.(*ForwardTCPRequest_Data); ok {
+			return x.Data
+		}
+	}
+	return nil
+}
+
+type isForwardTCPRequest_Payload interface {
+	isForwardTCPRequest_Payload()
+}
+
+type ForwardTCPRequest_AllocatedPort struct {
+	AllocatedPort uint32 `protobuf:"varint,1,opt,name=allocated_port,json=allocatedPort,proto3,oneof"` // first message: local port to dial on this node
+}
+
+type ForwardTCPRequest_Data struct {
+	Data []byte `protobuf:"bytes,2,opt,name=data,proto3,oneof"` // subsequent messages: raw bytes to forward
+}
+
+func (*ForwardTCPRequest_AllocatedPort) isForwardTCPRequest_Payload() {}
+
+func (*ForwardTCPRequest_Data) isForwardTCPRequest_Payload() {}
+
+type ForwardTCPChunk struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ForwardTCPChunk) Reset() {
+	*x = ForwardTCPChunk{}
+	mi := &file_node_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForwardTCPChunk) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForwardTCPChunk) ProtoMessage() {}
+
+func (x *ForwardTCPChunk) ProtoReflect() protoreflect.Message {
+	mi := &file_node_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForwardTCPChunk.ProtoReflect.Descriptor instead.
+func (*ForwardTCPChunk) Descriptor() ([]byte, []int) {
+	return file_node_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ForwardTCPChunk) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
 var File_node_proto protoreflect.FileDescriptor
 
 const file_node_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"node.proto\x12\forchestrator\x1a\vtypes.proto\"\x9c\x02\n" +
+	"node.proto\x12\forchestrator\x1a\vtypes.proto\"6\n" +
+	"\n" +
+	"HttpHeader\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"\xaf\x01\n" +
+	"\x12ForwardHTTPRequest\x12%\n" +
+	"\x0eallocated_port\x18\x01 \x01(\rR\rallocatedPort\x12\x16\n" +
+	"\x06method\x18\x02 \x01(\tR\x06method\x12\x12\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\x122\n" +
+	"\aheaders\x18\x04 \x03(\v2\x18.orchestrator.HttpHeaderR\aheaders\x12\x12\n" +
+	"\x04body\x18\x05 \x01(\fR\x04body\"~\n" +
+	"\x13ForwardHTTPResponse\x12\x1f\n" +
+	"\vstatus_code\x18\x01 \x01(\x05R\n" +
+	"statusCode\x122\n" +
+	"\aheaders\x18\x02 \x03(\v2\x18.orchestrator.HttpHeaderR\aheaders\x12\x12\n" +
+	"\x04body\x18\x03 \x01(\fR\x04body\"\x9c\x02\n" +
 	"\x10HeartbeatRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x129\n" +
@@ -384,12 +713,21 @@ const file_node_proto_rawDesc = "" +
 	"\bworkload\x18\x01 \x01(\v2\x16.orchestrator.WorkloadR\bworkload\"K\n" +
 	"\x15PlaceWorkloadResponse\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason2\xe6\x02\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"]\n" +
+	"\x11ForwardTCPRequest\x12'\n" +
+	"\x0eallocated_port\x18\x01 \x01(\rH\x00R\rallocatedPort\x12\x14\n" +
+	"\x04data\x18\x02 \x01(\fH\x00R\x04dataB\t\n" +
+	"\apayload\"%\n" +
+	"\x0fForwardTCPChunk\x12\x12\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data2\x8c\x04\n" +
 	"\vNodeService\x12L\n" +
 	"\tHeartbeat\x12\x1e.orchestrator.HeartbeatRequest\x1a\x1f.orchestrator.HeartbeatResponse\x12R\n" +
 	"\vReportState\x12 .orchestrator.ReportStateRequest\x1a!.orchestrator.ReportStateResponse\x12X\n" +
 	"\rPlaceWorkload\x12\".orchestrator.PlaceWorkloadRequest\x1a#.orchestrator.PlaceWorkloadResponse\x12[\n" +
-	"\x0eRemoveWorkload\x12#.orchestrator.RemoveWorkloadRequest\x1a$.orchestrator.RemoveWorkloadResponseB4Z2github.com/eghansah/orchestrator/internal/grpc/genb\x06proto3"
+	"\x0eRemoveWorkload\x12#.orchestrator.RemoveWorkloadRequest\x1a$.orchestrator.RemoveWorkloadResponse\x12R\n" +
+	"\vForwardHTTP\x12 .orchestrator.ForwardHTTPRequest\x1a!.orchestrator.ForwardHTTPResponse\x12P\n" +
+	"\n" +
+	"ForwardTCP\x12\x1f.orchestrator.ForwardTCPRequest\x1a\x1d.orchestrator.ForwardTCPChunk(\x010\x01B4Z2github.com/eghansah/orchestrator/internal/grpc/genb\x06proto3"
 
 var (
 	file_node_proto_rawDescOnce sync.Once
@@ -403,37 +741,48 @@ func file_node_proto_rawDescGZIP() []byte {
 	return file_node_proto_rawDescData
 }
 
-var file_node_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_node_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_node_proto_goTypes = []any{
-	(*HeartbeatRequest)(nil),       // 0: orchestrator.HeartbeatRequest
-	(*HeartbeatResponse)(nil),      // 1: orchestrator.HeartbeatResponse
-	(*ReportStateRequest)(nil),     // 2: orchestrator.ReportStateRequest
-	(*ReportStateResponse)(nil),    // 3: orchestrator.ReportStateResponse
-	(*PlaceWorkloadRequest)(nil),   // 4: orchestrator.PlaceWorkloadRequest
-	(*PlaceWorkloadResponse)(nil),  // 5: orchestrator.PlaceWorkloadResponse
-	(*NodeResources)(nil),          // 6: orchestrator.NodeResources
-	(*ActualWorkloadState)(nil),    // 7: orchestrator.ActualWorkloadState
-	(*Workload)(nil),               // 8: orchestrator.Workload
-	(*RemoveWorkloadRequest)(nil),  // 9: orchestrator.RemoveWorkloadRequest
-	(*RemoveWorkloadResponse)(nil), // 10: orchestrator.RemoveWorkloadResponse
+	(*HttpHeader)(nil),             // 0: orchestrator.HttpHeader
+	(*ForwardHTTPRequest)(nil),     // 1: orchestrator.ForwardHTTPRequest
+	(*ForwardHTTPResponse)(nil),    // 2: orchestrator.ForwardHTTPResponse
+	(*HeartbeatRequest)(nil),       // 3: orchestrator.HeartbeatRequest
+	(*HeartbeatResponse)(nil),      // 4: orchestrator.HeartbeatResponse
+	(*ReportStateRequest)(nil),     // 5: orchestrator.ReportStateRequest
+	(*ReportStateResponse)(nil),    // 6: orchestrator.ReportStateResponse
+	(*PlaceWorkloadRequest)(nil),   // 7: orchestrator.PlaceWorkloadRequest
+	(*PlaceWorkloadResponse)(nil),  // 8: orchestrator.PlaceWorkloadResponse
+	(*ForwardTCPRequest)(nil),      // 9: orchestrator.ForwardTCPRequest
+	(*ForwardTCPChunk)(nil),        // 10: orchestrator.ForwardTCPChunk
+	(*NodeResources)(nil),          // 11: orchestrator.NodeResources
+	(*ActualWorkloadState)(nil),    // 12: orchestrator.ActualWorkloadState
+	(*Workload)(nil),               // 13: orchestrator.Workload
+	(*RemoveWorkloadRequest)(nil),  // 14: orchestrator.RemoveWorkloadRequest
+	(*RemoveWorkloadResponse)(nil), // 15: orchestrator.RemoveWorkloadResponse
 }
 var file_node_proto_depIdxs = []int32{
-	6,  // 0: orchestrator.HeartbeatRequest.resources:type_name -> orchestrator.NodeResources
-	7,  // 1: orchestrator.ReportStateRequest.state:type_name -> orchestrator.ActualWorkloadState
-	8,  // 2: orchestrator.PlaceWorkloadRequest.workload:type_name -> orchestrator.Workload
-	0,  // 3: orchestrator.NodeService.Heartbeat:input_type -> orchestrator.HeartbeatRequest
-	2,  // 4: orchestrator.NodeService.ReportState:input_type -> orchestrator.ReportStateRequest
-	4,  // 5: orchestrator.NodeService.PlaceWorkload:input_type -> orchestrator.PlaceWorkloadRequest
-	9,  // 6: orchestrator.NodeService.RemoveWorkload:input_type -> orchestrator.RemoveWorkloadRequest
-	1,  // 7: orchestrator.NodeService.Heartbeat:output_type -> orchestrator.HeartbeatResponse
-	3,  // 8: orchestrator.NodeService.ReportState:output_type -> orchestrator.ReportStateResponse
-	5,  // 9: orchestrator.NodeService.PlaceWorkload:output_type -> orchestrator.PlaceWorkloadResponse
-	10, // 10: orchestrator.NodeService.RemoveWorkload:output_type -> orchestrator.RemoveWorkloadResponse
-	7,  // [7:11] is the sub-list for method output_type
-	3,  // [3:7] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	0,  // 0: orchestrator.ForwardHTTPRequest.headers:type_name -> orchestrator.HttpHeader
+	0,  // 1: orchestrator.ForwardHTTPResponse.headers:type_name -> orchestrator.HttpHeader
+	11, // 2: orchestrator.HeartbeatRequest.resources:type_name -> orchestrator.NodeResources
+	12, // 3: orchestrator.ReportStateRequest.state:type_name -> orchestrator.ActualWorkloadState
+	13, // 4: orchestrator.PlaceWorkloadRequest.workload:type_name -> orchestrator.Workload
+	3,  // 5: orchestrator.NodeService.Heartbeat:input_type -> orchestrator.HeartbeatRequest
+	5,  // 6: orchestrator.NodeService.ReportState:input_type -> orchestrator.ReportStateRequest
+	7,  // 7: orchestrator.NodeService.PlaceWorkload:input_type -> orchestrator.PlaceWorkloadRequest
+	14, // 8: orchestrator.NodeService.RemoveWorkload:input_type -> orchestrator.RemoveWorkloadRequest
+	1,  // 9: orchestrator.NodeService.ForwardHTTP:input_type -> orchestrator.ForwardHTTPRequest
+	9,  // 10: orchestrator.NodeService.ForwardTCP:input_type -> orchestrator.ForwardTCPRequest
+	4,  // 11: orchestrator.NodeService.Heartbeat:output_type -> orchestrator.HeartbeatResponse
+	6,  // 12: orchestrator.NodeService.ReportState:output_type -> orchestrator.ReportStateResponse
+	8,  // 13: orchestrator.NodeService.PlaceWorkload:output_type -> orchestrator.PlaceWorkloadResponse
+	15, // 14: orchestrator.NodeService.RemoveWorkload:output_type -> orchestrator.RemoveWorkloadResponse
+	2,  // 15: orchestrator.NodeService.ForwardHTTP:output_type -> orchestrator.ForwardHTTPResponse
+	10, // 16: orchestrator.NodeService.ForwardTCP:output_type -> orchestrator.ForwardTCPChunk
+	11, // [11:17] is the sub-list for method output_type
+	5,  // [5:11] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_node_proto_init() }
@@ -442,13 +791,17 @@ func file_node_proto_init() {
 		return
 	}
 	file_types_proto_init()
+	file_node_proto_msgTypes[9].OneofWrappers = []any{
+		(*ForwardTCPRequest_AllocatedPort)(nil),
+		(*ForwardTCPRequest_Data)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_node_proto_rawDesc), len(file_node_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

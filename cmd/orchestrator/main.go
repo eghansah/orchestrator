@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	crand "crypto/rand"
+	"io"
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/hex"
@@ -28,10 +29,12 @@ import (
 
 	"github.com/eghansah/orchestrator/internal/agent"
 	"github.com/eghansah/orchestrator/internal/control"
+	orchdns "github.com/eghansah/orchestrator/internal/dns"
 	gen "github.com/eghansah/orchestrator/internal/grpc/gen"
 	"github.com/eghansah/orchestrator/internal/ingress"
 	"github.com/eghansah/orchestrator/internal/nerdctl"
 	internraft "github.com/eghansah/orchestrator/internal/raft"
+	"github.com/eghansah/orchestrator/internal/service"
 	"github.com/eghansah/orchestrator/internal/tlsutil"
 	"github.com/eghansah/orchestrator/internal/webui"
 	"github.com/eghansah/orchestrator/pkg/types"
@@ -45,11 +48,14 @@ type config struct {
 	raftAddr    string
 	webAddr     string
 	ingressAddr string // HTTP ingress proxy listen address; empty = disabled
+	dnsAddr     string // DNS listen address; empty = disabled
 	dataAddr    string // routable IP for container traffic; auto-detected if empty
 	dataDir     string
 	bootstrap   bool
 	joinAddr    string // gRPC address of an existing node to join through
 	joinToken   string // shared secret required to join the cluster
+	adminToken  string // bearer token required for all ControlService RPCs
+	webPassword string // password for the web console login form
 	nerdctlBin  string
 	namespace   string
 }
@@ -57,14 +63,17 @@ type config struct {
 func parseFlags() config {
 	var cfg config
 	flag.StringVar(&cfg.nodeID, "node-id", "", "unique node identifier (default: hostname)")
-	flag.StringVar(&cfg.grpcAddr, "grpc-addr", ":7946", "gRPC listen address (host:port)")
-	flag.StringVar(&cfg.raftAddr, "raft-addr", ":7947", "Raft TCP listen address (host:port)")
+	flag.StringVar(&cfg.grpcAddr, "grpc-addr", "127.0.0.1:7946", "gRPC listen address (host:port)")
+	flag.StringVar(&cfg.raftAddr, "raft-addr", "127.0.0.1:7947", "Raft TCP listen address (host:port)")
 	flag.StringVar(&cfg.dataDir, "data-dir", "", "persistent data directory (default: ~/.local/share/orchestrator)")
 	flag.BoolVar(&cfg.bootstrap, "bootstrap", false, "bootstrap a new single-node cluster")
 	flag.StringVar(&cfg.joinAddr, "join", "", "gRPC address of an existing cluster node to join")
 	flag.StringVar(&cfg.joinToken, "join-token", "", "shared secret required to join the cluster")
+	flag.StringVar(&cfg.adminToken, "admin-token", "", "bearer token for ControlService RPCs (auto-generated if bootstrapping)")
+	flag.StringVar(&cfg.webPassword, "web-password", "", "password for web console login (auto-generated if bootstrapping)")
 	flag.StringVar(&cfg.webAddr, "web-addr", ":7948", "web console HTTP listen address (empty to disable)")
 	flag.StringVar(&cfg.ingressAddr, "ingress-addr", ":8080", "HTTP ingress proxy listen address (empty to disable)")
+	flag.StringVar(&cfg.dnsAddr, "dns-addr", "", "DNS listen address for svc.local zone, e.g. :5353 (empty to disable; any port ≥1024 works without root)")
 	flag.StringVar(&cfg.dataAddr, "data-addr", "", "routable IP for container traffic (auto-detected if empty)")
 	flag.StringVar(&cfg.nerdctlBin, "nerdctl", "nerdctl", "path to nerdctl binary")
 	flag.StringVar(&cfg.namespace, "namespace", "orchestrator", "nerdctl namespace for managed containers")
@@ -88,6 +97,8 @@ func parseFlags() config {
 func main() {
 	cfg := parseFlags()
 	cfg.joinToken = resolveJoinToken(cfg.dataDir, cfg.joinToken, cfg.bootstrap)
+	cfg.adminToken = resolveAdminToken(cfg.dataDir, cfg.adminToken, cfg.bootstrap)
+	cfg.webPassword = resolveWebPassword(cfg.dataDir, cfg.webPassword, cfg.bootstrap)
 	if cfg.dataAddr == "" {
 		cfg.dataAddr = detectDataIP()
 	}
@@ -102,7 +113,14 @@ func main() {
 	slog.Info("TLS identity ready", "node-id", cfg.nodeID)
 
 	// 2. nerdctl client -------------------------------------------------------
-	nc, err := nerdctl.NewClient(cfg.nerdctlBin, cfg.namespace, cfg.dataDir)
+	// Inject DNS IP + port only when DNS server is enabled so containers resolve svc.local.
+	var nerdctlDNSIP string
+	var nerdctlDNSPort uint32
+	if cfg.dnsAddr != "" {
+		nerdctlDNSIP = cfg.dataAddr
+		nerdctlDNSPort = parseDNSPort(cfg.dnsAddr)
+	}
+	nc, err := nerdctl.NewClient(cfg.nerdctlBin, cfg.namespace, cfg.dataDir, nerdctlDNSIP, nerdctlDNSPort)
 	dieOnErr(err, "create nerdctl client")
 	if err := nc.Probe(ctx); err != nil {
 		slog.Error("nerdctl probe failed — is nerdctl installed in rootless mode?", "err", err)
@@ -152,7 +170,7 @@ func main() {
 
 	// 5b. Web console (optional) ----------------------------------------------
 	if cfg.webAddr != "" {
-		webSrv := webui.New(peer, ctrl)
+		webSrv := webui.New(peer, ctrl, cfg.adminToken, cfg.webPassword)
 		httpSrv := &http.Server{Addr: cfg.webAddr, Handler: webSrv.Handler()}
 		go func() {
 			slog.Info("web console listening", "addr", cfg.webAddr)
@@ -165,7 +183,7 @@ func main() {
 
 	// 5c. Ingress proxy (optional) --------------------------------------------
 	if cfg.ingressAddr != "" {
-		proxy := ingress.New(peer)
+		proxy := ingress.New(peer, cfg.nodeID, tlsCert)
 		ingressSrv := &http.Server{Addr: cfg.ingressAddr, Handler: proxy}
 		go func() {
 			slog.Info("ingress proxy listening", "addr", cfg.ingressAddr)
@@ -176,10 +194,32 @@ func main() {
 		defer ingressSrv.Shutdown(context.Background()) //nolint:errcheck
 	}
 
+	// 5d. DNS server (optional) -----------------------------------------------
+	if cfg.dnsAddr != "" {
+		dnsSrv := orchdns.New(peer, cfg.dataAddr)
+		go func() {
+			slog.Info("DNS server listening", "addr", cfg.dnsAddr)
+			if err := dnsSrv.ListenAndServe(cfg.dnsAddr); err != nil {
+				slog.Error("DNS server error", "err", err)
+			}
+		}()
+	}
+
+	// 5e. Service TCP proxy ---------------------------------------------------
+	svcMgr := service.New(peer, cfg.nodeID, cfg.dataAddr, tlsCert)
+	go func() {
+		if err := svcMgr.Run(ctx); err != nil && err != context.Canceled {
+			slog.Error("service manager error", "err", err)
+		}
+	}()
+
 	serverTLS := tlsutil.ServerTLSConfig(tlsCert, isPinned)
 	grpcSrv := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(serverTLS)),
-		grpc.UnaryInterceptor(tlsutil.NodeAuthInterceptor(isPinned)),
+		grpc.ChainUnaryInterceptor(
+			tlsutil.NodeAuthInterceptor(isPinned),
+			tlsutil.ControlAuthInterceptor(cfg.adminToken),
+		),
 	)
 	gen.RegisterNodeServiceServer(grpcSrv, ns)
 	gen.RegisterControlServiceServer(grpcSrv, ctrl)
@@ -294,6 +334,109 @@ func (ns *nodeServer) Heartbeat(_ context.Context, req *gen.HeartbeatRequest) (*
 		LeaderAddress: leaderGRPCAddr,
 		TlsCert:       ns.ownCertDER, // joining node pins this for future mTLS connections
 	}, nil
+}
+
+// ForwardHTTP tunnels an HTTP request to a container bound on 127.0.0.1 on this node.
+// Called by the ingress proxy on a remote node when the target container is local here.
+func (ns *nodeServer) ForwardHTTP(ctx context.Context, req *gen.ForwardHTTPRequest) (*gen.ForwardHTTPResponse, error) {
+	if req.AllocatedPort == 0 {
+		return nil, status.Error(codes.InvalidArgument, "allocated_port is required")
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d%s", req.AllocatedPort, req.Path)
+	httpReq, err := http.NewRequestWithContext(ctx, req.Method, url, bytes.NewReader(req.Body))
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "build request: %v", err)
+	}
+	for _, h := range req.Headers {
+		httpReq.Header.Add(h.Name, h.Value)
+	}
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "forward: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "read body: %v", err)
+	}
+	out := &gen.ForwardHTTPResponse{StatusCode: int32(resp.StatusCode), Body: body}
+	for name, vals := range resp.Header {
+		for _, v := range vals {
+			out.Headers = append(out.Headers, &gen.HttpHeader{Name: name, Value: v})
+		}
+	}
+	return out, nil
+}
+
+// ForwardTCP tunnels raw TCP bytes to a container bound on 127.0.0.1 on this node.
+// The first stream message must supply the allocated_port; subsequent messages carry data.
+func (ns *nodeServer) ForwardTCP(stream gen.NodeService_ForwardTCPServer) error {
+	// First message: get the port to dial.
+	first, err := stream.Recv()
+	if err != nil {
+		return status.Errorf(codes.InvalidArgument, "receive port: %v", err)
+	}
+	portMsg, ok := first.Payload.(*gen.ForwardTCPRequest_AllocatedPort)
+	if !ok || portMsg.AllocatedPort == 0 {
+		return status.Error(codes.InvalidArgument, "first message must set allocated_port")
+	}
+
+	backend, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", portMsg.AllocatedPort))
+	if err != nil {
+		return status.Errorf(codes.Unavailable, "dial backend: %v", err)
+	}
+	defer backend.Close()
+
+	ctx := stream.Context()
+	errCh := make(chan error, 2)
+
+	// stream → backend
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				backend.(*net.TCPConn).CloseWrite() //nolint:errcheck
+				errCh <- err
+				return
+			}
+			if d, ok := msg.Payload.(*gen.ForwardTCPRequest_Data); ok {
+				if _, err := backend.Write(d.Data); err != nil {
+					errCh <- err
+					return
+				}
+			}
+		}
+	}()
+
+	// backend → stream
+	go func() {
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := backend.Read(buf)
+			if n > 0 {
+				chunk := make([]byte, n)
+				copy(chunk, buf[:n])
+				if sendErr := stream.Send(&gen.ForwardTCPChunk{Data: chunk}); sendErr != nil {
+					errCh <- sendErr
+					return
+				}
+			}
+			if err != nil {
+				errCh <- err
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-errCh:
+		if err == io.EOF {
+			return nil
+		}
+		return err
+	}
 }
 
 // ── Background goroutines ─────────────────────────────────────────────────────
@@ -514,6 +657,81 @@ func resolveJoinToken(dataDir, flagToken string, bootstrap bool) string {
 	return token
 }
 
+// resolveAdminToken follows the same precedence as resolveJoinToken:
+// explicit flag → saved file → auto-generate (bootstrap only).
+func resolveAdminToken(dataDir, flagToken string, bootstrap bool) string {
+	tokenFile := filepath.Join(dataDir, "admin-token")
+
+	if flagToken != "" {
+		if bootstrap {
+			if err := os.MkdirAll(dataDir, 0o700); err == nil {
+				_ = os.WriteFile(tokenFile, []byte(flagToken), 0o600)
+			}
+		}
+		return flagToken
+	}
+
+	if raw, err := os.ReadFile(tokenFile); err == nil {
+		if t := strings.TrimSpace(string(raw)); t != "" {
+			slog.Info("loaded admin token from file", "path", tokenFile)
+			return t
+		}
+	}
+
+	if !bootstrap {
+		slog.Warn("no admin token configured; ControlService RPCs are unauthenticated")
+		return ""
+	}
+
+	token := generateToken()
+	if err := os.MkdirAll(dataDir, 0o700); err == nil {
+		if err := os.WriteFile(tokenFile, []byte(token), 0o600); err != nil {
+			slog.Warn("could not save admin token to file", "path", tokenFile, "err", err)
+		}
+	}
+	fmt.Printf("\n  *** Admin token: %s ***\n", token)
+	fmt.Printf("  Store this in ~/.config/orchestrator/token or use: --token %s\n\n", token)
+	return token
+}
+
+// resolveWebPassword follows the same precedence as resolveAdminToken.
+// The web password is separate from the admin token — it authenticates the
+// browser login form and is never shown again after bootstrap.
+func resolveWebPassword(dataDir, flagVal string, bootstrap bool) string {
+	pwFile := filepath.Join(dataDir, "web-password")
+
+	if flagVal != "" {
+		if bootstrap {
+			if err := os.MkdirAll(dataDir, 0o700); err == nil {
+				_ = os.WriteFile(pwFile, []byte(flagVal), 0o600)
+			}
+		}
+		return flagVal
+	}
+
+	if raw, err := os.ReadFile(pwFile); err == nil {
+		if p := strings.TrimSpace(string(raw)); p != "" {
+			slog.Info("loaded web console password from file", "path", pwFile)
+			return p
+		}
+	}
+
+	if !bootstrap {
+		slog.Warn("no web console password configured; web console login is disabled")
+		return ""
+	}
+
+	pw := generateToken()
+	if err := os.MkdirAll(dataDir, 0o700); err == nil {
+		if err := os.WriteFile(pwFile, []byte(pw), 0o600); err != nil {
+			slog.Warn("could not save web console password to file", "path", pwFile, "err", err)
+		}
+	}
+	fmt.Printf("\n  *** Web console password: %s ***\n", pw)
+	fmt.Printf("  Login at the web console with username: admin\n\n")
+	return pw
+}
+
 func generateToken() string {
 	b := make([]byte, 16) // 128-bit, 32 hex chars
 	if _, err := crand.Read(b); err != nil {
@@ -543,4 +761,18 @@ func dieOnErr(err error, msg string) {
 		slog.Error(msg, "err", err)
 		os.Exit(1)
 	}
+}
+
+// parseDNSPort extracts the port number from a listen address like ":5353" or "0.0.0.0:5353".
+// Returns 53 if the address cannot be parsed.
+func parseDNSPort(addr string) uint32 {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 53
+	}
+	var p uint32
+	if _, err := fmt.Sscanf(portStr, "%d", &p); err != nil || p == 0 {
+		return 53
+	}
+	return p
 }

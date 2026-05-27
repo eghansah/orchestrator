@@ -22,6 +22,33 @@ service NodeService {
 
   // RemoveWorkload instructs the agent to stop and remove a workload.
   rpc RemoveWorkload(RemoveWorkloadRequest) returns (RemoveWorkloadResponse);
+
+  // ForwardHTTP tunnels an HTTP request to a container on this node.
+  // Used by the ingress proxy on a remote node to reach a locally-bound container.
+  rpc ForwardHTTP(ForwardHTTPRequest) returns (ForwardHTTPResponse);
+
+  // ForwardTCP tunnels raw TCP bytes to a locally-bound container port.
+  // The first client message must set allocated_port; subsequent messages carry data.
+  rpc ForwardTCP(stream ForwardTCPRequest) returns (stream ForwardTCPChunk);
+}
+
+message HttpHeader {
+  string name  = 1;
+  string value = 2;
+}
+
+message ForwardHTTPRequest {
+  uint32 allocated_port        = 1; // host port bound on 127.0.0.1
+  string method                = 2;
+  string path                  = 3; // URL path + raw query
+  repeated HttpHeader headers  = 4;
+  bytes  body                  = 5;
+}
+
+message ForwardHTTPResponse {
+  int32  status_code           = 1;
+  repeated HttpHeader headers  = 2;
+  bytes  body                  = 3;
 }
 
 message HeartbeatRequest {
@@ -54,5 +81,16 @@ message PlaceWorkloadRequest {
 message PlaceWorkloadResponse {
   bool   accepted = 1;
   string reason   = 2; // non-empty on rejection
+}
+
+message ForwardTCPRequest {
+  oneof payload {
+    uint32 allocated_port = 1; // first message: local port to dial on this node
+    bytes  data           = 2; // subsequent messages: raw bytes to forward
+  }
+}
+
+message ForwardTCPChunk {
+  bytes data = 1;
 }
 

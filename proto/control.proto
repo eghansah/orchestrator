@@ -39,6 +39,15 @@ service ControlService {
 
   // ListIngress returns all ingress routing rules.
   rpc ListIngress(ListIngressRequest) returns (ListIngressResponse);
+
+  // CreateService creates a named service with a system-assigned TCP port.
+  rpc CreateService(CreateServiceRequest) returns (CreateServiceResponse);
+
+  // DeleteService removes a service.
+  rpc DeleteService(DeleteServiceRequest) returns (DeleteServiceResponse);
+
+  // ListService returns all services.
+  rpc ListService(ListServiceRequest) returns (ListServiceResponse);
 }
 
 message SubmitContainerRequest {
@@ -113,4 +122,32 @@ message ListIngressRequest {}
 
 message ListIngressResponse {
   repeated IngressRule rules = 1;
+}
+
+message CreateServiceRequest {
+  string name        = 1; // short DNS label, e.g. "api"
+  string workload_id = 2;
+  uint32 target_port = 3; // container port to proxy to
+}
+
+message CreateServiceResponse {
+  string service_id  = 1;
+  uint32 system_port = 2; // auto-assigned
+  bool   accepted    = 3;
+  string reason      = 4;
+}
+
+message DeleteServiceRequest {
+  string service_id = 1;
+}
+
+message DeleteServiceResponse {
+  bool   accepted = 1;
+  string reason   = 2;
+}
+
+message ListServiceRequest {}
+
+message ListServiceResponse {
+  repeated Service services = 1;
 }

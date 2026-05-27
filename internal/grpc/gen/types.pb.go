@@ -403,6 +403,67 @@ func (x *VolumeMount) GetReadOnly() bool {
 	return false
 }
 
+// PortAllocation records the host port the orchestrator bound for one container port.
+type PortAllocation struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ContainerPort uint32                 `protobuf:"varint,1,opt,name=container_port,json=containerPort,proto3" json:"container_port,omitempty"`
+	AllocatedPort uint32                 `protobuf:"varint,2,opt,name=allocated_port,json=allocatedPort,proto3" json:"allocated_port,omitempty"` // loopback/dataIP port chosen by the leader
+	Protocol      string                 `protobuf:"bytes,3,opt,name=protocol,proto3" json:"protocol,omitempty"`                                 // tcp | udp
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PortAllocation) Reset() {
+	*x = PortAllocation{}
+	mi := &file_types_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PortAllocation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PortAllocation) ProtoMessage() {}
+
+func (x *PortAllocation) ProtoReflect() protoreflect.Message {
+	mi := &file_types_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PortAllocation.ProtoReflect.Descriptor instead.
+func (*PortAllocation) Descriptor() ([]byte, []int) {
+	return file_types_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *PortAllocation) GetContainerPort() uint32 {
+	if x != nil {
+		return x.ContainerPort
+	}
+	return 0
+}
+
+func (x *PortAllocation) GetAllocatedPort() uint32 {
+	if x != nil {
+		return x.AllocatedPort
+	}
+	return 0
+}
+
+func (x *PortAllocation) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
+}
+
 type Workload struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -410,17 +471,18 @@ type Workload struct {
 	//
 	//	*Workload_Container
 	//	*Workload_Stack
-	Spec          isWorkload_Spec `protobuf_oneof:"spec"`
-	Phase         WorkloadPhase   `protobuf:"varint,4,opt,name=phase,proto3,enum=orchestrator.WorkloadPhase" json:"phase,omitempty"`
-	NodeId        string          `protobuf:"bytes,5,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`           // assigned node; empty = unscheduled
-	CreatedAt     int64           `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"` // unix seconds
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Spec            isWorkload_Spec   `protobuf_oneof:"spec"`
+	Phase           WorkloadPhase     `protobuf:"varint,4,opt,name=phase,proto3,enum=orchestrator.WorkloadPhase" json:"phase,omitempty"`
+	NodeId          string            `protobuf:"bytes,5,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`                            // assigned node; empty = unscheduled
+	CreatedAt       int64             `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`                  // unix seconds
+	PortAllocations []*PortAllocation `protobuf:"bytes,7,rep,name=port_allocations,json=portAllocations,proto3" json:"port_allocations,omitempty"` // auto-assigned host ports
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Workload) Reset() {
 	*x = Workload{}
-	mi := &file_types_proto_msgTypes[4]
+	mi := &file_types_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -432,7 +494,7 @@ func (x *Workload) String() string {
 func (*Workload) ProtoMessage() {}
 
 func (x *Workload) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[4]
+	mi := &file_types_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -445,7 +507,7 @@ func (x *Workload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Workload.ProtoReflect.Descriptor instead.
 func (*Workload) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{4}
+	return file_types_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Workload) GetId() string {
@@ -501,6 +563,13 @@ func (x *Workload) GetCreatedAt() int64 {
 	return 0
 }
 
+func (x *Workload) GetPortAllocations() []*PortAllocation {
+	if x != nil {
+		return x.PortAllocations
+	}
+	return nil
+}
+
 type isWorkload_Spec interface {
 	isWorkload_Spec()
 }
@@ -532,7 +601,7 @@ type Node struct {
 
 func (x *Node) Reset() {
 	*x = Node{}
-	mi := &file_types_proto_msgTypes[5]
+	mi := &file_types_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -544,7 +613,7 @@ func (x *Node) String() string {
 func (*Node) ProtoMessage() {}
 
 func (x *Node) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[5]
+	mi := &file_types_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -557,7 +626,7 @@ func (x *Node) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Node.ProtoReflect.Descriptor instead.
 func (*Node) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{5}
+	return file_types_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Node) GetNodeId() string {
@@ -623,7 +692,7 @@ type IngressRule struct {
 
 func (x *IngressRule) Reset() {
 	*x = IngressRule{}
-	mi := &file_types_proto_msgTypes[6]
+	mi := &file_types_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -635,7 +704,7 @@ func (x *IngressRule) String() string {
 func (*IngressRule) ProtoMessage() {}
 
 func (x *IngressRule) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[6]
+	mi := &file_types_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -648,7 +717,7 @@ func (x *IngressRule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IngressRule.ProtoReflect.Descriptor instead.
 func (*IngressRule) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{6}
+	return file_types_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *IngressRule) GetId() string {
@@ -693,6 +762,93 @@ func (x *IngressRule) GetCreatedAt() int64 {
 	return 0
 }
 
+// Service exposes a named TCP endpoint for a workload. The system auto-assigns
+// a port from the service pool (40000–42767). Containers reach it via DNS
+// <name>.svc.local on that port.
+type Service struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"` // short DNS label, e.g. "api"
+	WorkloadId    string                 `protobuf:"bytes,3,opt,name=workload_id,json=workloadId,proto3" json:"workload_id,omitempty"`
+	TargetPort    uint32                 `protobuf:"varint,4,opt,name=target_port,json=targetPort,proto3" json:"target_port,omitempty"` // container port to proxy to
+	SystemPort    uint32                 `protobuf:"varint,5,opt,name=system_port,json=systemPort,proto3" json:"system_port,omitempty"` // auto-assigned host port (40000–42767)
+	CreatedAt     int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`    // unix seconds
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Service) Reset() {
+	*x = Service{}
+	mi := &file_types_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Service) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Service) ProtoMessage() {}
+
+func (x *Service) ProtoReflect() protoreflect.Message {
+	mi := &file_types_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Service.ProtoReflect.Descriptor instead.
+func (*Service) Descriptor() ([]byte, []int) {
+	return file_types_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *Service) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Service) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Service) GetWorkloadId() string {
+	if x != nil {
+		return x.WorkloadId
+	}
+	return ""
+}
+
+func (x *Service) GetTargetPort() uint32 {
+	if x != nil {
+		return x.TargetPort
+	}
+	return 0
+}
+
+func (x *Service) GetSystemPort() uint32 {
+	if x != nil {
+		return x.SystemPort
+	}
+	return 0
+}
+
+func (x *Service) GetCreatedAt() int64 {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return 0
+}
+
 type NodeResources struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CpuCores      uint32                 `protobuf:"varint,1,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"`
@@ -704,7 +860,7 @@ type NodeResources struct {
 
 func (x *NodeResources) Reset() {
 	*x = NodeResources{}
-	mi := &file_types_proto_msgTypes[7]
+	mi := &file_types_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -716,7 +872,7 @@ func (x *NodeResources) String() string {
 func (*NodeResources) ProtoMessage() {}
 
 func (x *NodeResources) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[7]
+	mi := &file_types_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -729,7 +885,7 @@ func (x *NodeResources) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeResources.ProtoReflect.Descriptor instead.
 func (*NodeResources) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{7}
+	return file_types_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *NodeResources) GetCpuCores() uint32 {
@@ -762,7 +918,7 @@ type RemoveWorkloadRequest struct {
 
 func (x *RemoveWorkloadRequest) Reset() {
 	*x = RemoveWorkloadRequest{}
-	mi := &file_types_proto_msgTypes[8]
+	mi := &file_types_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -774,7 +930,7 @@ func (x *RemoveWorkloadRequest) String() string {
 func (*RemoveWorkloadRequest) ProtoMessage() {}
 
 func (x *RemoveWorkloadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[8]
+	mi := &file_types_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -787,7 +943,7 @@ func (x *RemoveWorkloadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveWorkloadRequest.ProtoReflect.Descriptor instead.
 func (*RemoveWorkloadRequest) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{8}
+	return file_types_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *RemoveWorkloadRequest) GetWorkloadId() string {
@@ -807,7 +963,7 @@ type RemoveWorkloadResponse struct {
 
 func (x *RemoveWorkloadResponse) Reset() {
 	*x = RemoveWorkloadResponse{}
-	mi := &file_types_proto_msgTypes[9]
+	mi := &file_types_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -819,7 +975,7 @@ func (x *RemoveWorkloadResponse) String() string {
 func (*RemoveWorkloadResponse) ProtoMessage() {}
 
 func (x *RemoveWorkloadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[9]
+	mi := &file_types_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -832,7 +988,7 @@ func (x *RemoveWorkloadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveWorkloadResponse.ProtoReflect.Descriptor instead.
 func (*RemoveWorkloadResponse) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{9}
+	return file_types_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *RemoveWorkloadResponse) GetAccepted() bool {
@@ -862,7 +1018,7 @@ type ActualContainer struct {
 
 func (x *ActualContainer) Reset() {
 	*x = ActualContainer{}
-	mi := &file_types_proto_msgTypes[10]
+	mi := &file_types_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -874,7 +1030,7 @@ func (x *ActualContainer) String() string {
 func (*ActualContainer) ProtoMessage() {}
 
 func (x *ActualContainer) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[10]
+	mi := &file_types_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -887,7 +1043,7 @@ func (x *ActualContainer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActualContainer.ProtoReflect.Descriptor instead.
 func (*ActualContainer) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{10}
+	return file_types_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ActualContainer) GetWorkloadId() string {
@@ -936,7 +1092,7 @@ type ActualStack struct {
 
 func (x *ActualStack) Reset() {
 	*x = ActualStack{}
-	mi := &file_types_proto_msgTypes[11]
+	mi := &file_types_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -948,7 +1104,7 @@ func (x *ActualStack) String() string {
 func (*ActualStack) ProtoMessage() {}
 
 func (x *ActualStack) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[11]
+	mi := &file_types_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -961,7 +1117,7 @@ func (x *ActualStack) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActualStack.ProtoReflect.Descriptor instead.
 func (*ActualStack) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{11}
+	return file_types_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ActualStack) GetWorkloadId() string {
@@ -997,7 +1153,7 @@ type ActualWorkloadState struct {
 
 func (x *ActualWorkloadState) Reset() {
 	*x = ActualWorkloadState{}
-	mi := &file_types_proto_msgTypes[12]
+	mi := &file_types_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1009,7 +1165,7 @@ func (x *ActualWorkloadState) String() string {
 func (*ActualWorkloadState) ProtoMessage() {}
 
 func (x *ActualWorkloadState) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[12]
+	mi := &file_types_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1022,7 +1178,7 @@ func (x *ActualWorkloadState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActualWorkloadState.ProtoReflect.Descriptor instead.
 func (*ActualWorkloadState) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{12}
+	return file_types_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ActualWorkloadState) GetNodeId() string {
@@ -1080,7 +1236,11 @@ const file_types_proto_rawDesc = "" +
 	"\vVolumeMount\x12\x16\n" +
 	"\x06source\x18\x01 \x01(\tR\x06source\x12\x16\n" +
 	"\x06target\x18\x02 \x01(\tR\x06target\x12\x1b\n" +
-	"\tread_only\x18\x03 \x01(\bR\breadOnly\"\x82\x02\n" +
+	"\tread_only\x18\x03 \x01(\bR\breadOnly\"z\n" +
+	"\x0ePortAllocation\x12%\n" +
+	"\x0econtainer_port\x18\x01 \x01(\rR\rcontainerPort\x12%\n" +
+	"\x0eallocated_port\x18\x02 \x01(\rR\rallocatedPort\x12\x1a\n" +
+	"\bprotocol\x18\x03 \x01(\tR\bprotocol\"\xcb\x02\n" +
 	"\bWorkload\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12;\n" +
 	"\tcontainer\x18\x02 \x01(\v2\x1b.orchestrator.ContainerSpecH\x00R\tcontainer\x126\n" +
@@ -1088,7 +1248,8 @@ const file_types_proto_rawDesc = "" +
 	"\x05phase\x18\x04 \x01(\x0e2\x1b.orchestrator.WorkloadPhaseR\x05phase\x12\x17\n" +
 	"\anode_id\x18\x05 \x01(\tR\x06nodeId\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x06 \x01(\x03R\tcreatedAtB\x06\n" +
+	"created_at\x18\x06 \x01(\x03R\tcreatedAt\x12G\n" +
+	"\x10port_allocations\x18\a \x03(\v2\x1c.orchestrator.PortAllocationR\x0fportAllocationsB\x06\n" +
 	"\x04spec\"\xfc\x01\n" +
 	"\x04Node\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x18\n" +
@@ -1107,6 +1268,17 @@ const file_types_proto_rawDesc = "" +
 	"\vworkload_id\x18\x04 \x01(\tR\n" +
 	"workloadId\x12\x12\n" +
 	"\x04port\x18\x05 \x01(\rR\x04port\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\x06 \x01(\x03R\tcreatedAt\"\xaf\x01\n" +
+	"\aService\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1f\n" +
+	"\vworkload_id\x18\x03 \x01(\tR\n" +
+	"workloadId\x12\x1f\n" +
+	"\vtarget_port\x18\x04 \x01(\rR\n" +
+	"targetPort\x12\x1f\n" +
+	"\vsystem_port\x18\x05 \x01(\rR\n" +
+	"systemPort\x12\x1d\n" +
 	"\n" +
 	"created_at\x18\x06 \x01(\x03R\tcreatedAt\"n\n" +
 	"\rNodeResources\x12\x1b\n" +
@@ -1169,7 +1341,7 @@ func file_types_proto_rawDescGZIP() []byte {
 }
 
 var file_types_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_types_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_types_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_types_proto_goTypes = []any{
 	(WorkloadPhase)(0),             // 0: orchestrator.WorkloadPhase
 	(NodeStatus)(0),                // 1: orchestrator.NodeStatus
@@ -1177,34 +1349,37 @@ var file_types_proto_goTypes = []any{
 	(*ComposeStackSpec)(nil),       // 3: orchestrator.ComposeStackSpec
 	(*PortMapping)(nil),            // 4: orchestrator.PortMapping
 	(*VolumeMount)(nil),            // 5: orchestrator.VolumeMount
-	(*Workload)(nil),               // 6: orchestrator.Workload
-	(*Node)(nil),                   // 7: orchestrator.Node
-	(*IngressRule)(nil),            // 8: orchestrator.IngressRule
-	(*NodeResources)(nil),          // 9: orchestrator.NodeResources
-	(*RemoveWorkloadRequest)(nil),  // 10: orchestrator.RemoveWorkloadRequest
-	(*RemoveWorkloadResponse)(nil), // 11: orchestrator.RemoveWorkloadResponse
-	(*ActualContainer)(nil),        // 12: orchestrator.ActualContainer
-	(*ActualStack)(nil),            // 13: orchestrator.ActualStack
-	(*ActualWorkloadState)(nil),    // 14: orchestrator.ActualWorkloadState
-	nil,                            // 15: orchestrator.ContainerSpec.LabelsEntry
+	(*PortAllocation)(nil),         // 6: orchestrator.PortAllocation
+	(*Workload)(nil),               // 7: orchestrator.Workload
+	(*Node)(nil),                   // 8: orchestrator.Node
+	(*IngressRule)(nil),            // 9: orchestrator.IngressRule
+	(*Service)(nil),                // 10: orchestrator.Service
+	(*NodeResources)(nil),          // 11: orchestrator.NodeResources
+	(*RemoveWorkloadRequest)(nil),  // 12: orchestrator.RemoveWorkloadRequest
+	(*RemoveWorkloadResponse)(nil), // 13: orchestrator.RemoveWorkloadResponse
+	(*ActualContainer)(nil),        // 14: orchestrator.ActualContainer
+	(*ActualStack)(nil),            // 15: orchestrator.ActualStack
+	(*ActualWorkloadState)(nil),    // 16: orchestrator.ActualWorkloadState
+	nil,                            // 17: orchestrator.ContainerSpec.LabelsEntry
 }
 var file_types_proto_depIdxs = []int32{
 	4,  // 0: orchestrator.ContainerSpec.ports:type_name -> orchestrator.PortMapping
 	5,  // 1: orchestrator.ContainerSpec.volumes:type_name -> orchestrator.VolumeMount
-	15, // 2: orchestrator.ContainerSpec.labels:type_name -> orchestrator.ContainerSpec.LabelsEntry
+	17, // 2: orchestrator.ContainerSpec.labels:type_name -> orchestrator.ContainerSpec.LabelsEntry
 	2,  // 3: orchestrator.Workload.container:type_name -> orchestrator.ContainerSpec
 	3,  // 4: orchestrator.Workload.stack:type_name -> orchestrator.ComposeStackSpec
 	0,  // 5: orchestrator.Workload.phase:type_name -> orchestrator.WorkloadPhase
-	1,  // 6: orchestrator.Node.status:type_name -> orchestrator.NodeStatus
-	9,  // 7: orchestrator.Node.resources:type_name -> orchestrator.NodeResources
-	12, // 8: orchestrator.ActualStack.services:type_name -> orchestrator.ActualContainer
-	12, // 9: orchestrator.ActualWorkloadState.containers:type_name -> orchestrator.ActualContainer
-	13, // 10: orchestrator.ActualWorkloadState.stacks:type_name -> orchestrator.ActualStack
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	6,  // 6: orchestrator.Workload.port_allocations:type_name -> orchestrator.PortAllocation
+	1,  // 7: orchestrator.Node.status:type_name -> orchestrator.NodeStatus
+	11, // 8: orchestrator.Node.resources:type_name -> orchestrator.NodeResources
+	14, // 9: orchestrator.ActualStack.services:type_name -> orchestrator.ActualContainer
+	14, // 10: orchestrator.ActualWorkloadState.containers:type_name -> orchestrator.ActualContainer
+	15, // 11: orchestrator.ActualWorkloadState.stacks:type_name -> orchestrator.ActualStack
+	12, // [12:12] is the sub-list for method output_type
+	12, // [12:12] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_types_proto_init() }
@@ -1212,7 +1387,7 @@ func file_types_proto_init() {
 	if File_types_proto != nil {
 		return
 	}
-	file_types_proto_msgTypes[4].OneofWrappers = []any{
+	file_types_proto_msgTypes[5].OneofWrappers = []any{
 		(*Workload_Container)(nil),
 		(*Workload_Stack)(nil),
 	}
@@ -1222,7 +1397,7 @@ func file_types_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_types_proto_rawDesc), len(file_types_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   14,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

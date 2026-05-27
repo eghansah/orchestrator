@@ -3,13 +3,16 @@ package tlsutil
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
@@ -59,6 +62,30 @@ func ClientTLSConfig(ownCert tls.Certificate, serverCertDER []byte) *tls.Config 
 		}
 	}
 	return cfg
+}
+
+// ControlAuthInterceptor is a gRPC unary server interceptor that enforces bearer
+// token authentication for all ControlService RPCs. NodeService RPCs are skipped
+// because they are already protected by mTLS cert pinning.
+func ControlAuthInterceptor(token string) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if !strings.HasPrefix(info.FullMethod, "/orchestrator.ControlService/") {
+			return handler(ctx, req)
+		}
+		md, ok := metadata.FromIncomingContext(ctx)
+		if !ok {
+			return nil, status.Error(codes.Unauthenticated, "missing metadata")
+		}
+		vals := md.Get("authorization")
+		if len(vals) == 0 {
+			return nil, status.Error(codes.Unauthenticated, "authorization token required")
+		}
+		provided := strings.TrimPrefix(vals[0], "Bearer ")
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+			return nil, status.Error(codes.Unauthenticated, "invalid token")
+		}
+		return handler(ctx, req)
+	}
 }
 
 // NodeAuthInterceptor is a gRPC unary server interceptor that enforces mTLS
