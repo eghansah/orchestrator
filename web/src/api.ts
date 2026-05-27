@@ -98,6 +98,15 @@ export function setAuthErrorHandler(fn: () => void) { _onAuthError = fn; }
 
 export class AuthError extends Error {}
 
+// ── Base path ─────────────────────────────────────────────────────────────────
+
+// Reads the prefix injected by the Go server via <meta name="base-path">.
+// Returns "" in dev mode (Vite serves index.html with an empty content value).
+function getBasePath(): string {
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="base-path"]');
+  return meta?.content?.replace(/\/$/, "") ?? "";
+}
+
 // ── REST client ───────────────────────────────────────────────────────────────
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -105,7 +114,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (body) headers["Content-Type"] = "application/json";
   if (_token) headers["Authorization"] = `Bearer ${_token}`;
 
-  const res = await fetch(path, {
+  const res = await fetch(getBasePath() + path, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
@@ -126,7 +135,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export const api = {
   login: async (username: string, password: string): Promise<{ token: string }> => {
-    const res = await fetch("/api/auth/login", {
+    const res = await fetch(getBasePath() + "/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),

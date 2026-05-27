@@ -47,6 +47,7 @@ type config struct {
 	grpcAddr    string
 	raftAddr    string
 	webAddr     string
+	webPrefix   string // URL prefix for the web console, e.g. "/console" (empty = root)
 	ingressAddr string // HTTP ingress proxy listen address; empty = disabled
 	dnsAddr     string // DNS listen address; empty = disabled
 	dataAddr    string // routable IP for container traffic; auto-detected if empty
@@ -72,6 +73,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.adminToken, "admin-token", "", "bearer token for ControlService RPCs (auto-generated if bootstrapping)")
 	flag.StringVar(&cfg.webPassword, "web-password", "", "password for web console login (auto-generated if bootstrapping)")
 	flag.StringVar(&cfg.webAddr, "web-addr", ":7948", "web console HTTP listen address (empty to disable)")
+	flag.StringVar(&cfg.webPrefix, "web-prefix", "", "URL prefix for the web console, e.g. /console (empty = serve at root)")
 	flag.StringVar(&cfg.ingressAddr, "ingress-addr", ":8080", "HTTP ingress proxy listen address (empty to disable)")
 	flag.StringVar(&cfg.dnsAddr, "dns-addr", "", "DNS listen address for svc.local zone, e.g. :5353 (empty to disable; any port ≥1024 works without root)")
 	flag.StringVar(&cfg.dataAddr, "data-addr", "", "routable IP for container traffic (auto-detected if empty)")
@@ -170,7 +172,7 @@ func main() {
 
 	// 5b. Web console (optional) ----------------------------------------------
 	if cfg.webAddr != "" {
-		webSrv := webui.New(peer, ctrl, cfg.adminToken, cfg.webPassword)
+		webSrv := webui.New(peer, ctrl, cfg.adminToken, cfg.webPassword, cfg.webPrefix)
 		httpSrv := &http.Server{Addr: cfg.webAddr, Handler: webSrv.Handler()}
 		go func() {
 			slog.Info("web console listening", "addr", cfg.webAddr)

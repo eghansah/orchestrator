@@ -1,8 +1,10 @@
 package webui
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"net/http"
 	"strconv"
@@ -23,10 +25,17 @@ type Server struct {
 	ctrl        *control.Server
 	adminToken  string // required Bearer token for /api/* routes; empty = no auth
 	webPassword string // password for the /api/auth/login endpoint; empty = login disabled
+	prefix      string // URL path prefix, e.g. "/console" (no trailing slash, may be "")
 }
 
-func New(peer *internraft.Peer, ctrl *control.Server, adminToken, webPassword string) *Server {
-	return &Server{peer: peer, ctrl: ctrl, adminToken: adminToken, webPassword: webPassword}
+// New creates a Server. prefix is an optional URL subdirectory (e.g. "/console");
+// pass "" to serve at the root. A trailing slash is stripped automatically.
+func New(peer *internraft.Peer, ctrl *control.Server, adminToken, webPassword, prefix string) *Server {
+	p := strings.TrimRight(prefix, "/")
+	if p != "" && !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return &Server{peer: peer, ctrl: ctrl, adminToken: adminToken, webPassword: webPassword, prefix: p}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -52,9 +61,19 @@ func (s *Server) Handler() http.Handler {
 
 	// SPA: serve embedded dist/ with index.html fallback for client-side routing.
 	sub, _ := fs.Sub(distFS, "dist")
-	mux.Handle("/", spaHandler{fs: http.FS(sub)})
+	mux.Handle("/", spaHandler{fs: http.FS(sub), prefix: s.prefix})
 
-	return mux
+	if s.prefix == "" {
+		return mux
+	}
+
+	// Mount the inner mux under the prefix and redirect bare prefix → prefix/.
+	outer := http.NewServeMux()
+	outer.Handle(s.prefix+"/", http.StripPrefix(s.prefix, mux))
+	outer.HandleFunc(s.prefix, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, s.prefix+"/", http.StatusMovedPermanently)
+	})
+	return outer
 }
 
 // auth wraps a handler to require a valid Bearer token in the Authorization header.
@@ -397,23 +416,52 @@ func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {
 
 // spaHandler serves static files from an http.FileSystem, falling back to
 // index.html for any path that doesn't resolve to an existing file.
+// When serving index.html it injects <meta name="base-path"> so the frontend
+// knows the URL prefix it was mounted under.
 type spaHandler struct {
-	fs http.FileSystem
+	fs     http.FileSystem
+	prefix string // e.g. "/console" or ""
 }
 
 func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	if path == "/" {
-		path = "/index.html"
+	serveIndex := path == "/" || path == "/index.html"
+	if !serveIndex {
+		f, err := h.fs.Open(path)
+		if err != nil {
+			serveIndex = true
+		} else {
+			f.Close()
+		}
 	}
-	f, err := h.fs.Open(path)
-	if err != nil {
-		// Unknown path — serve index.html so React's client-side navigation works.
-		r.URL.Path = "/"
-	} else {
-		f.Close()
+	if serveIndex {
+		h.serveIndex(w)
+		return
 	}
 	http.FileServer(h.fs).ServeHTTP(w, r)
+}
+
+func (h spaHandler) serveIndex(w http.ResponseWriter) {
+	f, err := h.fs.Open("/index.html")
+	if err != nil {
+		http.Error(w, "index.html not found", http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		http.Error(w, "read error", http.StatusInternalServerError)
+		return
+	}
+	// Replace the placeholder meta tag with the actual prefix value so the
+	// frontend JavaScript can construct absolute API URLs at runtime.
+	data = bytes.ReplaceAll(data,
+		[]byte(`<meta name="base-path" content="" />`),
+		[]byte(`<meta name="base-path" content="`+h.prefix+`" />`),
+	)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = w.Write(data)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
