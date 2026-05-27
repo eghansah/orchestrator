@@ -1,5 +1,5 @@
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS   := -s -w -X main.version=$(VERSION)
+LDFLAGS   := -s -w -extldflags '-static' -X main.version=$(VERSION)
 DIST      := dist
 PLATFORMS := linux/amd64 linux/arm64
 
@@ -40,9 +40,9 @@ endef
 
 $(DIST)/orchestrator-$(VERSION)-linux-amd64.tar.gz: $(ORCHESTRATOR_SRCS) $(CTL_SRCS)
 	@mkdir -p $(DIST)/tmp/orchestrator-$(VERSION)-linux-amd64
-	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" \
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" \
 		-o $(DIST)/tmp/orchestrator-$(VERSION)-linux-amd64/orchestrator ./cmd/orchestrator
-	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" \
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" \
 		-o $(DIST)/tmp/orchestrator-$(VERSION)-linux-amd64/ctl ./cmd/ctl
 	cp README.md docs/deploy.md docs/production.md \
 		$(DIST)/tmp/orchestrator-$(VERSION)-linux-amd64/
@@ -51,9 +51,9 @@ $(DIST)/orchestrator-$(VERSION)-linux-amd64.tar.gz: $(ORCHESTRATOR_SRCS) $(CTL_S
 
 $(DIST)/orchestrator-$(VERSION)-linux-arm64.tar.gz: $(ORCHESTRATOR_SRCS) $(CTL_SRCS)
 	@mkdir -p $(DIST)/tmp/orchestrator-$(VERSION)-linux-arm64
-	GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" \
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" \
 		-o $(DIST)/tmp/orchestrator-$(VERSION)-linux-arm64/orchestrator ./cmd/orchestrator
-	GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" \
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" \
 		-o $(DIST)/tmp/orchestrator-$(VERSION)-linux-arm64/ctl ./cmd/ctl
 	cp README.md docs/deploy.md docs/production.md \
 		$(DIST)/tmp/orchestrator-$(VERSION)-linux-arm64/
