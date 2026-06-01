@@ -15,15 +15,19 @@ import Workloads from "./pages/Workloads";
 import Nodes from "./pages/Nodes";
 import Ingress from "./pages/Ingress";
 import Services from "./pages/Services";
+import Domains from "./pages/Domains";
+import Users from "./pages/Users";
 
-type Page = "overview" | "workloads" | "nodes" | "ingress" | "services";
+type Page = "overview" | "workloads" | "nodes" | "ingress" | "services" | "domains" | "users";
 
 const NAV_ITEMS: SideNavigationProps.Item[] = [
   { type: "link", text: "Overview", href: "#overview" },
   { type: "link", text: "Workloads", href: "#workloads" },
   { type: "link", text: "Nodes", href: "#nodes" },
   { type: "link", text: "Ingress", href: "#ingress" },
+  { type: "link", text: "Domains", href: "#domains" },
   { type: "link", text: "Services", href: "#services" },
+  { type: "link", text: "Users", href: "#users" },
   { type: "divider" },
   { type: "link", text: "Sign out", href: "#signout" },
 ];
@@ -107,7 +111,9 @@ export default function App() {
     workloads: <Workloads {...sharedProps} />,
     nodes: <Nodes {...sharedProps} />,
     ingress: <Ingress />,
+    domains: <Domains />,
     services: <Services />,
+    users: <Users />,
   }[activePage];
 
   return (

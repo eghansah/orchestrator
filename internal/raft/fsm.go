@@ -22,6 +22,10 @@ const (
 	cmdRemoveIngress                 // remove an ingress rule
 	cmdApplyService                  // add or update a service
 	cmdRemoveService                 // remove a service
+	cmdApplyDomain                   // add or update a domain (TLS cert store)
+	cmdRemoveDomain                  // remove a domain
+	cmdApplyUser                     // add or update a user account (AD allowlist entry)
+	cmdRemoveUser                    // remove a user account
 )
 
 type command struct {
@@ -42,6 +46,8 @@ type ClusterState struct {
 	Nodes           map[string]types.Node        `json:"nodes"`
 	IngressRules    map[string]types.IngressRule `json:"ingress_rules"`
 	Services        map[string]types.Service     `json:"services"`
+	Domains         map[string]types.Domain      `json:"domains"`
+	Users           map[string]types.User        `json:"users"`
 	NextPort        uint32                       `json:"next_port"`         // container port pool
 	NextServicePort uint32                       `json:"next_service_port"` // service port pool
 }
@@ -52,6 +58,8 @@ func newClusterState() ClusterState {
 		Nodes:           make(map[string]types.Node),
 		IngressRules:    make(map[string]types.IngressRule),
 		Services:        make(map[string]types.Service),
+		Domains:         make(map[string]types.Domain),
+		Users:           make(map[string]types.User),
 		NextPort:        portPoolStart,
 		NextServicePort: svcPortPoolStart,
 	}
@@ -180,6 +188,50 @@ func (f *fsm) Apply(l *raft.Log) any {
 			return err
 		}
 		delete(f.state.Services, id)
+
+	case cmdApplyDomain:
+		var d types.Domain
+		if err := json.Unmarshal(cmd.Data, &d); err != nil {
+			return err
+		}
+		if f.state.Domains == nil {
+			f.state.Domains = make(map[string]types.Domain)
+		}
+		for _, existing := range f.state.Domains {
+			if existing.Name == d.Name && existing.ID != d.ID {
+				return fmt.Errorf("domain name %q already exists", d.Name)
+			}
+		}
+		f.state.Domains[d.ID] = d
+
+	case cmdRemoveDomain:
+		var id string
+		if err := json.Unmarshal(cmd.Data, &id); err != nil {
+			return err
+		}
+		delete(f.state.Domains, id)
+
+	case cmdApplyUser:
+		var u types.User
+		if err := json.Unmarshal(cmd.Data, &u); err != nil {
+			return err
+		}
+		if f.state.Users == nil {
+			f.state.Users = make(map[string]types.User)
+		}
+		for _, existing := range f.state.Users {
+			if existing.Username == u.Username && existing.ID != u.ID {
+				return fmt.Errorf("username %q already exists", u.Username)
+			}
+		}
+		f.state.Users[u.ID] = u
+
+	case cmdRemoveUser:
+		var id string
+		if err := json.Unmarshal(cmd.Data, &id); err != nil {
+			return err
+		}
+		delete(f.state.Users, id)
 	}
 	return nil
 }
@@ -215,6 +267,8 @@ func (f *fsm) State() ClusterState {
 		Nodes:           f.state.Nodes,
 		IngressRules:    f.state.IngressRules,
 		Services:        f.state.Services,
+		Domains:         f.state.Domains,
+		Users:           f.state.Users,
 		NextPort:        f.state.NextPort,
 		NextServicePort: f.state.NextServicePort,
 	}

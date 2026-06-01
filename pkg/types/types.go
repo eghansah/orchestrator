@@ -110,6 +110,7 @@ type Node struct {
 
 type IngressRule struct {
 	ID         string
+	DomainID   string // required; host is derived from the linked Domain
 	Host       string // matched against Host header; empty = match all
 	PathPrefix string // matched against URL path prefix; empty = "/"
 	WorkloadID string
@@ -127,6 +128,26 @@ type Service struct {
 	TargetPort uint32    // container port to proxy to
 	SystemPort uint32    // auto-assigned host port
 	CreatedAt  time.Time
+}
+
+// Domain is a named TLS-enabled virtual host. The ingress uses the stored
+// certificate to terminate HTTPS connections whose SNI matches Name.
+type Domain struct {
+	ID        string
+	Name      string    // unique hostname, e.g. "api.example.com"
+	TLSCert   string    // PEM-encoded certificate
+	TLSKey    string    // PEM-encoded private key
+	Enabled   bool      // when false the ingress ignores this domain's cert
+	CreatedAt time.Time
+}
+
+// User is an AD-backed web-console account. Authentication is delegated to LDAP;
+// the user store is an allowlist of AD usernames that are permitted to log in.
+type User struct {
+	ID        string
+	Username  string    // AD username used for LDAP bind
+	Enabled   bool
+	CreatedAt time.Time
 }
 
 type ActualContainer struct {

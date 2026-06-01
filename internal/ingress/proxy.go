@@ -33,6 +33,27 @@ func New(peer *internraft.Peer, localNodeID string, ownCert tls.Certificate) *Pr
 	return &Proxy{peer: peer, localNodeID: localNodeID, ownCert: ownCert}
 }
 
+// TLSConfig returns a *tls.Config that performs SNI-based certificate selection
+// using Domain records stored in Raft state. Falls back to the node's own cert
+// when no domain matches the SNI name.
+func (p *Proxy) TLSConfig() *tls.Config {
+	return &tls.Config{
+		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			if hello.ServerName != "" {
+				for _, d := range p.peer.State().Domains {
+					if d.Enabled && d.Name == hello.ServerName && d.TLSCert != "" && d.TLSKey != "" {
+						cert, err := tls.X509KeyPair([]byte(d.TLSCert), []byte(d.TLSKey))
+						if err == nil {
+							return &cert, nil
+						}
+					}
+				}
+			}
+			return &p.ownCert, nil
+		},
+	}
+}
+
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	state := p.peer.State()
 
@@ -150,7 +171,17 @@ func (p *Proxy) matchRule(state internraft.ClusterState, host, path string) (typ
 	bestLen := -1
 
 	for _, rule := range state.IngressRules {
-		if rule.Host != "" && rule.Host != host {
+		// Derive host from the linked domain when available.
+		ruleHost := rule.Host
+		if rule.DomainID != "" {
+			if d, ok := state.Domains[rule.DomainID]; ok {
+				if !d.Enabled {
+					continue // domain is disabled; skip this rule
+				}
+				ruleHost = d.Name
+			}
+		}
+		if ruleHost != "" && ruleHost != host {
 			continue
 		}
 		prefix := rule.PathPrefix

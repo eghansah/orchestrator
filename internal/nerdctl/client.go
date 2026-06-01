@@ -36,38 +36,81 @@ const (
 type Client struct {
 	binary    string
 	namespace string
+	address   string   // containerd socket path, passed as --address to nerdctl
 	dataDir   string   // root for compose file storage
 	dnsIP     string   // injected into containers for svc.local resolution
 	dnsPort   uint32   // DNS port; if != 53, adds resolv.conf "options port:N"
 }
 
-func NewClient(binary, namespace, dataDir, dnsIP string, dnsPort uint32) (*Client, error) {
+// detectContainerdSocket returns the first containerd socket that exists,
+// trying both common rootless layouts under XDG_RUNTIME_DIR and the
+// /run/user/<uid> fallback for environments where XDG_RUNTIME_DIR is unset.
+func detectContainerdSocket() string {
+	dirs := []string{os.Getenv("XDG_RUNTIME_DIR")}
+	if dirs[0] == "" {
+		dirs[0] = fmt.Sprintf("/run/user/%d", os.Getuid())
+	} else {
+		dirs = append(dirs, fmt.Sprintf("/run/user/%d", os.Getuid()))
+	}
+	suffixes := []string{
+		filepath.Join("containerd-rootless", "containerd.sock"),
+		filepath.Join("containerd", "containerd.sock"),
+	}
+	for _, d := range dirs {
+		for _, s := range suffixes {
+			p := filepath.Join(d, s)
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+// NewClient creates a nerdctl client. address is the containerd socket path;
+// pass an empty string to auto-detect from XDG_RUNTIME_DIR.
+func NewClient(binary, namespace, address, dataDir, dnsIP string, dnsPort uint32) (*Client, error) {
 	if binary == "" {
 		binary = "nerdctl"
 	}
 	if namespace == "" {
 		namespace = defaultNamespace
 	}
-	return &Client{binary: binary, namespace: namespace, dataDir: dataDir, dnsIP: dnsIP, dnsPort: dnsPort}, nil
+	if address == "" {
+		address = detectContainerdSocket()
+	}
+	return &Client{binary: binary, namespace: namespace, address: address, dataDir: dataDir, dnsIP: dnsIP, dnsPort: dnsPort}, nil
 }
 
-// Probe verifies the nerdctl binary is reachable and prints its version.
+// Address returns the containerd socket path being used (empty = nerdctl default).
+func (c *Client) Address() string { return c.address }
+
+// Probe verifies that nerdctl can reach the containerd daemon.
 func (c *Client) Probe(ctx context.Context) error {
-	out, err := c.run(ctx, "version")
+	out, err := c.run(ctx, "info")
 	if err != nil {
 		return fmt.Errorf("nerdctl not available: %w", err)
 	}
-	if !bytes.Contains(out, []byte("Client")) {
-		return fmt.Errorf("unexpected nerdctl version output: %s", out)
+	if !bytes.Contains(out, []byte("Server")) {
+		return fmt.Errorf("unexpected nerdctl info output: %s", out)
 	}
 	return nil
 }
 
-// run executes nerdctl with --namespace injected as a global flag.
+// run executes nerdctl with --namespace (and --address when set) as global flags.
+// CONTAINERD_ADDRESS is also injected as an env var so that nerdctl's rootless
+// pre-flight check uses the right socket instead of the hardcoded containerd-rootless path.
 // stderr is merged into the error message verbatim.
 func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
-	full := append([]string{"--namespace", c.namespace}, args...)
+	global := []string{"--namespace", c.namespace}
+	if c.address != "" {
+		global = append(global, "--address", c.address)
+	}
+	full := append(global, args...)
 	cmd := exec.CommandContext(ctx, c.binary, full...)
+	if c.address != "" {
+		cmd.Env = append(os.Environ(), "CONTAINERD_ADDRESS="+c.address)
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))

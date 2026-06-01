@@ -9,19 +9,22 @@ import {
   Header,
   Input,
   Modal,
+  Select,
+  SelectProps,
   SpaceBetween,
   Table,
 } from "@cloudscape-design/components";
-import { api, IngressRule } from "../api";
+import { api, IngressRule, Domain } from "../api";
 import { formatAge } from "../api";
 
 export default function Ingress() {
   const [rules, setRules] = useState<IngressRule[]>([]);
+  const [domains, setDomains] = useState<Domain[]>([]);
   const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState({
-    host: "",
+    domain_id: "",
     path_prefix: "/",
     workload_id: "",
     port: "",
@@ -30,8 +33,12 @@ export default function Ingress() {
 
   const load = useCallback(async () => {
     try {
-      const data = await api.listIngress();
-      setRules(data ?? []);
+      const [rulesData, domainsData] = await Promise.all([
+        api.listIngress(),
+        api.listDomains(),
+      ]);
+      setRules(rulesData ?? []);
+      setDomains(domainsData ?? []);
     } catch (e) {
       addFlash("error", String(e));
     } finally {
@@ -55,23 +62,27 @@ export default function Ingress() {
 
   async function handleCreate() {
     const port = parseInt(createForm.port, 10);
+    if (!createForm.domain_id) {
+      addFlash("error", "A domain is required");
+      return;
+    }
     if (!createForm.workload_id || isNaN(port) || port <= 0) {
       addFlash("error", "Workload ID and a valid port are required");
       return;
     }
     try {
       const resp = await api.createIngress({
-        host: createForm.host,
+        domain_id: createForm.domain_id,
         path_prefix: createForm.path_prefix || "/",
         workload_id: createForm.workload_id,
         port,
       });
       if (!resp.accepted) {
-        addFlash("error", resp.reason ?? "rejected");
+        addFlash("error", "rejected");
       } else {
         addFlash("success", `Rule ${resp.rule_id} created`);
         setCreating(false);
-        setCreateForm({ host: "", path_prefix: "/", workload_id: "", port: "" });
+        setCreateForm({ domain_id: "", path_prefix: "/", workload_id: "", port: "" });
         load();
       }
     } catch (e) {
@@ -92,10 +103,30 @@ export default function Ingress() {
     load();
   }
 
+  const domainOptions: SelectProps.Option[] = domains.map((d) => ({
+    value: d.id,
+    label: d.name,
+    disabled: !d.enabled,
+    description: d.enabled ? undefined : "disabled",
+  }));
+
+  const selectedDomainOption =
+    domainOptions.find((o) => o.value === createForm.domain_id) ?? null;
+
+  const domainNameById = (id: string) =>
+    domains.find((d) => d.id === id)?.name ?? id;
+
   return (
     <ContentLayout
       notifications={<Flashbar items={flash} />}
-      header={<Header variant="h1" description="HTTP routing rules that direct inbound traffic to containers by Host header or URL path prefix. Longest prefix wins.">Ingress</Header>}
+      header={
+        <Header
+          variant="h1"
+          description="HTTP routing rules that direct inbound traffic to containers by domain and URL path prefix. Longest prefix wins."
+        >
+          Ingress
+        </Header>
+      }
     >
       <Table
         loading={loading}
@@ -104,10 +135,7 @@ export default function Ingress() {
           <Header
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <Button
-                  disabled={selected.length === 0}
-                  onClick={handleDelete}
-                >
+                <Button disabled={selected.length === 0} onClick={handleDelete}>
                   Delete
                 </Button>
                 <Button variant="primary" onClick={() => setCreating(true)}>
@@ -125,7 +153,7 @@ export default function Ingress() {
         trackBy="id"
         columnDefinitions={[
           { id: "id", header: "ID", cell: (r) => r.id },
-          { id: "host", header: "Host", cell: (r) => r.host || "—" },
+          { id: "domain", header: "Domain", cell: (r) => domainNameById(r.domain_id) || r.host || "—" },
           { id: "path", header: "Path", cell: (r) => r.path_prefix || "/" },
           { id: "workload", header: "Workload", cell: (r) => r.workload_id },
           { id: "port", header: "Port", cell: (r) => r.port },
@@ -152,11 +180,19 @@ export default function Ingress() {
       >
         <Form>
           <SpaceBetween size="m">
-            <FormField label="Host" description="Host header to match (leave empty to match all)">
-              <Input
-                value={createForm.host}
-                onChange={(e) => setCreateForm((f) => ({ ...f, host: e.detail.value }))}
-                placeholder="example.com"
+            <FormField
+              label="Domain"
+              description="The registered domain this rule will match on"
+              constraintText="Required"
+            >
+              <Select
+                options={domainOptions}
+                selectedOption={selectedDomainOption}
+                onChange={(e) =>
+                  setCreateForm((f) => ({ ...f, domain_id: e.detail.selectedOption.value ?? "" }))
+                }
+                placeholder="Select a domain"
+                empty="No domains registered — create one in the Domains page first"
               />
             </FormField>
             <FormField label="Path prefix" description="URL path prefix to match">
@@ -172,12 +208,16 @@ export default function Ingress() {
                 onChange={(e) => setCreateForm((f) => ({ ...f, workload_id: e.detail.value }))}
               />
             </FormField>
-            <FormField label="Container port" description="Port the container listens on (e.g. 80 for nginx)" constraintText="Required">
+            <FormField
+              label="Container port"
+              description="Port the container listens on (e.g. 80 for nginx)"
+              constraintText="Required"
+            >
               <Input
                 type="number"
                 value={createForm.port}
                 onChange={(e) => setCreateForm((f) => ({ ...f, port: e.detail.value }))}
-                placeholder="8888"
+                placeholder="8080"
               />
             </FormField>
           </SpaceBetween>

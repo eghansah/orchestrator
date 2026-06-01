@@ -2,13 +2,24 @@ package webui
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	crand "crypto/rand"
 	"crypto/subtle"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
+	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -26,16 +37,63 @@ type Server struct {
 	adminToken  string // required Bearer token for /api/* routes; empty = no auth
 	webPassword string // password for the /api/auth/login endpoint; empty = login disabled
 	prefix      string // URL path prefix, e.g. "/console" (no trailing slash, may be "")
+	ldap        LDAPConfig
+
+	sessionsMu sync.RWMutex
+	sessions   map[string]time.Time // per-login token → expiry
+}
+
+const sessionTTL = 8 * time.Hour
+
+func (s *Server) newSession() string {
+	b := make([]byte, 16)
+	_, _ = crand.Read(b)
+	token := fmt.Sprintf("%x", b)
+	s.sessionsMu.Lock()
+	s.sessions[token] = time.Now().Add(sessionTTL)
+	s.sessionsMu.Unlock()
+	return token
+}
+
+func (s *Server) isValidSession(token string) bool {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	exp, ok := s.sessions[token]
+	if !ok {
+		return false
+	}
+	if time.Now().After(exp) {
+		delete(s.sessions, token)
+		return false
+	}
+	return true
+}
+
+func (s *Server) revokeSession(token string) {
+	s.sessionsMu.Lock()
+	delete(s.sessions, token)
+	s.sessionsMu.Unlock()
 }
 
 // New creates a Server. prefix is an optional URL subdirectory (e.g. "/console");
 // pass "" to serve at the root. A trailing slash is stripped automatically.
-func New(peer *internraft.Peer, ctrl *control.Server, adminToken, webPassword, prefix string) *Server {
+func New(peer *internraft.Peer, ctrl *control.Server, adminToken, webPassword, prefix string, ldapCfg LDAPConfig) *Server {
 	p := strings.TrimRight(prefix, "/")
 	if p != "" && !strings.HasPrefix(p, "/") {
 		p = "/" + p
 	}
-	return &Server{peer: peer, ctrl: ctrl, adminToken: adminToken, webPassword: webPassword, prefix: p}
+	if ldapCfg.UserFilter == "" {
+		ldapCfg.UserFilter = "(sAMAccountName=%s)"
+	}
+	return &Server{
+		peer:        peer,
+		ctrl:        ctrl,
+		adminToken:  adminToken,
+		webPassword: webPassword,
+		prefix:      p,
+		ldap:        ldapCfg,
+		sessions:    make(map[string]time.Time),
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -58,6 +116,15 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/services", a(s.handleListServices))
 	mux.Handle("POST /api/services", a(s.handleCreateService))
 	mux.Handle("POST /api/services/{id}/delete", a(s.handleDeleteService))
+	mux.Handle("GET /api/domains", a(s.handleListDomains))
+	mux.Handle("POST /api/domains", a(s.handleCreateDomain))
+	mux.Handle("POST /api/domains/{id}/update", a(s.handleUpdateDomain))
+	mux.Handle("POST /api/domains/{id}/toggle", a(s.handleToggleDomain))
+	mux.Handle("POST /api/domains/{id}/delete", a(s.handleDeleteDomain))
+	mux.Handle("GET /api/users", a(s.handleListUsers))
+	mux.Handle("POST /api/users", a(s.handleCreateUser))
+	mux.Handle("POST /api/users/{id}/toggle", a(s.handleToggleUser))
+	mux.Handle("POST /api/users/{id}/delete", a(s.handleDeleteUser))
 
 	// SPA: serve embedded dist/ with index.html fallback for client-side routing.
 	sub, _ := fs.Sub(distFS, "dist")
@@ -76,16 +143,15 @@ func (s *Server) Handler() http.Handler {
 	return outer
 }
 
-// auth wraps a handler to require a valid Bearer token in the Authorization header.
-// When no admin token is configured the handler is called without restriction.
+// auth wraps a handler to require either a valid session token (from login) or
+// the static adminToken (for CLI/programmatic access).
 func (s *Server) auth(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.adminToken != "" {
-			provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if subtle.ConstantTimeCompare([]byte(provided), []byte(s.adminToken)) != 1 {
-				writeError(w, http.StatusUnauthorized, "invalid or missing token")
-				return
-			}
+		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		staticOK := s.adminToken != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(s.adminToken)) == 1
+		if !staticOK && !s.isValidSession(provided) {
+			writeError(w, http.StatusUnauthorized, "invalid or missing token")
+			return
 		}
 		next(w, r)
 	})
@@ -94,10 +160,6 @@ func (s *Server) auth(next http.HandlerFunc) http.Handler {
 // ── Auth handlers ─────────────────────────────────────────────────────────────
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if s.webPassword == "" {
-		writeError(w, http.StatusServiceUnavailable, "web console login is not configured")
-		return
-	}
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -106,16 +168,47 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+
+	state := s.peer.State()
+
+	if hasActiveUsers(state.Users) {
+		// User-store mode: bootstrap admin is fully bypassed.
+		// Authenticate registered AD users via LDAP bind.
+		u, found := findUserByUsername(state.Users, req.Username)
+		if !found || !u.Enabled {
+			writeError(w, http.StatusUnauthorized, "invalid credentials")
+			return
+		}
+		if s.ldap.Addr == "" {
+			writeError(w, http.StatusServiceUnavailable, "LDAP not configured")
+			return
+		}
+		if err := ldapAuthenticate(s.ldap, req.Username, req.Password); err != nil {
+			slog.Warn("LDAP auth failed", "user", req.Username, "err", err)
+			writeError(w, http.StatusUnauthorized, "invalid credentials")
+			return
+		}
+		writeJSON(w, map[string]string{"token": s.newSession()})
+		return
+	}
+
+	// Bootstrap mode: no enabled users exist — only local admin account is active.
+	if s.webPassword == "" {
+		writeError(w, http.StatusServiceUnavailable, "web console login is not configured")
+		return
+	}
 	userOK := subtle.ConstantTimeCompare([]byte(req.Username), []byte("admin"))
 	passOK := subtle.ConstantTimeCompare([]byte(req.Password), []byte(s.webPassword))
 	if userOK != 1 || passOK != 1 {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
-	writeJSON(w, map[string]string{"token": s.adminToken})
+	writeJSON(w, map[string]string{"token": s.newSession()})
 }
 
-func (s *Server) handleLogout(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	s.revokeSession(token)
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -282,30 +375,28 @@ func (s *Server) handleDrain(w http.ResponseWriter, r *http.Request) {
 
 // ── Ingress API handlers ──────────────────────────────────────────────────────
 
-func (s *Server) handleListIngress(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.ctrl.ListIngress(r.Context(), &gen.ListIngressRequest{})
-	if err != nil {
-		st, _ := status.FromError(err)
-		writeError(w, grpcHTTPStatus(st.Code()), st.Message())
-		return
-	}
-	type ruleJSON struct {
-		ID         string `json:"id"`
-		Host       string `json:"host"`
-		PathPrefix string `json:"path_prefix"`
-		WorkloadID string `json:"workload_id"`
-		Port       uint32 `json:"port"`
-		CreatedAt  int64  `json:"created_at"`
-	}
-	rules := make([]ruleJSON, 0, len(resp.Rules))
-	for _, r := range resp.Rules {
-		rules = append(rules, ruleJSON{
-			ID:         r.Id,
+type ingressRuleJSON struct {
+	ID         string `json:"id"`
+	DomainID   string `json:"domain_id"`
+	Host       string `json:"host"`
+	PathPrefix string `json:"path_prefix"`
+	WorkloadID string `json:"workload_id"`
+	Port       uint32 `json:"port"`
+	CreatedAt  int64  `json:"created_at"`
+}
+
+func (s *Server) handleListIngress(w http.ResponseWriter, _ *http.Request) {
+	state := s.peer.State()
+	rules := make([]ingressRuleJSON, 0, len(state.IngressRules))
+	for _, r := range state.IngressRules {
+		rules = append(rules, ingressRuleJSON{
+			ID:         r.ID,
+			DomainID:   r.DomainID,
 			Host:       r.Host,
 			PathPrefix: r.PathPrefix,
-			WorkloadID: r.WorkloadId,
+			WorkloadID: r.WorkloadID,
 			Port:       r.Port,
-			CreatedAt:  r.CreatedAt,
+			CreatedAt:  r.CreatedAt.Unix(),
 		})
 	}
 	writeJSON(w, rules)
@@ -313,7 +404,7 @@ func (s *Server) handleListIngress(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateIngress(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Host       string `json:"host"`
+		DomainID   string `json:"domain_id"`
 		PathPrefix string `json:"path_prefix"`
 		WorkloadID string `json:"workload_id"`
 		Port       uint32 `json:"port"`
@@ -322,18 +413,48 @@ func (s *Server) handleCreateIngress(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	resp, err := s.ctrl.CreateIngress(r.Context(), &gen.CreateIngressRequest{
-		Host:       req.Host,
-		PathPrefix: req.PathPrefix,
-		WorkloadId: req.WorkloadID,
-		Port:       req.Port,
-	})
-	if err != nil {
-		st, _ := status.FromError(err)
-		writeError(w, grpcHTTPStatus(st.Code()), st.Message())
+	if req.DomainID == "" {
+		writeError(w, http.StatusBadRequest, "domain_id is required")
 		return
 	}
-	writeJSON(w, resp)
+	if req.WorkloadID == "" {
+		writeError(w, http.StatusBadRequest, "workload_id is required")
+		return
+	}
+	if req.Port == 0 {
+		writeError(w, http.StatusBadRequest, "port is required")
+		return
+	}
+	if !s.peer.IsLeader() {
+		writeError(w, http.StatusServiceUnavailable, "not the leader")
+		return
+	}
+	state := s.peer.State()
+	domain, ok := state.Domains[req.DomainID]
+	if !ok {
+		writeError(w, http.StatusBadRequest, "domain not found")
+		return
+	}
+	rule := types.IngressRule{
+		ID:         newIngressID(),
+		DomainID:   domain.ID,
+		Host:       domain.Name,
+		PathPrefix: req.PathPrefix,
+		WorkloadID: req.WorkloadID,
+		Port:       req.Port,
+		CreatedAt:  time.Now(),
+	}
+	if err := s.peer.ApplyIngress(rule); err != nil {
+		writeError(w, http.StatusInternalServerError, "apply ingress: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"rule_id": rule.ID, "accepted": true})
+}
+
+func newIngressID() string {
+	b := make([]byte, 8)
+	_, _ = crand.Read(b)
+	return fmt.Sprintf("%x", b)
 }
 
 func (s *Server) handleDeleteIngress(w http.ResponseWriter, r *http.Request) {
@@ -537,6 +658,362 @@ func kindString(k types.WorkloadKind) string {
 		return "stack"
 	}
 	return "container"
+}
+
+// ── Domains API handlers ──────────────────────────────────────────────────────
+
+// domainJSON is the public representation of a Domain — the private key is
+// intentionally omitted and never returned after the initial create response.
+type domainJSON struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	TLSCert   string `json:"tls_cert"`
+	Enabled   bool   `json:"enabled"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+// domainWithKeyJSON is returned only once, at creation, so the operator can
+// copy the private key. Subsequent reads never include the key.
+type domainWithKeyJSON struct {
+	domainJSON
+	TLSKey string `json:"tls_key"`
+}
+
+func (s *Server) handleListDomains(w http.ResponseWriter, _ *http.Request) {
+	state := s.peer.State()
+	out := make([]domainJSON, 0, len(state.Domains))
+	for _, d := range state.Domains {
+		out = append(out, domainJSON{
+			ID:        d.ID,
+			Name:      d.Name,
+			TLSCert:   d.TLSCert,
+			Enabled:   d.Enabled,
+			CreatedAt: d.CreatedAt.Unix(),
+		})
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name    string `json:"name"`
+		TLSCert string `json:"tls_cert"`
+		TLSKey  string `json:"tls_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	// Pre-flight uniqueness check.
+	for _, d := range s.peer.State().Domains {
+		if d.Name == req.Name {
+			writeError(w, http.StatusConflict, "domain name already exists")
+			return
+		}
+	}
+
+	// Auto-generate self-signed cert when either field is missing.
+	if req.TLSCert == "" || req.TLSKey == "" {
+		cert, key, err := generateSelfSignedCert(req.Name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "generate cert: "+err.Error())
+			return
+		}
+		req.TLSCert = cert
+		req.TLSKey = key
+	}
+
+	d := types.Domain{
+		ID:        newDomainID(),
+		Name:      req.Name,
+		TLSCert:   req.TLSCert,
+		TLSKey:    req.TLSKey,
+		Enabled:   true,
+		CreatedAt: time.Now(),
+	}
+	if err := s.peer.ApplyDomain(d); err != nil {
+		writeError(w, http.StatusInternalServerError, "apply domain: "+err.Error())
+		return
+	}
+	writeJSON(w, domainWithKeyJSON{
+		domainJSON: domainJSON{
+			ID:        d.ID,
+			Name:      d.Name,
+			TLSCert:   d.TLSCert,
+			Enabled:   d.Enabled,
+			CreatedAt: d.CreatedAt.Unix(),
+		},
+		TLSKey: d.TLSKey,
+	})
+}
+
+func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Name    string `json:"name"`
+		TLSCert string `json:"tls_cert"`
+		TLSKey  string `json:"tls_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	state := s.peer.State()
+	existing, ok := state.Domains[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "domain not found")
+		return
+	}
+
+	// If name changed, enforce uniqueness.
+	newName := existing.Name
+	if req.Name != "" {
+		newName = req.Name
+	}
+	if newName != existing.Name {
+		for _, d := range state.Domains {
+			if d.Name == newName && d.ID != id {
+				writeError(w, http.StatusConflict, "domain name already exists")
+				return
+			}
+		}
+	}
+
+	newCert := req.TLSCert
+	newKey := req.TLSKey
+
+	// If both cert and key are left empty, regenerate.
+	if newCert == "" && newKey == "" {
+		cert, key, err := generateSelfSignedCert(newName)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "generate cert: "+err.Error())
+			return
+		}
+		newCert = cert
+		newKey = key
+	} else if newCert == "" {
+		newCert = existing.TLSCert
+	} else if newKey == "" {
+		newKey = existing.TLSKey
+	}
+
+	updated := types.Domain{
+		ID:        existing.ID,
+		Name:      newName,
+		TLSCert:   newCert,
+		TLSKey:    newKey,
+		Enabled:   existing.Enabled,
+		CreatedAt: existing.CreatedAt,
+	}
+	if err := s.peer.ApplyDomain(updated); err != nil {
+		writeError(w, http.StatusInternalServerError, "apply domain: "+err.Error())
+		return
+	}
+	writeJSON(w, domainJSON{
+		ID:        updated.ID,
+		Name:      updated.Name,
+		TLSCert:   updated.TLSCert,
+		Enabled:   updated.Enabled,
+		CreatedAt: updated.CreatedAt.Unix(),
+	})
+}
+
+func (s *Server) handleToggleDomain(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	state := s.peer.State()
+	existing, ok := state.Domains[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "domain not found")
+		return
+	}
+	existing.Enabled = !existing.Enabled
+	if err := s.peer.ApplyDomain(existing); err != nil {
+		writeError(w, http.StatusInternalServerError, "apply domain: "+err.Error())
+		return
+	}
+	writeJSON(w, domainJSON{
+		ID:        existing.ID,
+		Name:      existing.Name,
+		TLSCert:   existing.TLSCert,
+		Enabled:   existing.Enabled,
+		CreatedAt: existing.CreatedAt.Unix(),
+	})
+}
+
+func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.peer.RemoveDomain(id); err != nil {
+		writeError(w, http.StatusInternalServerError, "remove domain: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"accepted": true})
+}
+
+// ── Users API handlers ────────────────────────────────────────────────────────
+
+type userJSON struct {
+	ID        string `json:"id"`
+	Username  string `json:"username"`
+	Enabled   bool   `json:"enabled"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+func (s *Server) handleListUsers(w http.ResponseWriter, _ *http.Request) {
+	state := s.peer.State()
+	out := make([]userJSON, 0, len(state.Users))
+	for _, u := range state.Users {
+		out = append(out, userJSON{
+			ID:        u.ID,
+			Username:  u.Username,
+			Enabled:   u.Enabled,
+			CreatedAt: u.CreatedAt.Unix(),
+		})
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Username == "" {
+		writeError(w, http.StatusBadRequest, "username is required")
+		return
+	}
+	if !s.peer.IsLeader() {
+		writeError(w, http.StatusServiceUnavailable, "not the leader")
+		return
+	}
+	if _, found := findUserByUsername(s.peer.State().Users, req.Username); found {
+		writeError(w, http.StatusConflict, "username already exists")
+		return
+	}
+	u := types.User{
+		ID:        newUserID(),
+		Username:  req.Username,
+		Enabled:   true,
+		CreatedAt: time.Now(),
+	}
+	if err := s.peer.ApplyUser(u); err != nil {
+		writeError(w, http.StatusInternalServerError, "apply user: "+err.Error())
+		return
+	}
+	writeJSON(w, userJSON{
+		ID:        u.ID,
+		Username:  u.Username,
+		Enabled:   u.Enabled,
+		CreatedAt: u.CreatedAt.Unix(),
+	})
+}
+
+func (s *Server) handleToggleUser(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	state := s.peer.State()
+	existing, ok := state.Users[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	existing.Enabled = !existing.Enabled
+	if err := s.peer.ApplyUser(existing); err != nil {
+		writeError(w, http.StatusInternalServerError, "apply user: "+err.Error())
+		return
+	}
+	writeJSON(w, userJSON{
+		ID:        existing.ID,
+		Username:  existing.Username,
+		Enabled:   existing.Enabled,
+		CreatedAt: existing.CreatedAt.Unix(),
+	})
+}
+
+func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.peer.RemoveUser(id); err != nil {
+		writeError(w, http.StatusInternalServerError, "remove user: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"accepted": true})
+}
+
+func newUserID() string {
+	b := make([]byte, 8)
+	_, _ = crand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
+
+func hasActiveUsers(users map[string]types.User) bool {
+	for _, u := range users {
+		if u.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+func findUserByUsername(users map[string]types.User, username string) (types.User, bool) {
+	for _, u := range users {
+		if u.Username == username {
+			return u, true
+		}
+	}
+	return types.User{}, false
+}
+
+// generateSelfSignedCert creates an ECDSA P-256 self-signed certificate for
+// the given DNS name, valid for one year. Returns PEM-encoded cert and key.
+func generateSelfSignedCert(name string) (certPEM, keyPEM string, err error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), crand.Reader)
+	if err != nil {
+		return "", "", err
+	}
+	serial, err := crand.Int(crand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return "", "", err
+	}
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: name},
+		DNSNames:     []string{name},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(crand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return "", "", err
+	}
+	certBuf := &bytes.Buffer{}
+	if err := pem.Encode(certBuf, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
+		return "", "", err
+	}
+	keyDer, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return "", "", err
+	}
+	keyBuf := &bytes.Buffer{}
+	if err := pem.Encode(keyBuf, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDer}); err != nil {
+		return "", "", err
+	}
+	return certBuf.String(), keyBuf.String(), nil
+}
+
+// newDomainID generates a short random hex ID for domains.
+func newDomainID() string {
+	b := make([]byte, 8)
+	_, _ = crand.Read(b)
+	return fmt.Sprintf("%x", b)
 }
 
 func workloadName(wl types.Workload) string {

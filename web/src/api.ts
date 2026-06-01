@@ -48,6 +48,7 @@ export interface StackRequest {
 
 export interface IngressRule {
   id: string;
+  domain_id: string;
   host: string;
   path_prefix: string;
   workload_id: string;
@@ -56,7 +57,7 @@ export interface IngressRule {
 }
 
 export interface CreateIngressRequest {
-  host: string;
+  domain_id: string;
   path_prefix: string;
   workload_id: string;
   port: number;
@@ -75,6 +76,32 @@ export interface CreateServiceRequest {
   name: string;
   workload_id: string;
   target_port: number;
+}
+
+export interface Domain {
+  id: string;
+  name: string;
+  tls_cert: string;
+  tls_key?: string; // only present in the create response; omitted from list/update/toggle
+  enabled: boolean;
+  created_at: number; // unix seconds
+}
+
+export interface CreateDomainRequest {
+  name: string;
+  tls_cert?: string;
+  tls_key?: string;
+}
+
+export interface User {
+  id: string;
+  username: string;
+  enabled: boolean;
+  created_at: number; // unix seconds
+}
+
+export interface CreateUserRequest {
+  username: string; // AD username; no password — authentication is handled by LDAP
 }
 
 // ── Auth token ────────────────────────────────────────────────────────────────
@@ -156,7 +183,7 @@ export const api = {
     request<MutationResult>("POST", `/api/nodes/${id}/drain`),
   listIngress: () => request<IngressRule[]>("GET", "/api/ingress"),
   createIngress: (req: CreateIngressRequest) =>
-    request<{ rule_id: string; accepted: boolean; reason?: string }>(
+    request<{ rule_id: string; accepted: boolean }>(
       "POST",
       "/api/ingress",
       req
@@ -172,6 +199,20 @@ export const api = {
     ),
   deleteService: (id: string) =>
     request<MutationResult>("POST", `/api/services/${id}/delete`),
+  listDomains: () => request<Domain[]>("GET", "/api/domains"),
+  createDomain: (req: CreateDomainRequest) =>
+    request<Domain>("POST", "/api/domains", req),
+  updateDomain: (id: string, req: CreateDomainRequest) =>
+    request<Domain>("POST", `/api/domains/${id}/update`, req),
+  toggleDomain: (id: string) =>
+    request<Domain>("POST", `/api/domains/${id}/toggle`),
+  deleteDomain: (id: string) =>
+    request<{ accepted: boolean }>("POST", `/api/domains/${id}/delete`),
+  listUsers: () => request<User[]>("GET", "/api/users"),
+  createUser: (req: CreateUserRequest) => request<User>("POST", "/api/users", req),
+  toggleUser: (id: string) => request<User>("POST", `/api/users/${id}/toggle`),
+  deleteUser: (id: string) =>
+    request<{ accepted: boolean }>("POST", `/api/users/${id}/delete`),
 };
 
 // ── useClusterState hook ──────────────────────────────────────────────────────

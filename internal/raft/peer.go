@@ -153,6 +153,26 @@ func (p *Peer) RemoveService(serviceID string) error {
 	return p.apply(cmdRemoveService, serviceID)
 }
 
+// ApplyDomain writes a domain (TLS cert store entry) into the Raft log.
+func (p *Peer) ApplyDomain(d types.Domain) error {
+	return p.apply(cmdApplyDomain, d)
+}
+
+// RemoveDomain removes a domain from the Raft log.
+func (p *Peer) RemoveDomain(domainID string) error {
+	return p.apply(cmdRemoveDomain, domainID)
+}
+
+// ApplyUser writes a user account (AD allowlist entry) into the Raft log.
+func (p *Peer) ApplyUser(u types.User) error {
+	return p.apply(cmdApplyUser, u)
+}
+
+// RemoveUser removes a user account from the Raft log.
+func (p *Peer) RemoveUser(userID string) error {
+	return p.apply(cmdRemoveUser, userID)
+}
+
 func (p *Peer) apply(t cmdType, payload any) error {
 	if !p.IsLeader() {
 		return fmt.Errorf("not the leader")

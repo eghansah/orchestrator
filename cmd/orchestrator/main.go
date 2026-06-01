@@ -48,7 +48,8 @@ type config struct {
 	raftAddr    string
 	webAddr     string
 	webPrefix   string // URL prefix for the web console, e.g. "/console" (empty = root)
-	ingressAddr string // HTTP ingress proxy listen address; empty = disabled
+	ingressAddr    string // HTTP ingress proxy listen address; empty = disabled
+	ingressTLSAddr string // HTTPS ingress proxy listen address; empty = disabled
 	dnsAddr     string // DNS listen address; empty = disabled
 	dataAddr    string // routable IP for container traffic; auto-detected if empty
 	dataDir     string
@@ -57,8 +58,18 @@ type config struct {
 	joinToken   string // shared secret required to join the cluster
 	adminToken  string // bearer token required for all ControlService RPCs
 	webPassword string // password for the web console login form
-	nerdctlBin  string
-	namespace   string
+	// LDAP/AD auth
+	ldapAddr           string
+	ldapTLS            bool
+	ldapInsecure       bool
+	ldapBindDNTemplate string
+	ldapBaseDN         string
+	ldapUserFilter     string
+	ldapGroupDN        string
+
+	nerdctlBin     string
+	namespace      string
+	containerdAddr string // containerd socket path; auto-detected from XDG_RUNTIME_DIR if empty
 }
 
 func parseFlags() config {
@@ -75,10 +86,19 @@ func parseFlags() config {
 	flag.StringVar(&cfg.webAddr, "web-addr", ":7948", "web console HTTP listen address (empty to disable)")
 	flag.StringVar(&cfg.webPrefix, "web-prefix", "", "URL prefix for the web console, e.g. /console (empty = serve at root)")
 	flag.StringVar(&cfg.ingressAddr, "ingress-addr", ":8080", "HTTP ingress proxy listen address (empty to disable)")
+	flag.StringVar(&cfg.ingressTLSAddr, "ingress-tls-addr", "", "HTTPS ingress proxy listen address, e.g. :8443 (empty to disable; uses domain TLS certs)")
 	flag.StringVar(&cfg.dnsAddr, "dns-addr", "", "DNS listen address for svc.local zone, e.g. :5353 (empty to disable; any port ≥1024 works without root)")
 	flag.StringVar(&cfg.dataAddr, "data-addr", "", "routable IP for container traffic (auto-detected if empty)")
 	flag.StringVar(&cfg.nerdctlBin, "nerdctl", "nerdctl", "path to nerdctl binary")
 	flag.StringVar(&cfg.namespace, "namespace", "orchestrator", "nerdctl namespace for managed containers")
+	flag.StringVar(&cfg.containerdAddr, "containerd-addr", "", "containerd socket path (auto-detected from XDG_RUNTIME_DIR if empty)")
+	flag.StringVar(&cfg.ldapAddr, "ldap-addr", "", "LDAP/AD server address host:port (empty = use local password auth)")
+	flag.BoolVar(&cfg.ldapTLS, "ldap-tls", false, "use implicit TLS when connecting to LDAP (LDAPS, typically port 636)")
+	flag.BoolVar(&cfg.ldapInsecure, "ldap-insecure", false, "skip TLS certificate verification for LDAP (for self-signed certs)")
+	flag.StringVar(&cfg.ldapBindDNTemplate, "ldap-bind-dn-template", "", "how to form the bind DN; %%s is replaced with the username (e.g. %%s@corp.com or uid=%%s,ou=users,dc=corp,dc=com)")
+	flag.StringVar(&cfg.ldapBaseDN, "ldap-base-dn", "", "LDAP search base DN for group membership check, e.g. DC=corp,DC=com")
+	flag.StringVar(&cfg.ldapUserFilter, "ldap-user-filter", "", "LDAP search filter with %%s for username; required when --ldap-group-dn is set (e.g. (sAMAccountName=%%s))")
+	flag.StringVar(&cfg.ldapGroupDN, "ldap-group-dn", "", "optional: restrict login to members of this group DN")
 	flag.Parse()
 
 	if cfg.nodeID == "" {
@@ -122,8 +142,9 @@ func main() {
 		nerdctlDNSIP = cfg.dataAddr
 		nerdctlDNSPort = parseDNSPort(cfg.dnsAddr)
 	}
-	nc, err := nerdctl.NewClient(cfg.nerdctlBin, cfg.namespace, cfg.dataDir, nerdctlDNSIP, nerdctlDNSPort)
+	nc, err := nerdctl.NewClient(cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr, cfg.dataDir, nerdctlDNSIP, nerdctlDNSPort)
 	dieOnErr(err, "create nerdctl client")
+	slog.Info("containerd socket", "address", nc.Address())
 	if err := nc.Probe(ctx); err != nil {
 		slog.Error("nerdctl probe failed — is nerdctl installed in rootless mode?", "err", err)
 		os.Exit(1)
@@ -172,7 +193,15 @@ func main() {
 
 	// 5b. Web console (optional) ----------------------------------------------
 	if cfg.webAddr != "" {
-		webSrv := webui.New(peer, ctrl, cfg.adminToken, cfg.webPassword, cfg.webPrefix)
+		webSrv := webui.New(peer, ctrl, cfg.adminToken, cfg.webPassword, cfg.webPrefix, webui.LDAPConfig{
+			Addr:           cfg.ldapAddr,
+			UseTLS:         cfg.ldapTLS,
+			Insecure:       cfg.ldapInsecure,
+			BindDNTemplate: cfg.ldapBindDNTemplate,
+			BaseDN:         cfg.ldapBaseDN,
+			UserFilter:     cfg.ldapUserFilter,
+			GroupDN:        cfg.ldapGroupDN,
+		})
 		httpSrv := &http.Server{Addr: cfg.webAddr, Handler: webSrv.Handler()}
 		go func() {
 			slog.Info("web console listening", "addr", cfg.webAddr)
@@ -184,8 +213,11 @@ func main() {
 	}
 
 	// 5c. Ingress proxy (optional) --------------------------------------------
+	var proxy *ingress.Proxy
+	if cfg.ingressAddr != "" || cfg.ingressTLSAddr != "" {
+		proxy = ingress.New(peer, cfg.nodeID, tlsCert)
+	}
 	if cfg.ingressAddr != "" {
-		proxy := ingress.New(peer, cfg.nodeID, tlsCert)
 		ingressSrv := &http.Server{Addr: cfg.ingressAddr, Handler: proxy}
 		go func() {
 			slog.Info("ingress proxy listening", "addr", cfg.ingressAddr)
@@ -194,6 +226,16 @@ func main() {
 			}
 		}()
 		defer ingressSrv.Shutdown(context.Background()) //nolint:errcheck
+	}
+	if cfg.ingressTLSAddr != "" {
+		ingressTLSSrv := &http.Server{Addr: cfg.ingressTLSAddr, Handler: proxy, TLSConfig: proxy.TLSConfig()}
+		go func() {
+			slog.Info("ingress TLS proxy listening", "addr", cfg.ingressTLSAddr)
+			if err := ingressTLSSrv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+				slog.Error("ingress TLS proxy error", "err", err)
+			}
+		}()
+		defer ingressTLSSrv.Shutdown(context.Background()) //nolint:errcheck
 	}
 
 	// 5d. DNS server (optional) -----------------------------------------------
