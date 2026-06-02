@@ -14,6 +14,7 @@ interface Props {
   loading: boolean;
   error: string | null;
   refetch: () => void;
+  onNavigate: (page: string) => void;
 }
 
 function nodeStatus(status: string): StatusIndicatorProps.Type {
@@ -29,7 +30,7 @@ function nodeStatus(status: string): StatusIndicatorProps.Type {
   }
 }
 
-export default function Nodes({ state, loading, refetch }: Props) {
+export default function Nodes({ state, loading, refetch, onNavigate }: Props) {
   const [notifications, setNotifications] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [draining, setDraining] = useState<string | null>(null);
 
@@ -75,6 +76,7 @@ export default function Nodes({ state, loading, refetch }: Props) {
         items={items}
         empty={<span>No nodes registered.</span>}
         header={<Header counter={`(${items.length})`}>Nodes</Header>}
+        onRowClick={({ detail }) => onNavigate(`node-${detail.item.id}`)}
         columnDefinitions={[
           { id: "id", header: "ID", cell: (n) => n.id },
           { id: "address", header: "Address", cell: (n) => n.address },
@@ -94,14 +96,16 @@ export default function Nodes({ state, loading, refetch }: Props) {
             id: "actions",
             header: "",
             cell: (n) => (
-              <Button
-                variant="inline-link"
-                disabled={n.status === "draining"}
-                loading={draining === n.id}
-                onClick={() => handleDrain(n.id)}
-              >
-                Drain
-              </Button>
+              <span onClick={(e) => e.stopPropagation()}>
+                <Button
+                  variant="inline-link"
+                  disabled={n.status === "draining"}
+                  loading={draining === n.id}
+                  onClick={() => handleDrain(n.id)}
+                >
+                  Drain
+                </Button>
+              </span>
             ),
           },
         ]}

@@ -7,6 +7,23 @@ export interface NodeInfo {
   address: string;
   status: "healthy" | "draining" | "unreachable";
   cpu_cores: number;
+  memory_bytes: number;
+  disk_bytes: number;
+  data_ip: string;
+  last_seen_at: number; // unix seconds
+  mem_total_bytes: number;
+  mem_used_bytes: number;
+  disk_total_bytes: number;
+  disk_used_bytes: number;
+}
+
+export interface ContainerStats {
+  workload_id: string;
+  container_id: string;
+  name: string;
+  cpu_percent: number;
+  mem_used_bytes: number;
+  mem_limit_bytes: number;
 }
 
 export interface PortAllocation {
@@ -46,6 +63,7 @@ export interface ClusterState {
   workloads: WorkloadInfo[];
   actual_containers: ActualContainer[];
   actual_stacks: ActualStack[];
+  container_stats: ContainerStats[];
 }
 
 export interface MutationResult {

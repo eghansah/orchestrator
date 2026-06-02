@@ -18,6 +18,7 @@ import Services from "./pages/Services";
 import Domains from "./pages/Domains";
 import Users from "./pages/Users";
 import WorkloadDetail from "./pages/WorkloadDetail";
+import NodeDetail from "./pages/NodeDetail";
 
 type Page = "overview" | "workloads" | "nodes" | "ingress" | "services" | "domains" | "users" | string;
 
@@ -110,10 +111,12 @@ export default function App() {
 
   const content = activePage.startsWith("workload-") ? (
     <WorkloadDetail workloadId={activePage.slice("workload-".length)} {...navProps} />
+  ) : activePage.startsWith("node-") ? (
+    <NodeDetail nodeId={activePage.slice("node-".length)} {...navProps} />
   ) : ({
     overview: <Overview {...sharedProps} />,
     workloads: <Workloads {...navProps} />,
-    nodes: <Nodes {...sharedProps} />,
+    nodes: <Nodes {...navProps} />,
     ingress: <Ingress />,
     domains: <Domains />,
     services: <Services />,

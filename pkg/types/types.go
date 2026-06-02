@@ -164,9 +164,29 @@ type ActualStack struct {
 	Services   []ActualContainer
 }
 
+// NodeMetrics holds point-in-time resource utilization for a node.
+type NodeMetrics struct {
+	MemTotalBytes  uint64
+	MemUsedBytes   uint64
+	DiskTotalBytes uint64
+	DiskUsedBytes  uint64
+}
+
+// ContainerStats holds runtime resource usage for one container.
+type ContainerStats struct {
+	WorkloadID    string
+	ContainerID   string
+	Name          string
+	CPUPercent    float64
+	MemUsedBytes  uint64
+	MemLimitBytes uint64
+}
+
 type ActualWorkloadState struct {
-	NodeID     string
-	Containers []ActualContainer
-	Stacks     []ActualStack
-	ReportedAt time.Time
+	NodeID         string
+	Containers     []ActualContainer
+	Stacks         []ActualStack
+	Metrics        NodeMetrics
+	ContainerStats []ContainerStats
+	ReportedAt     time.Time
 }

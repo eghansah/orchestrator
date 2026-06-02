@@ -9,7 +9,14 @@ import StatusIndicator, {
   StatusIndicatorProps,
 } from "@cloudscape-design/components/status-indicator";
 import Table from "@cloudscape-design/components/table";
-import { ClusterState, formatAge } from "../api";
+import { ClusterState, ContainerStats, formatAge } from "../api";
+
+function formatBytes(b: number): string {
+  if (!b) return "—";
+  if (b >= 1_073_741_824) return `${(b / 1_073_741_824).toFixed(1)} GiB`;
+  if (b >= 1_048_576)     return `${(b / 1_048_576).toFixed(1)} MiB`;
+  return `${b} B`;
+}
 
 interface Props {
   workloadId: string;
@@ -36,6 +43,10 @@ export default function WorkloadDetail({ workloadId, state, loading, onNavigate 
 
   const containers = (state?.actual_containers ?? []).filter(
     (c) => c.workload_id === workloadId
+  );
+
+  const statsByContainerId = new Map<string, ContainerStats>(
+    (state?.container_stats ?? []).map((cs) => [cs.container_id, cs])
   );
   const stacks = (state?.actual_stacks ?? []).filter(
     (s) => s.workload_id === workloadId
@@ -125,9 +136,11 @@ export default function WorkloadDetail({ workloadId, state, loading, onNavigate 
                 <Table
                   items={containers}
                   columnDefinitions={[
-                    { id: "name", header: "Name", cell: (c) => c.name },
-                    { id: "status", header: "Status", cell: (c) => c.status },
-                    { id: "id", header: "Container ID", cell: (c) => c.container_id },
+                    { id: "name",   header: "Name",         cell: (c) => c.name },
+                    { id: "status", header: "Status",       cell: (c) => c.status },
+                    { id: "cpu",    header: "CPU %",        cell: (c) => { const s = statsByContainerId.get(c.container_id); return s ? `${s.cpu_percent.toFixed(2)}%` : "—"; } },
+                    { id: "mem",    header: "Memory Used",  cell: (c) => { const s = statsByContainerId.get(c.container_id); return s ? formatBytes(s.mem_used_bytes) : "—"; } },
+                    { id: "id",     header: "Container ID", cell: (c) => c.container_id },
                   ]}
                 />
               )}

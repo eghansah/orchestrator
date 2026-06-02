@@ -105,11 +105,23 @@ func (a *Agent) poll(ctx context.Context) error {
 		})
 	}
 
+	stats, _ := a.nc.Stats(ctx)
+	// Match container stats to workload IDs using the containers list.
+	containerToWorkload := make(map[string]string, len(containers))
+	for _, c := range containers {
+		containerToWorkload[c.ContainerID] = c.WorkloadID
+	}
+	for i := range stats {
+		stats[i].WorkloadID = containerToWorkload[stats[i].ContainerID]
+	}
+
 	newState := types.ActualWorkloadState{
-		NodeID:     a.id,
-		Containers: containers,
-		Stacks:     stacks,
-		ReportedAt: time.Now(),
+		NodeID:         a.id,
+		Containers:     containers,
+		Stacks:         stacks,
+		Metrics:        nerdctl.CollectNodeMetrics(a.nc.DataDir()),
+		ContainerStats: stats,
+		ReportedAt:     time.Now(),
 	}
 
 	a.mu.Lock()

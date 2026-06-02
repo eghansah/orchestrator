@@ -10,7 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/eghansah/orchestrator/pkg/types"
 )
@@ -84,6 +86,119 @@ func NewClient(binary, namespace, address, dataDir, dnsIP string, dnsPort uint32
 
 // Address returns the containerd socket path being used (empty = nerdctl default).
 func (c *Client) Address() string { return c.address }
+
+// DataDir returns the root directory used for compose file storage.
+func (c *Client) DataDir() string { return c.dataDir }
+
+// statsLine matches the per-line JSON from `nerdctl stats --no-stream --format '{{json .}}'`.
+type statsLine struct {
+	ID       string `json:"ID"`
+	Name     string `json:"Name"`
+	CPUPerc  string `json:"CPUPerc"`  // e.g. "0.50%"
+	MemUsage string `json:"MemUsage"` // e.g. "10.5MiB / 7.7GiB"
+}
+
+// parseHumanBytes converts nerdctl human-readable byte strings to uint64.
+// Supports B, KiB, MiB, GiB, TiB, kB, MB, GB, TB (case-insensitive).
+func parseHumanBytes(s string) uint64 {
+	s = strings.TrimSpace(s)
+	units := []struct {
+		suffix string
+		factor uint64
+	}{
+		{"TiB", 1 << 40}, {"GiB", 1 << 30}, {"MiB", 1 << 20}, {"KiB", 1 << 10},
+		{"TB", 1_000_000_000_000}, {"GB", 1_000_000_000}, {"MB", 1_000_000}, {"kB", 1_000},
+		{"B", 1},
+	}
+	for _, u := range units {
+		if strings.HasSuffix(s, u.suffix) {
+			num := strings.TrimSuffix(s, u.suffix)
+			if f, err := strconv.ParseFloat(strings.TrimSpace(num), 64); err == nil {
+				return uint64(f * float64(u.factor))
+			}
+		}
+	}
+	return 0
+}
+
+// Stats returns per-container resource usage for all running containers in the namespace.
+// Best-effort: returns an empty slice rather than an error when nerdctl stats fails or
+// there are no running containers.
+func (c *Client) Stats(ctx context.Context) ([]types.ContainerStats, error) {
+	out, err := c.run(ctx, "stats", "--no-stream", "--format", "{{json .}}")
+	if err != nil {
+		return nil, nil // no containers running or nerdctl stats not supported
+	}
+	var result []types.ContainerStats
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var sl statsLine
+		if err := json.Unmarshal([]byte(line), &sl); err != nil {
+			continue
+		}
+		cpuStr := strings.TrimSuffix(strings.TrimSpace(sl.CPUPerc), "%")
+		cpu, _ := strconv.ParseFloat(cpuStr, 64)
+
+		var memUsed, memLimit uint64
+		if parts := strings.SplitN(sl.MemUsage, "/", 2); len(parts) == 2 {
+			memUsed = parseHumanBytes(parts[0])
+			memLimit = parseHumanBytes(parts[1])
+		}
+		result = append(result, types.ContainerStats{
+			ContainerID:   sl.ID,
+			Name:          sl.Name,
+			CPUPercent:    cpu,
+			MemUsedBytes:  memUsed,
+			MemLimitBytes: memLimit,
+		})
+	}
+	return result, scanner.Err()
+}
+
+// CollectNodeMetrics reads node-level memory from /proc/meminfo and disk usage
+// from syscall.Statfs on the given directory. Best-effort; returns zero values on error.
+func CollectNodeMetrics(dataDir string) types.NodeMetrics {
+	var m types.NodeMetrics
+
+	// Memory from /proc/meminfo
+	if raw, err := os.ReadFile("/proc/meminfo"); err == nil {
+		var total, available uint64
+		scanner := bufio.NewScanner(bytes.NewReader(raw))
+		for scanner.Scan() {
+			fields := strings.Fields(scanner.Text())
+			if len(fields) < 2 {
+				continue
+			}
+			val, err := strconv.ParseUint(fields[1], 10, 64)
+			if err != nil {
+				continue
+			}
+			switch fields[0] {
+			case "MemTotal:":
+				total = val * 1024
+			case "MemAvailable:":
+				available = val * 1024
+			}
+		}
+		if total > 0 {
+			m.MemTotalBytes = total
+			m.MemUsedBytes = total - available
+		}
+	}
+
+	// Disk from syscall.Statfs on data directory
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(dataDir, &stat); err == nil {
+		m.DiskTotalBytes = stat.Blocks * uint64(stat.Bsize)
+		m.DiskUsedBytes = (stat.Blocks - stat.Bfree) * uint64(stat.Bsize)
+	}
+
+	return m
+}
 
 // Probe verifies that nerdctl can reach the containerd daemon.
 func (c *Client) Probe(ctx context.Context) error {

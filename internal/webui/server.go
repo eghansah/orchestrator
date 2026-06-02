@@ -230,10 +230,26 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type nodeJSON struct {
-		ID       string `json:"id"`
-		Address  string `json:"address"`
-		Status   string `json:"status"`
-		CPUCores uint32 `json:"cpu_cores"`
+		ID             string `json:"id"`
+		Address        string `json:"address"`
+		Status         string `json:"status"`
+		CPUCores       uint32 `json:"cpu_cores"`
+		MemoryBytes    uint64 `json:"memory_bytes"`
+		DiskBytes      uint64 `json:"disk_bytes"`
+		DataIP         string `json:"data_ip"`
+		LastSeenAt     int64  `json:"last_seen_at"`
+		MemTotalBytes  uint64 `json:"mem_total_bytes"`
+		MemUsedBytes   uint64 `json:"mem_used_bytes"`
+		DiskTotalBytes uint64 `json:"disk_total_bytes"`
+		DiskUsedBytes  uint64 `json:"disk_used_bytes"`
+	}
+	type containerStatsJSON struct {
+		WorkloadID    string  `json:"workload_id"`
+		ContainerID   string  `json:"container_id"`
+		Name          string  `json:"name"`
+		CPUPercent    float64 `json:"cpu_percent"`
+		MemUsedBytes  uint64  `json:"mem_used_bytes"`
+		MemLimitBytes uint64  `json:"mem_limit_bytes"`
 	}
 	type portAllocJSON struct {
 		ContainerPort uint32 `json:"container_port"`
@@ -274,7 +290,10 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		Workloads        []workloadJSON       `json:"workloads"`
 		ActualContainers []actualContainerJSON `json:"actual_containers"`
 		ActualStacks     []actualStackJSON    `json:"actual_stacks"`
+		ContainerStats   []containerStatsJSON `json:"container_stats"`
 	}
+
+	allStates := s.agent.AllStates()
 
 	out := resp{
 		LeaderID:         leaderID,
@@ -284,14 +303,24 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		Workloads:        []workloadJSON{},
 		ActualContainers: []actualContainerJSON{},
 		ActualStacks:     []actualStackJSON{},
+		ContainerStats:   []containerStatsJSON{},
 	}
 
 	for _, n := range state.Nodes {
+		nm := allStates[n.ID].Metrics
 		out.Nodes = append(out.Nodes, nodeJSON{
-			ID:       n.ID,
-			Address:  n.Address,
-			Status:   nodeStatusString(n.Status),
-			CPUCores: n.Resources.CPUCores,
+			ID:             n.ID,
+			Address:        n.Address,
+			Status:         nodeStatusString(n.Status),
+			CPUCores:       n.Resources.CPUCores,
+			MemoryBytes:    n.Resources.MemoryBytes,
+			DiskBytes:      n.Resources.DiskBytes,
+			DataIP:         n.DataIP,
+			LastSeenAt:     startedAt(n.LastSeenAt),
+			MemTotalBytes:  nm.MemTotalBytes,
+			MemUsedBytes:   nm.MemUsedBytes,
+			DiskTotalBytes: nm.DiskTotalBytes,
+			DiskUsedBytes:  nm.DiskUsedBytes,
 		})
 	}
 	for _, wl := range state.Workloads {
@@ -313,7 +342,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		out.Workloads = append(out.Workloads, wj)
 	}
 
-	for _, ns := range s.agent.AllStates() {
+	for _, ns := range allStates {
 		for _, c := range ns.Containers {
 			out.ActualContainers = append(out.ActualContainers, actualContainerJSON{
 				WorkloadID:  c.WorkloadID,
@@ -338,6 +367,16 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 				WorkloadID: st.WorkloadID,
 				Name:       st.Name,
 				Services:   svcs,
+			})
+		}
+		for _, cs := range ns.ContainerStats {
+			out.ContainerStats = append(out.ContainerStats, containerStatsJSON{
+				WorkloadID:    cs.WorkloadID,
+				ContainerID:   cs.ContainerID,
+				Name:          cs.Name,
+				CPUPercent:    cs.CPUPercent,
+				MemUsedBytes:  cs.MemUsedBytes,
+				MemLimitBytes: cs.MemLimitBytes,
 			})
 		}
 	}
