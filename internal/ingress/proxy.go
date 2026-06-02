@@ -68,15 +68,35 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wl, ok := state.Workloads[rule.WorkloadID]
-	if !ok || wl.NodeID == "" {
+	var svc types.Service
+	var svcFound bool
+	for _, s := range state.Services {
+		if s.Name == rule.ServiceName {
+			svc = s
+			svcFound = true
+			break
+		}
+	}
+	if !svcFound {
+		http.Error(w, "service not found", http.StatusBadGateway)
+		return
+	}
+
+	var wl types.Workload
+	for _, w := range state.Workloads {
+		if w.Name() == svc.WorkloadName {
+			wl = w
+			break
+		}
+	}
+	if wl.NodeID == "" {
 		http.Error(w, "workload not scheduled", http.StatusBadGateway)
 		return
 	}
 
-	allocatedPort := allocatedPortFor(wl, rule.Port)
+	allocatedPort := allocatedPortFor(wl, svc.TargetPort)
 	if allocatedPort == 0 {
-		http.Error(w, "no allocated port for container port", http.StatusBadGateway)
+		http.Error(w, "no allocated port for service target port", http.StatusBadGateway)
 		return
 	}
 

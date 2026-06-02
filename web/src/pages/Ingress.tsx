@@ -14,31 +14,33 @@ import {
   SpaceBetween,
   Table,
 } from "@cloudscape-design/components";
-import { api, IngressRule, Domain } from "../api";
+import { api, IngressRule, Domain, Service } from "../api";
 import { formatAge } from "../api";
 
 export default function Ingress() {
   const [rules, setRules] = useState<IngressRule[]>([]);
   const [domains, setDomains] = useState<Domain[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState({
     domain_id: "",
     path_prefix: "/",
-    workload_id: "",
-    port: "",
+    service_name: "",
   });
   const [selected, setSelected] = useState<IngressRule[]>([]);
 
   const load = useCallback(async () => {
     try {
-      const [rulesData, domainsData] = await Promise.all([
+      const [rulesData, domainsData, servicesData] = await Promise.all([
         api.listIngress(),
         api.listDomains(),
+        api.listServices(),
       ]);
       setRules(rulesData ?? []);
       setDomains(domainsData ?? []);
+      setServices(servicesData ?? []);
     } catch (e) {
       addFlash("error", String(e));
     } finally {
@@ -61,28 +63,26 @@ export default function Ingress() {
   }
 
   async function handleCreate() {
-    const port = parseInt(createForm.port, 10);
     if (!createForm.domain_id) {
       addFlash("error", "A domain is required");
       return;
     }
-    if (!createForm.workload_id || isNaN(port) || port <= 0) {
-      addFlash("error", "Workload ID and a valid port are required");
+    if (!createForm.service_name) {
+      addFlash("error", "A service is required");
       return;
     }
     try {
       const resp = await api.createIngress({
         domain_id: createForm.domain_id,
         path_prefix: createForm.path_prefix || "/",
-        workload_id: createForm.workload_id,
-        port,
+        service_name: createForm.service_name,
       });
       if (!resp.accepted) {
         addFlash("error", "rejected");
       } else {
         addFlash("success", `Rule ${resp.rule_id} created`);
         setCreating(false);
-        setCreateForm({ domain_id: "", path_prefix: "/", workload_id: "", port: "" });
+        setCreateForm({ domain_id: "", path_prefix: "/", service_name: "" });
         load();
       }
     } catch (e) {
@@ -113,6 +113,15 @@ export default function Ingress() {
   const selectedDomainOption =
     domainOptions.find((o) => o.value === createForm.domain_id) ?? null;
 
+  const serviceOptions: SelectProps.Option[] = services.map((s) => ({
+    value: s.name,
+    label: s.name,
+    description: `port ${s.system_port} → ${s.workload_name}`,
+  }));
+
+  const selectedServiceOption =
+    serviceOptions.find((o) => o.value === createForm.service_name) ?? null;
+
   const domainNameById = (id: string) =>
     domains.find((d) => d.id === id)?.name ?? id;
 
@@ -123,6 +132,7 @@ export default function Ingress() {
         <Header
           variant="h1"
           description="HTTP routing rules that direct inbound traffic to containers by domain and URL path prefix. Longest prefix wins."
+          actions={<Button iconName="refresh" onClick={load}>Refresh</Button>}
         >
           Ingress
         </Header>
@@ -155,8 +165,7 @@ export default function Ingress() {
           { id: "id", header: "ID", cell: (r) => r.id },
           { id: "domain", header: "Domain", cell: (r) => domainNameById(r.domain_id) || r.host || "—" },
           { id: "path", header: "Path", cell: (r) => r.path_prefix || "/" },
-          { id: "workload", header: "Workload", cell: (r) => r.workload_id },
-          { id: "port", header: "Port", cell: (r) => r.port },
+          { id: "service", header: "Service", cell: (r) => r.service_name },
           { id: "age", header: "Age", cell: (r) => formatAge(r.created_at) },
         ]}
         items={rules}
@@ -186,6 +195,7 @@ export default function Ingress() {
               constraintText="Required"
             >
               <Select
+                filteringType="auto"
                 options={domainOptions}
                 selectedOption={selectedDomainOption}
                 onChange={(e) =>
@@ -202,22 +212,20 @@ export default function Ingress() {
                 placeholder="/"
               />
             </FormField>
-            <FormField label="Workload ID" constraintText="Required">
-              <Input
-                value={createForm.workload_id}
-                onChange={(e) => setCreateForm((f) => ({ ...f, workload_id: e.detail.value }))}
-              />
-            </FormField>
             <FormField
-              label="Container port"
-              description="Port the container listens on (e.g. 80 for nginx)"
+              label="Service"
+              description="The service to route matching requests to"
               constraintText="Required"
             >
-              <Input
-                type="number"
-                value={createForm.port}
-                onChange={(e) => setCreateForm((f) => ({ ...f, port: e.detail.value }))}
-                placeholder="8080"
+              <Select
+                filteringType="auto"
+                options={serviceOptions}
+                selectedOption={selectedServiceOption}
+                onChange={(e) =>
+                  setCreateForm((f) => ({ ...f, service_name: e.detail.selectedOption.value ?? "" }))
+                }
+                placeholder="Select a service"
+                empty="No services available — create one in the Services page first"
               />
             </FormField>
           </SpaceBetween>

@@ -81,12 +81,11 @@ message Node {
 // ── Ingress ───────────────────────────────────────────────────────────────────
 
 message IngressRule {
-  string id          = 1;
-  string host        = 2; // Host header to match; empty = match all
-  string path_prefix = 3; // URL path prefix to match; empty = "/"
-  string workload_id = 4; // target workload
-  uint32 port        = 5; // host port on the target node
-  int64  created_at  = 6; // unix seconds
+  string id           = 1;
+  string host         = 2; // Host header to match; empty = match all
+  string path_prefix  = 3; // URL path prefix to match; empty = "/"
+  string service_name = 4; // target service (routes via named Service record)
+  int64  created_at   = 5; // unix seconds
 }
 
 // ── Service discovery ─────────────────────────────────────────────────────────
@@ -95,12 +94,12 @@ message IngressRule {
 // a port from the service pool (40000–42767). Containers reach it via DNS
 // <name>.svc.local on that port.
 message Service {
-  string id          = 1;
-  string name        = 2; // short DNS label, e.g. "api"
-  string workload_id = 3;
-  uint32 target_port = 4; // container port to proxy to
-  uint32 system_port = 5; // auto-assigned host port (40000–42767)
-  int64  created_at  = 6; // unix seconds
+  string id             = 1;
+  string name           = 2; // short DNS label, e.g. "api"
+  string workload_name  = 3; // stable workload name (Container.Name or Stack.Name)
+  uint32 target_port    = 4; // container port to proxy to
+  uint32 system_port    = 5; // auto-assigned host port (40000–42767)
+  int64  created_at     = 6; // unix seconds
 }
 
 message NodeResources {

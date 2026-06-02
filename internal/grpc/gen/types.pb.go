@@ -681,11 +681,10 @@ func (x *Node) GetDataIp() string {
 type IngressRule struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Host          string                 `protobuf:"bytes,2,opt,name=host,proto3" json:"host,omitempty"`                               // Host header to match; empty = match all
-	PathPrefix    string                 `protobuf:"bytes,3,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"` // URL path prefix to match; empty = "/"
-	WorkloadId    string                 `protobuf:"bytes,4,opt,name=workload_id,json=workloadId,proto3" json:"workload_id,omitempty"` // target workload
-	Port          uint32                 `protobuf:"varint,5,opt,name=port,proto3" json:"port,omitempty"`                              // host port on the target node
-	CreatedAt     int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`   // unix seconds
+	Host          string                 `protobuf:"bytes,2,opt,name=host,proto3" json:"host,omitempty"`                                  // Host header to match; empty = match all
+	PathPrefix    string                 `protobuf:"bytes,3,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`    // URL path prefix to match; empty = "/"
+	ServiceName   string                 `protobuf:"bytes,4,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"` // target service (routes via named Service record)
+	CreatedAt     int64                  `protobuf:"varint,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`      // unix seconds
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -741,18 +740,11 @@ func (x *IngressRule) GetPathPrefix() string {
 	return ""
 }
 
-func (x *IngressRule) GetWorkloadId() string {
+func (x *IngressRule) GetServiceName() string {
 	if x != nil {
-		return x.WorkloadId
+		return x.ServiceName
 	}
 	return ""
-}
-
-func (x *IngressRule) GetPort() uint32 {
-	if x != nil {
-		return x.Port
-	}
-	return 0
 }
 
 func (x *IngressRule) GetCreatedAt() int64 {
@@ -768,11 +760,11 @@ func (x *IngressRule) GetCreatedAt() int64 {
 type Service struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"` // short DNS label, e.g. "api"
-	WorkloadId    string                 `protobuf:"bytes,3,opt,name=workload_id,json=workloadId,proto3" json:"workload_id,omitempty"`
-	TargetPort    uint32                 `protobuf:"varint,4,opt,name=target_port,json=targetPort,proto3" json:"target_port,omitempty"` // container port to proxy to
-	SystemPort    uint32                 `protobuf:"varint,5,opt,name=system_port,json=systemPort,proto3" json:"system_port,omitempty"` // auto-assigned host port (40000–42767)
-	CreatedAt     int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`    // unix seconds
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`                                     // short DNS label, e.g. "api"
+	WorkloadName  string                 `protobuf:"bytes,3,opt,name=workload_name,json=workloadName,proto3" json:"workload_name,omitempty"` // stable workload name (Container.Name or Stack.Name)
+	TargetPort    uint32                 `protobuf:"varint,4,opt,name=target_port,json=targetPort,proto3" json:"target_port,omitempty"`      // container port to proxy to
+	SystemPort    uint32                 `protobuf:"varint,5,opt,name=system_port,json=systemPort,proto3" json:"system_port,omitempty"`      // auto-assigned host port (40000–42767)
+	CreatedAt     int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`         // unix seconds
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -821,9 +813,9 @@ func (x *Service) GetName() string {
 	return ""
 }
 
-func (x *Service) GetWorkloadId() string {
+func (x *Service) GetWorkloadName() string {
 	if x != nil {
-		return x.WorkloadId
+		return x.WorkloadName
 	}
 	return ""
 }
@@ -1259,22 +1251,19 @@ const file_types_proto_rawDesc = "" +
 	"\flast_seen_at\x18\x05 \x01(\x03R\n" +
 	"lastSeenAt\x12\x19\n" +
 	"\btls_cert\x18\x06 \x01(\fR\atlsCert\x12\x17\n" +
-	"\adata_ip\x18\a \x01(\tR\x06dataIp\"\xa6\x01\n" +
+	"\adata_ip\x18\a \x01(\tR\x06dataIp\"\x94\x01\n" +
 	"\vIngressRule\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04host\x18\x02 \x01(\tR\x04host\x12\x1f\n" +
 	"\vpath_prefix\x18\x03 \x01(\tR\n" +
-	"pathPrefix\x12\x1f\n" +
-	"\vworkload_id\x18\x04 \x01(\tR\n" +
-	"workloadId\x12\x12\n" +
-	"\x04port\x18\x05 \x01(\rR\x04port\x12\x1d\n" +
+	"pathPrefix\x12!\n" +
+	"\fservice_name\x18\x04 \x01(\tR\vserviceName\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x06 \x01(\x03R\tcreatedAt\"\xaf\x01\n" +
+	"created_at\x18\x05 \x01(\x03R\tcreatedAt\"\xb3\x01\n" +
 	"\aService\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1f\n" +
-	"\vworkload_id\x18\x03 \x01(\tR\n" +
-	"workloadId\x12\x1f\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12#\n" +
+	"\rworkload_name\x18\x03 \x01(\tR\fworkloadName\x12\x1f\n" +
 	"\vtarget_port\x18\x04 \x01(\rR\n" +
 	"targetPort\x12\x1f\n" +
 	"\vsystem_port\x18\x05 \x01(\rR\n" +

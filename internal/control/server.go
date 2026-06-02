@@ -263,22 +263,18 @@ func (s *Server) removeFromNode(ctx context.Context, addr string, certDER []byte
 // ── Ingress ───────────────────────────────────────────────────────────────────
 
 func (s *Server) CreateIngress(_ context.Context, req *gen.CreateIngressRequest) (*gen.CreateIngressResponse, error) {
-	if req.WorkloadId == "" {
-		return nil, status.Error(codes.InvalidArgument, "workload_id is required")
-	}
-	if req.Port == 0 {
-		return nil, status.Error(codes.InvalidArgument, "port is required")
+	if req.ServiceName == "" {
+		return nil, status.Error(codes.InvalidArgument, "service_name is required")
 	}
 	if err := s.requireLeader(); err != nil {
 		return nil, err
 	}
 	rule := types.IngressRule{
-		ID:         newID(),
-		Host:       req.Host,
-		PathPrefix: req.PathPrefix,
-		WorkloadID: req.WorkloadId,
-		Port:       req.Port,
-		CreatedAt:  time.Now(),
+		ID:          newID(),
+		Host:        req.Host,
+		PathPrefix:  req.PathPrefix,
+		ServiceName: req.ServiceName,
+		CreatedAt:   time.Now(),
 	}
 	if err := s.peer.ApplyIngress(rule); err != nil {
 		return nil, status.Errorf(codes.Internal, "apply ingress: %v", err)
@@ -314,8 +310,8 @@ func (s *Server) CreateService(_ context.Context, req *gen.CreateServiceRequest)
 	if req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
-	if req.WorkloadId == "" {
-		return nil, status.Error(codes.InvalidArgument, "workload_id is required")
+	if req.WorkloadName == "" {
+		return nil, status.Error(codes.InvalidArgument, "workload_name is required")
 	}
 	if req.TargetPort == 0 {
 		return nil, status.Error(codes.InvalidArgument, "target_port is required")
@@ -324,11 +320,11 @@ func (s *Server) CreateService(_ context.Context, req *gen.CreateServiceRequest)
 		return nil, err
 	}
 	svc := types.Service{
-		ID:         newID(),
-		Name:       req.Name,
-		WorkloadID: req.WorkloadId,
-		TargetPort: req.TargetPort,
-		CreatedAt:  time.Now(),
+		ID:           newID(),
+		Name:         req.Name,
+		WorkloadName: req.WorkloadName,
+		TargetPort:   req.TargetPort,
+		CreatedAt:    time.Now(),
 	}
 	if err := s.peer.ApplyService(svc); err != nil {
 		return nil, status.Errorf(codes.Internal, "apply service: %v", err)

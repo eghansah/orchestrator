@@ -106,22 +106,20 @@ export interface IngressRule {
   domain_id: string;
   host: string;
   path_prefix: string;
-  workload_id: string;
-  port: number;
+  service_name: string;
   created_at: number; // unix seconds
 }
 
 export interface CreateIngressRequest {
   domain_id: string;
   path_prefix: string;
-  workload_id: string;
-  port: number;
+  service_name: string;
 }
 
 export interface Service {
   id: string;
   name: string;
-  workload_id: string;
+  workload_name: string;
   target_port: number;
   system_port: number;
   created_at: number; // unix seconds
@@ -129,7 +127,7 @@ export interface Service {
 
 export interface CreateServiceRequest {
   name: string;
-  workload_id: string;
+  workload_name: string;
   target_port: number;
 }
 
@@ -157,6 +155,30 @@ export interface User {
 
 export interface CreateUserRequest {
   username: string; // AD username; no password — authentication is handled by LDAP
+}
+
+export interface WorkloadTemplate {
+  id: string;
+  name: string;
+  description: string;
+  kind: "container" | "stack";
+  compose_yaml?: string;
+  image?: string;
+  created_at: number; // unix seconds
+}
+
+export interface CreateTemplateRequest {
+  name: string;
+  description?: string;
+  kind: "container" | "stack";
+  compose_yaml?: string;
+  image?: string;
+  command?: string[];
+  env?: string[];
+  ports?: { container_port: number; protocol: string }[];
+  volumes?: { source: string; target: string; read_only: boolean }[];
+  labels?: Record<string, string>;
+  namespace?: string;
 }
 
 export interface Registry {
@@ -291,6 +313,17 @@ export const api = {
     request<Registry>("POST", `/api/registries/${id}/update`, req),
   deleteRegistry: (id: string) =>
     request<{ accepted: boolean }>("POST", `/api/registries/${id}/delete`),
+  listTemplates: () => request<WorkloadTemplate[]>("GET", "/api/templates"),
+  createTemplate: (req: CreateTemplateRequest) =>
+    request<WorkloadTemplate>("POST", "/api/templates", req),
+  updateTemplate: (id: string, req: CreateTemplateRequest) =>
+    request<WorkloadTemplate>("POST", `/api/templates/${id}/update`, req),
+  deleteTemplate: (id: string) =>
+    request<{ accepted: boolean }>("POST", `/api/templates/${id}/delete`),
+  deployTemplate: (id: string) =>
+    request<{ accepted: boolean; workload_id?: string; reason?: string }>("POST", `/api/templates/${id}/deploy`),
+  getContainerLogs: (name: string, tail = 200) =>
+    request<{ logs: string }>("GET", `/api/containers/${encodeURIComponent(name)}/logs?tail=${tail}`),
   getRegistryCatalog: (id: string, search?: string) =>
     request<{ repos: string[] }>(
       "GET",

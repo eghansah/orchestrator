@@ -97,10 +97,9 @@ message GetClusterStateResponse {
 }
 
 message CreateIngressRequest {
-  string host        = 1; // Host header to match; empty = match all
-  string path_prefix = 2; // URL path prefix; empty = "/"
-  string workload_id = 3;
-  uint32 port        = 4; // host port on the target node
+  string host         = 1; // Host header to match; empty = match all
+  string path_prefix  = 2; // URL path prefix; empty = "/"
+  string service_name = 3; // target service name
 }
 
 message CreateIngressResponse {
@@ -125,9 +124,9 @@ message ListIngressResponse {
 }
 
 message CreateServiceRequest {
-  string name        = 1; // short DNS label, e.g. "api"
-  string workload_id = 2;
-  uint32 target_port = 3; // container port to proxy to
+  string name          = 1; // short DNS label, e.g. "api"
+  string workload_name = 2; // stable workload name (Container.Name or Stack.Name)
+  uint32 target_port   = 3; // container port to proxy to
 }
 
 message CreateServiceResponse {

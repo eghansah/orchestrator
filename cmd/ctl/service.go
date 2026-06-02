@@ -43,10 +43,10 @@ func serviceListCmd(server string, args []string) {
 	}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(tw, "ID\tNAME\tSYSTEM PORT\tWORKLOAD\tTARGET PORT\tAGE")
+	fmt.Fprintln(tw, "ID\tNAME\tSYSTEM PORT\tWORKLOAD NAME\tTARGET PORT\tAGE")
 	for _, s := range resp.Services {
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%d\t%s\n",
-			s.Id, s.Name, s.SystemPort, s.WorkloadId, s.TargetPort, fmtAge(s.CreatedAt),
+			s.Id, s.Name, s.SystemPort, s.WorkloadName, s.TargetPort, fmtAge(s.CreatedAt),
 		)
 	}
 	_ = tw.Flush()
@@ -55,10 +55,10 @@ func serviceListCmd(server string, args []string) {
 func serviceCreateCmd(server string, args []string) {
 	fs := flag.NewFlagSet("service create", flag.ExitOnError)
 	name := fs.String("name", "", "service name (DNS label, e.g. \"api\")")
-	workload := fs.String("workload", "", "workload ID to route to")
+	workload := fs.String("workload", "", "workload name to route to (Container.Name or Stack.Name)")
 	port := fs.Uint("port", 0, "container port to proxy to")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: ctl service create --name NAME --workload ID --port PORT")
+		fmt.Fprintln(os.Stderr, "Usage: ctl service create --name NAME --workload WORKLOAD_NAME --port PORT")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
@@ -75,9 +75,9 @@ func serviceCreateCmd(server string, args []string) {
 	defer cancel()
 
 	resp, err := client.CreateService(c, &gen.CreateServiceRequest{
-		Name:       *name,
-		WorkloadId: *workload,
-		TargetPort: uint32(*port),
+		Name:         *name,
+		WorkloadName: *workload,
+		TargetPort:   uint32(*port),
 	})
 	if err != nil {
 		die("create service: %v", err)

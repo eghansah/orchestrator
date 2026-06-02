@@ -43,15 +43,15 @@ func ingressListCmd(server string, args []string) {
 	}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(tw, "ID\tHOST\tPATH\tWORKLOAD\tPORT\tAGE")
+	fmt.Fprintln(tw, "ID\tHOST\tPATH\tSERVICE\tAGE")
 	for _, r := range resp.Rules {
 		host := fmtOrDash(r.Host)
 		path := r.PathPrefix
 		if path == "" {
 			path = "/"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\n",
-			r.Id, host, path, r.WorkloadId, r.Port, fmtAge(r.CreatedAt),
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			r.Id, host, path, r.ServiceName, fmtAge(r.CreatedAt),
 		)
 	}
 	_ = tw.Flush()
@@ -61,16 +61,15 @@ func ingressCreateCmd(server string, args []string) {
 	fs := flag.NewFlagSet("ingress create", flag.ExitOnError)
 	host := fs.String("host", "", "Host header to match (empty = match all)")
 	path := fs.String("path", "/", "URL path prefix to match")
-	workload := fs.String("workload", "", "workload ID to route to")
-	port := fs.Uint("port", 0, "host port on the target node")
+	service := fs.String("service", "", "service name to route to")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: ctl ingress create --workload ID --port PORT [--host HOST] [--path PREFIX]")
+		fmt.Fprintln(os.Stderr, "Usage: ctl ingress create --service NAME [--host HOST] [--path PREFIX]")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
 
-	if *workload == "" || *port == 0 {
-		fmt.Fprintln(os.Stderr, "error: --workload and --port are required")
+	if *service == "" {
+		fmt.Fprintln(os.Stderr, "error: --service is required")
 		fs.Usage()
 		os.Exit(1)
 	}
@@ -81,10 +80,9 @@ func ingressCreateCmd(server string, args []string) {
 	defer cancel()
 
 	resp, err := client.CreateIngress(c, &gen.CreateIngressRequest{
-		Host:       *host,
-		PathPrefix: *path,
-		WorkloadId: *workload,
-		Port:       uint32(*port),
+		Host:        *host,
+		PathPrefix:  *path,
+		ServiceName: *service,
 	})
 	if err != nil {
 		die("create ingress: %v", err)

@@ -134,6 +134,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/registries", a(s.handleCreateRegistry))
 	mux.Handle("POST /api/registries/{id}/update", a(s.handleUpdateRegistry))
 	mux.Handle("POST /api/registries/{id}/delete", a(s.handleDeleteRegistry))
+	mux.Handle("GET /api/templates", a(s.handleListTemplates))
+	mux.Handle("POST /api/templates", a(s.handleCreateTemplate))
+	mux.Handle("POST /api/templates/{id}/update", a(s.handleUpdateTemplate))
+	mux.Handle("POST /api/templates/{id}/delete", a(s.handleDeleteTemplate))
+	mux.Handle("POST /api/templates/{id}/deploy", a(s.handleDeployTemplate))
+	mux.Handle("GET /api/containers/{name}/logs", a(s.handleContainerLogs))
 	mux.Handle("GET /api/registries/{id}/catalog", a(s.handleRegistryCatalog))
 	mux.Handle("GET /api/registries/{id}/tags", a(s.handleRegistryTags))
 	mux.Handle("GET /api/registries/{id}/env", a(s.handleRegistryEnv))
@@ -547,13 +553,12 @@ func (s *Server) handleDrain(w http.ResponseWriter, r *http.Request) {
 // ── Ingress API handlers ──────────────────────────────────────────────────────
 
 type ingressRuleJSON struct {
-	ID         string `json:"id"`
-	DomainID   string `json:"domain_id"`
-	Host       string `json:"host"`
-	PathPrefix string `json:"path_prefix"`
-	WorkloadID string `json:"workload_id"`
-	Port       uint32 `json:"port"`
-	CreatedAt  int64  `json:"created_at"`
+	ID          string `json:"id"`
+	DomainID    string `json:"domain_id"`
+	Host        string `json:"host"`
+	PathPrefix  string `json:"path_prefix"`
+	ServiceName string `json:"service_name"`
+	CreatedAt   int64  `json:"created_at"`
 }
 
 func (s *Server) handleListIngress(w http.ResponseWriter, _ *http.Request) {
@@ -561,13 +566,12 @@ func (s *Server) handleListIngress(w http.ResponseWriter, _ *http.Request) {
 	rules := make([]ingressRuleJSON, 0, len(state.IngressRules))
 	for _, r := range state.IngressRules {
 		rules = append(rules, ingressRuleJSON{
-			ID:         r.ID,
-			DomainID:   r.DomainID,
-			Host:       r.Host,
-			PathPrefix: r.PathPrefix,
-			WorkloadID: r.WorkloadID,
-			Port:       r.Port,
-			CreatedAt:  r.CreatedAt.Unix(),
+			ID:          r.ID,
+			DomainID:    r.DomainID,
+			Host:        r.Host,
+			PathPrefix:  r.PathPrefix,
+			ServiceName: r.ServiceName,
+			CreatedAt:   r.CreatedAt.Unix(),
 		})
 	}
 	writeJSON(w, rules)
@@ -575,10 +579,9 @@ func (s *Server) handleListIngress(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleCreateIngress(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		DomainID   string `json:"domain_id"`
-		PathPrefix string `json:"path_prefix"`
-		WorkloadID string `json:"workload_id"`
-		Port       uint32 `json:"port"`
+		DomainID    string `json:"domain_id"`
+		PathPrefix  string `json:"path_prefix"`
+		ServiceName string `json:"service_name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -588,12 +591,8 @@ func (s *Server) handleCreateIngress(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "domain_id is required")
 		return
 	}
-	if req.WorkloadID == "" {
-		writeError(w, http.StatusBadRequest, "workload_id is required")
-		return
-	}
-	if req.Port == 0 {
-		writeError(w, http.StatusBadRequest, "port is required")
+	if req.ServiceName == "" {
+		writeError(w, http.StatusBadRequest, "service_name is required")
 		return
 	}
 	if !s.peer.IsLeader() {
@@ -607,13 +606,12 @@ func (s *Server) handleCreateIngress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rule := types.IngressRule{
-		ID:         newIngressID(),
-		DomainID:   domain.ID,
-		Host:       domain.Name,
-		PathPrefix: req.PathPrefix,
-		WorkloadID: req.WorkloadID,
-		Port:       req.Port,
-		CreatedAt:  time.Now(),
+		ID:          newIngressID(),
+		DomainID:    domain.ID,
+		Host:        domain.Name,
+		PathPrefix:  req.PathPrefix,
+		ServiceName: req.ServiceName,
+		CreatedAt:   time.Now(),
 	}
 	if err := s.peer.ApplyIngress(rule); err != nil {
 		writeError(w, http.StatusInternalServerError, "apply ingress: "+err.Error())
@@ -649,22 +647,22 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type svcJSON struct {
-		ID         string `json:"id"`
-		Name       string `json:"name"`
-		WorkloadID string `json:"workload_id"`
-		TargetPort uint32 `json:"target_port"`
-		SystemPort uint32 `json:"system_port"`
-		CreatedAt  int64  `json:"created_at"`
+		ID           string `json:"id"`
+		Name         string `json:"name"`
+		WorkloadName string `json:"workload_name"`
+		TargetPort   uint32 `json:"target_port"`
+		SystemPort   uint32 `json:"system_port"`
+		CreatedAt    int64  `json:"created_at"`
 	}
 	svcs := make([]svcJSON, 0, len(resp.Services))
 	for _, s := range resp.Services {
 		svcs = append(svcs, svcJSON{
-			ID:         s.Id,
-			Name:       s.Name,
-			WorkloadID: s.WorkloadId,
-			TargetPort: s.TargetPort,
-			SystemPort: s.SystemPort,
-			CreatedAt:  s.CreatedAt,
+			ID:           s.Id,
+			Name:         s.Name,
+			WorkloadName: s.WorkloadName,
+			TargetPort:   s.TargetPort,
+			SystemPort:   s.SystemPort,
+			CreatedAt:    s.CreatedAt,
 		})
 	}
 	writeJSON(w, svcs)
@@ -672,18 +670,18 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name       string `json:"name"`
-		WorkloadID string `json:"workload_id"`
-		TargetPort uint32 `json:"target_port"`
+		Name         string `json:"name"`
+		WorkloadName string `json:"workload_name"`
+		TargetPort   uint32 `json:"target_port"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	resp, err := s.ctrl.CreateService(r.Context(), &gen.CreateServiceRequest{
-		Name:       req.Name,
-		WorkloadId: req.WorkloadID,
-		TargetPort: req.TargetPort,
+		Name:         req.Name,
+		WorkloadName: req.WorkloadName,
+		TargetPort:   req.TargetPort,
 	})
 	if err != nil {
 		st, _ := status.FromError(err)
@@ -1326,7 +1324,224 @@ func (s *Server) handleRegistryEnv(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string][]string{"env": env})
 }
 
+func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name is required")
+		return
+	}
+	tail := 200
+	if v := r.URL.Query().Get("tail"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			if n > 2000 {
+				n = 2000
+			}
+			tail = n
+		}
+	}
+	logs, err := s.agent.ContainerLogs(r.Context(), name, tail)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "get logs: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]string{"logs": logs})
+}
+
 func newRegistryID() string {
+	b := make([]byte, 8)
+	_, _ = crand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
+
+// ── Templates ─────────────────────────────────────────────────────────────────
+
+type templateRequestJSON struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Kind        string   `json:"kind"` // "container" | "stack"
+	ComposeYAML string   `json:"compose_yaml,omitempty"`
+	Image       string   `json:"image,omitempty"`
+	Command     []string `json:"command,omitempty"`
+	Env         []string `json:"env,omitempty"`
+	Ports       []struct {
+		ContainerPort uint32 `json:"container_port"`
+		Protocol      string `json:"protocol"`
+	} `json:"ports,omitempty"`
+	Volumes []struct {
+		Source   string `json:"source"`
+		Target   string `json:"target"`
+		ReadOnly bool   `json:"read_only"`
+	} `json:"volumes,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
+	Namespace string            `json:"namespace,omitempty"`
+}
+
+type templateJSON struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Kind        string `json:"kind"`
+	ComposeYAML string `json:"compose_yaml,omitempty"`
+	Image       string `json:"image,omitempty"`
+	CreatedAt   int64  `json:"created_at"`
+}
+
+func templateToJSON(t types.WorkloadTemplate) templateJSON {
+	out := templateJSON{
+		ID:          t.ID,
+		Name:        t.Name,
+		Description: t.Description,
+		Kind:        kindString(t.Kind),
+		CreatedAt:   t.CreatedAt.Unix(),
+	}
+	if t.Stack != nil {
+		out.ComposeYAML = t.Stack.ComposeYAML
+	}
+	if t.Container != nil {
+		out.Image = t.Container.Image
+	}
+	return out
+}
+
+func templateFromRequest(req templateRequestJSON) (types.WorkloadTemplate, error) {
+	t := types.WorkloadTemplate{
+		Name:        req.Name,
+		Description: req.Description,
+	}
+	switch req.Kind {
+	case "stack":
+		t.Kind = types.KindStack
+		t.Stack = &types.ComposeStackSpec{ComposeYAML: req.ComposeYAML}
+	case "container":
+		t.Kind = types.KindContainer
+		spec := types.ContainerSpec{
+			Image:     req.Image,
+			Command:   req.Command,
+			Env:       req.Env,
+			Labels:    req.Labels,
+			Namespace: req.Namespace,
+		}
+		for _, p := range req.Ports {
+			spec.Ports = append(spec.Ports, types.PortMapping{ContainerPort: p.ContainerPort, Protocol: p.Protocol})
+		}
+		for _, v := range req.Volumes {
+			spec.Volumes = append(spec.Volumes, types.VolumeMount{Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly})
+		}
+		t.Container = &spec
+	default:
+		return t, fmt.Errorf("kind must be \"container\" or \"stack\"")
+	}
+	return t, nil
+}
+
+func (s *Server) handleListTemplates(w http.ResponseWriter, _ *http.Request) {
+	templates := s.peer.State().Templates
+	out := make([]templateJSON, 0, len(templates))
+	for _, t := range templates {
+		out = append(out, templateToJSON(t))
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
+	var req templateRequestJSON
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	t, err := templateFromRequest(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	t.ID = newTemplateID()
+	t.CreatedAt = time.Now()
+	if err := s.peer.ApplyTemplate(t); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, templateToJSON(t))
+}
+
+func (s *Server) handleUpdateTemplate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	state := s.peer.State()
+	if _, ok := state.Templates[id]; !ok {
+		writeError(w, http.StatusNotFound, "template not found")
+		return
+	}
+	var req templateRequestJSON
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	t, err := templateFromRequest(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	t.ID = id
+	t.CreatedAt = state.Templates[id].CreatedAt
+	if err := s.peer.ApplyTemplate(t); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, templateToJSON(t))
+}
+
+func (s *Server) handleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.peer.RemoveTemplate(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"accepted": true})
+}
+
+func (s *Server) handleDeployTemplate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	state := s.peer.State()
+	t, ok := state.Templates[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "template not found")
+		return
+	}
+	var resp *gen.SubmitResponse
+	var err error
+	switch t.Kind {
+	case types.KindStack:
+		if t.Stack == nil {
+			writeError(w, http.StatusBadRequest, "template has no stack spec")
+			return
+		}
+		resp, err = s.ctrl.SubmitStack(r.Context(), &gen.SubmitStackRequest{
+			Spec: &gen.ComposeStackSpec{Name: t.Name, ComposeYaml: t.Stack.ComposeYAML},
+		})
+	case types.KindContainer:
+		if t.Container == nil {
+			writeError(w, http.StatusBadRequest, "template has no container spec")
+			return
+		}
+		resp, err = s.ctrl.SubmitContainer(r.Context(), &gen.SubmitContainerRequest{
+			Spec: types.ContainerSpecToProto(*t.Container),
+		})
+	default:
+		writeError(w, http.StatusBadRequest, "unknown template kind")
+		return
+	}
+	if err != nil {
+		st, _ := status.FromError(err)
+		writeError(w, grpcHTTPStatus(st.Code()), st.Message())
+		return
+	}
+	writeJSON(w, resp)
+}
+
+func newTemplateID() string {
 	b := make([]byte, 8)
 	_, _ = crand.Read(b)
 	return fmt.Sprintf("%x", b)

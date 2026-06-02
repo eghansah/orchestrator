@@ -113,7 +113,15 @@ func (m *Manager) handleConn(ctx context.Context, conn net.Conn, svc types.Servi
 	defer conn.Close()
 
 	state := m.peer.State()
-	wl, ok := state.Workloads[svc.WorkloadID]
+	var wl types.Workload
+	var ok bool
+	for _, w := range state.Workloads {
+		if w.Name() == svc.WorkloadName {
+			wl = w
+			ok = true
+			break
+		}
+	}
 	if !ok || wl.NodeID == "" {
 		slog.Warn("service workload not scheduled", "service", svc.Name)
 		return

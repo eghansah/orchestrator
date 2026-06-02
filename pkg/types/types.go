@@ -83,6 +83,17 @@ type Workload struct {
 	PortAllocations []PortAllocation // auto-assigned host ports (containers only)
 }
 
+// Name returns the stable workload name from its spec.
+func (w Workload) Name() string {
+	if w.Container != nil {
+		return w.Container.Name
+	}
+	if w.Stack != nil {
+		return w.Stack.Name
+	}
+	return ""
+}
+
 type NodeStatus int32
 
 const (
@@ -109,25 +120,24 @@ type Node struct {
 }
 
 type IngressRule struct {
-	ID         string
-	DomainID   string // required; host is derived from the linked Domain
-	Host       string // matched against Host header; empty = match all
-	PathPrefix string // matched against URL path prefix; empty = "/"
-	WorkloadID string
-	Port       uint32    // host port on the target node
-	CreatedAt  time.Time
+	ID          string
+	DomainID    string // required; host is derived from the linked Domain
+	Host        string // matched against Host header; empty = match all
+	PathPrefix  string // matched against URL path prefix; empty = "/"
+	ServiceName string // routes to this named Service
+	CreatedAt   time.Time
 }
 
 // Service is a named TCP endpoint backed by a workload. The system auto-assigns
 // a host port in the service pool (40000–42767). Containers resolve the service
 // via DNS <name>.svc.local and connect on SystemPort.
 type Service struct {
-	ID         string
-	Name       string    // short DNS label, e.g. "api"
-	WorkloadID string
-	TargetPort uint32    // container port to proxy to
-	SystemPort uint32    // auto-assigned host port
-	CreatedAt  time.Time
+	ID           string
+	Name         string    // short DNS label, e.g. "api"
+	WorkloadName string    // stable workload name (Container.Name or Stack.Name)
+	TargetPort   uint32    // container port to proxy to
+	SystemPort   uint32    // auto-assigned host port
+	CreatedAt    time.Time
 }
 
 // Domain is a named TLS-enabled virtual host. The ingress uses the stored
@@ -149,6 +159,17 @@ type Registry struct {
 	Username  string // empty for unauthenticated registries
 	Password  string // stored in Raft, same pattern as Domain.TLSKey
 	CreatedAt time.Time
+}
+
+// WorkloadTemplate is a saved workload definition that can be redeployed.
+type WorkloadTemplate struct {
+	ID          string
+	Name        string
+	Description string
+	Kind        WorkloadKind
+	Container   *ContainerSpec
+	Stack       *ComposeStackSpec
+	CreatedAt   time.Time
 }
 
 // User is an AD-backed web-console account. Authentication is delegated to LDAP;

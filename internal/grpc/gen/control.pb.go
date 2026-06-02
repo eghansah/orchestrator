@@ -532,10 +532,9 @@ func (x *GetClusterStateResponse) GetLeaderId() string {
 
 type CreateIngressRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Host          string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`                               // Host header to match; empty = match all
-	PathPrefix    string                 `protobuf:"bytes,2,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"` // URL path prefix; empty = "/"
-	WorkloadId    string                 `protobuf:"bytes,3,opt,name=workload_id,json=workloadId,proto3" json:"workload_id,omitempty"`
-	Port          uint32                 `protobuf:"varint,4,opt,name=port,proto3" json:"port,omitempty"` // host port on the target node
+	Host          string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`                                  // Host header to match; empty = match all
+	PathPrefix    string                 `protobuf:"bytes,2,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`    // URL path prefix; empty = "/"
+	ServiceName   string                 `protobuf:"bytes,3,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"` // target service name
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -584,18 +583,11 @@ func (x *CreateIngressRequest) GetPathPrefix() string {
 	return ""
 }
 
-func (x *CreateIngressRequest) GetWorkloadId() string {
+func (x *CreateIngressRequest) GetServiceName() string {
 	if x != nil {
-		return x.WorkloadId
+		return x.ServiceName
 	}
 	return ""
-}
-
-func (x *CreateIngressRequest) GetPort() uint32 {
-	if x != nil {
-		return x.Port
-	}
-	return 0
 }
 
 type CreateIngressResponse struct {
@@ -836,9 +828,9 @@ func (x *ListIngressResponse) GetRules() []*IngressRule {
 
 type CreateServiceRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // short DNS label, e.g. "api"
-	WorkloadId    string                 `protobuf:"bytes,2,opt,name=workload_id,json=workloadId,proto3" json:"workload_id,omitempty"`
-	TargetPort    uint32                 `protobuf:"varint,3,opt,name=target_port,json=targetPort,proto3" json:"target_port,omitempty"` // container port to proxy to
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                     // short DNS label, e.g. "api"
+	WorkloadName  string                 `protobuf:"bytes,2,opt,name=workload_name,json=workloadName,proto3" json:"workload_name,omitempty"` // stable workload name (Container.Name or Stack.Name)
+	TargetPort    uint32                 `protobuf:"varint,3,opt,name=target_port,json=targetPort,proto3" json:"target_port,omitempty"`      // container port to proxy to
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -880,9 +872,9 @@ func (x *CreateServiceRequest) GetName() string {
 	return ""
 }
 
-func (x *CreateServiceRequest) GetWorkloadId() string {
+func (x *CreateServiceRequest) GetWorkloadName() string {
 	if x != nil {
-		return x.WorkloadId
+		return x.WorkloadName
 	}
 	return ""
 }
@@ -1168,14 +1160,12 @@ const file_control_proto_rawDesc = "" +
 	"\x17GetClusterStateResponse\x12(\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x12.orchestrator.NodeR\x05nodes\x124\n" +
 	"\tworkloads\x18\x02 \x03(\v2\x16.orchestrator.WorkloadR\tworkloads\x12\x1b\n" +
-	"\tleader_id\x18\x03 \x01(\tR\bleaderId\"\x80\x01\n" +
+	"\tleader_id\x18\x03 \x01(\tR\bleaderId\"n\n" +
 	"\x14CreateIngressRequest\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x1f\n" +
 	"\vpath_prefix\x18\x02 \x01(\tR\n" +
-	"pathPrefix\x12\x1f\n" +
-	"\vworkload_id\x18\x03 \x01(\tR\n" +
-	"workloadId\x12\x12\n" +
-	"\x04port\x18\x04 \x01(\rR\x04port\"d\n" +
+	"pathPrefix\x12!\n" +
+	"\fservice_name\x18\x03 \x01(\tR\vserviceName\"d\n" +
 	"\x15CreateIngressResponse\x12\x17\n" +
 	"\arule_id\x18\x01 \x01(\tR\x06ruleId\x12\x1a\n" +
 	"\baccepted\x18\x02 \x01(\bR\baccepted\x12\x16\n" +
@@ -1187,11 +1177,10 @@ const file_control_proto_rawDesc = "" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x14\n" +
 	"\x12ListIngressRequest\"F\n" +
 	"\x13ListIngressResponse\x12/\n" +
-	"\x05rules\x18\x01 \x03(\v2\x19.orchestrator.IngressRuleR\x05rules\"l\n" +
+	"\x05rules\x18\x01 \x03(\v2\x19.orchestrator.IngressRuleR\x05rules\"p\n" +
 	"\x14CreateServiceRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
-	"\vworkload_id\x18\x02 \x01(\tR\n" +
-	"workloadId\x12\x1f\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12#\n" +
+	"\rworkload_name\x18\x02 \x01(\tR\fworkloadName\x12\x1f\n" +
 	"\vtarget_port\x18\x03 \x01(\rR\n" +
 	"targetPort\"\x8b\x01\n" +
 	"\x15CreateServiceResponse\x12\x1d\n" +
