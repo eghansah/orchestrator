@@ -4,4 +4,4 @@ internal/webui/dist/
 bin/
 dist/
 orchestrator
-ctl
+/ctl
