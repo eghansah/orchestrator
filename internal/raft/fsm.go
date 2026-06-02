@@ -288,16 +288,7 @@ func (f *fsm) Restore(rc io.ReadCloser) error {
 func (f *fsm) State() ClusterState {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
-	return ClusterState{
-		Workloads:       f.state.Workloads,
-		Nodes:           f.state.Nodes,
-		IngressRules:    f.state.IngressRules,
-		Services:        f.state.Services,
-		Domains:         f.state.Domains,
-		Users:           f.state.Users,
-		NextPort:        f.state.NextPort,
-		NextServicePort: f.state.NextServicePort,
-	}
+	return f.state
 }
 
 type fsmSnapshot struct {
