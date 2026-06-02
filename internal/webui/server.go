@@ -2,10 +2,12 @@ package webui
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	crand "crypto/rand"
 	"crypto/subtle"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -126,6 +128,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/domains/{id}/update", a(s.handleUpdateDomain))
 	mux.Handle("POST /api/domains/{id}/toggle", a(s.handleToggleDomain))
 	mux.Handle("POST /api/domains/{id}/delete", a(s.handleDeleteDomain))
+	mux.Handle("POST /api/domains/{id}/regenerate", a(s.handleRegenerateDomainKeys))
+	mux.Handle("POST /api/domains/{id}/import-cert", a(s.handleImportDomainCert))
 	mux.Handle("GET /api/users", a(s.handleListUsers))
 	mux.Handle("POST /api/users", a(s.handleCreateUser))
 	mux.Handle("POST /api/users/{id}/toggle", a(s.handleToggleUser))
@@ -837,28 +841,34 @@ type domainJSON struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	TLSCert   string `json:"tls_cert"`
+	CSR       string `json:"csr"`
 	Enabled   bool   `json:"enabled"`
 	CreatedAt int64  `json:"created_at"`
 }
 
-// domainWithKeyJSON is returned only once, at creation, so the operator can
-// copy the private key. Subsequent reads never include the key.
+// domainWithKeyJSON is returned only once, at creation or key regeneration,
+// so the operator can copy the private key. Subsequent list reads never include it.
 type domainWithKeyJSON struct {
 	domainJSON
 	TLSKey string `json:"tls_key"`
+}
+
+func domainToJSON(d types.Domain) domainJSON {
+	return domainJSON{
+		ID:        d.ID,
+		Name:      d.Name,
+		TLSCert:   d.TLSCert,
+		CSR:       d.CSR,
+		Enabled:   d.Enabled,
+		CreatedAt: d.CreatedAt.Unix(),
+	}
 }
 
 func (s *Server) handleListDomains(w http.ResponseWriter, _ *http.Request) {
 	state := s.peer.State()
 	out := make([]domainJSON, 0, len(state.Domains))
 	for _, d := range state.Domains {
-		out = append(out, domainJSON{
-			ID:        d.ID,
-			Name:      d.Name,
-			TLSCert:   d.TLSCert,
-			Enabled:   d.Enabled,
-			CreatedAt: d.CreatedAt.Unix(),
-		})
+		out = append(out, domainToJSON(d))
 	}
 	writeJSON(w, out)
 }
@@ -897,11 +907,17 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		req.TLSKey = key
 	}
 
+	csr, err := generateCSR(req.Name, req.TLSKey)
+	if err != nil {
+		slog.Warn("domain CSR generation failed", "name", req.Name, "err", err)
+	}
+
 	d := types.Domain{
 		ID:        newDomainID(),
 		Name:      req.Name,
 		TLSCert:   req.TLSCert,
 		TLSKey:    req.TLSKey,
+		CSR:       csr,
 		Enabled:   true,
 		CreatedAt: time.Now(),
 	}
@@ -910,14 +926,8 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, domainWithKeyJSON{
-		domainJSON: domainJSON{
-			ID:        d.ID,
-			Name:      d.Name,
-			TLSCert:   d.TLSCert,
-			Enabled:   d.Enabled,
-			CreatedAt: d.CreatedAt.Unix(),
-		},
-		TLSKey: d.TLSKey,
+		domainJSON: domainToJSON(d),
+		TLSKey:     d.TLSKey,
 	})
 }
 
@@ -956,8 +966,9 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 
 	newCert := req.TLSCert
 	newKey := req.TLSKey
+	newCSR := existing.CSR
 
-	// If both cert and key are left empty, regenerate.
+	// If both cert and key are left empty, regenerate all three.
 	if newCert == "" && newKey == "" {
 		cert, key, err := generateSelfSignedCert(newName)
 		if err != nil {
@@ -966,10 +977,22 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 		newCert = cert
 		newKey = key
+		if csr, err := generateCSR(newName, newKey); err == nil {
+			newCSR = csr
+		} else {
+			slog.Warn("domain CSR generation failed", "name", newName, "err", err)
+		}
 	} else if newCert == "" {
 		newCert = existing.TLSCert
 	} else if newKey == "" {
 		newKey = existing.TLSKey
+	} else {
+		// Both provided — regenerate CSR from the new key.
+		if csr, err := generateCSR(newName, newKey); err == nil {
+			newCSR = csr
+		} else {
+			slog.Warn("domain CSR generation failed", "name", newName, "err", err)
+		}
 	}
 
 	updated := types.Domain{
@@ -977,6 +1000,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		Name:      newName,
 		TLSCert:   newCert,
 		TLSKey:    newKey,
+		CSR:       newCSR,
 		Enabled:   existing.Enabled,
 		CreatedAt: existing.CreatedAt,
 	}
@@ -984,13 +1008,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "apply domain: "+err.Error())
 		return
 	}
-	writeJSON(w, domainJSON{
-		ID:        updated.ID,
-		Name:      updated.Name,
-		TLSCert:   updated.TLSCert,
-		Enabled:   updated.Enabled,
-		CreatedAt: updated.CreatedAt.Unix(),
-	})
+	writeJSON(w, domainToJSON(updated))
 }
 
 func (s *Server) handleToggleDomain(w http.ResponseWriter, r *http.Request) {
@@ -1006,13 +1024,7 @@ func (s *Server) handleToggleDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "apply domain: "+err.Error())
 		return
 	}
-	writeJSON(w, domainJSON{
-		ID:        existing.ID,
-		Name:      existing.Name,
-		TLSCert:   existing.TLSCert,
-		Enabled:   existing.Enabled,
-		CreatedAt: existing.CreatedAt.Unix(),
-	})
+	writeJSON(w, domainToJSON(existing))
 }
 
 func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
@@ -1022,6 +1034,75 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"accepted": true})
+}
+
+func (s *Server) handleRegenerateDomainKeys(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	state := s.peer.State()
+	existing, ok := state.Domains[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "domain not found")
+		return
+	}
+	cert, key, err := generateSelfSignedCert(existing.Name)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "generate cert: "+err.Error())
+		return
+	}
+	csr, err := generateCSR(existing.Name, key)
+	if err != nil {
+		slog.Warn("domain CSR generation failed", "name", existing.Name, "err", err)
+	}
+	updated := types.Domain{
+		ID:        existing.ID,
+		Name:      existing.Name,
+		TLSCert:   cert,
+		TLSKey:    key,
+		CSR:       csr,
+		Enabled:   existing.Enabled,
+		CreatedAt: existing.CreatedAt,
+	}
+	if err := s.peer.ApplyDomain(updated); err != nil {
+		writeError(w, http.StatusInternalServerError, "apply domain: "+err.Error())
+		return
+	}
+	writeJSON(w, domainWithKeyJSON{
+		domainJSON: domainToJSON(updated),
+		TLSKey:     updated.TLSKey,
+	})
+}
+
+func (s *Server) handleImportDomainCert(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		TLSCert string `json:"tls_cert"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.TLSCert == "" {
+		writeError(w, http.StatusBadRequest, "tls_cert is required")
+		return
+	}
+	state := s.peer.State()
+	existing, ok := state.Domains[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "domain not found")
+		return
+	}
+	// Verify the new cert pairs with the stored key.
+	if _, err := tls.X509KeyPair([]byte(req.TLSCert), []byte(existing.TLSKey)); err != nil {
+		writeError(w, http.StatusBadRequest, "certificate does not match stored private key: "+err.Error())
+		return
+	}
+	updated := existing
+	updated.TLSCert = req.TLSCert
+	if err := s.peer.ApplyDomain(updated); err != nil {
+		writeError(w, http.StatusInternalServerError, "apply domain: "+err.Error())
+		return
+	}
+	writeJSON(w, domainToJSON(updated))
 }
 
 // ── Users API handlers ────────────────────────────────────────────────────────
@@ -1608,6 +1689,51 @@ func generateSelfSignedCert(name string) (certPEM, keyPEM string, err error) {
 		return "", "", err
 	}
 	return certBuf.String(), keyBuf.String(), nil
+}
+
+// generateCSR creates a PEM-encoded certificate signing request from the
+// given PEM private key. Handles EC PRIVATE KEY, RSA PRIVATE KEY, and PKCS8.
+func generateCSR(name, keyPEM string) (string, error) {
+	block, _ := pem.Decode([]byte(keyPEM))
+	if block == nil {
+		return "", fmt.Errorf("failed to decode PEM block")
+	}
+	var privKey crypto.Signer
+	var err error
+	switch block.Type {
+	case "EC PRIVATE KEY":
+		privKey, err = x509.ParseECPrivateKey(block.Bytes)
+	case "RSA PRIVATE KEY":
+		privKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+	case "PRIVATE KEY":
+		k, e := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if e != nil {
+			return "", fmt.Errorf("parse PKCS8 key: %w", e)
+		}
+		var ok bool
+		privKey, ok = k.(crypto.Signer)
+		if !ok {
+			return "", fmt.Errorf("unsupported key type in PKCS8 block")
+		}
+	default:
+		return "", fmt.Errorf("unsupported PEM block type: %s", block.Type)
+	}
+	if err != nil {
+		return "", fmt.Errorf("parse key: %w", err)
+	}
+	template := &x509.CertificateRequest{
+		Subject:  pkix.Name{CommonName: name},
+		DNSNames: []string{name},
+	}
+	csrDER, err := x509.CreateCertificateRequest(crand.Reader, template, privKey)
+	if err != nil {
+		return "", fmt.Errorf("create CSR: %w", err)
+	}
+	buf := &bytes.Buffer{}
+	if err := pem.Encode(buf, &pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER}); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }
 
 // newDomainID generates a short random hex ID for domains.

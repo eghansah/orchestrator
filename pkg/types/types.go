@@ -147,6 +147,7 @@ type Domain struct {
 	Name      string    // unique hostname, e.g. "api.example.com"
 	TLSCert   string    // PEM-encoded certificate
 	TLSKey    string    // PEM-encoded private key
+	CSR       string    // PEM-encoded certificate signing request; empty on old records
 	Enabled   bool      // when false the ingress ignores this domain's cert
 	CreatedAt time.Time
 }

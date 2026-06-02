@@ -135,7 +135,8 @@ export interface Domain {
   id: string;
   name: string;
   tls_cert: string;
-  tls_key?: string; // only present in the create response; omitted from list/update/toggle
+  tls_key?: string; // only present in create/regenerate responses
+  csr?: string;     // PEM CSR; empty on domains created before this feature
   enabled: boolean;
   created_at: number; // unix seconds
 }
@@ -301,6 +302,10 @@ export const api = {
     request<Domain>("POST", `/api/domains/${id}/toggle`),
   deleteDomain: (id: string) =>
     request<{ accepted: boolean }>("POST", `/api/domains/${id}/delete`),
+  regenerateDomainKeys: (id: string) =>
+    request<Domain>("POST", `/api/domains/${id}/regenerate`),
+  importDomainCert: (id: string, cert: string) =>
+    request<Domain>("POST", `/api/domains/${id}/import-cert`, { tls_cert: cert }),
   listUsers: () => request<User[]>("GET", "/api/users"),
   createUser: (req: CreateUserRequest) => request<User>("POST", "/api/users", req),
   toggleUser: (id: string) => request<User>("POST", `/api/users/${id}/toggle`),
