@@ -139,6 +139,12 @@ export default function Registries({ state, loading }: Props) {
                     <Button disabled={selected.length === 0} onClick={handleDelete}>
                       Delete
                     </Button>
+                    <Button
+                      disabled={selected.length !== 1}
+                      onClick={() => selected.length === 1 && setSelected([selected[0]])}
+                    >
+                      Browse images
+                    </Button>
                     <Button variant="primary" onClick={() => setShowCreate(true)}>
                       Add registry
                     </Button>
@@ -153,7 +159,14 @@ export default function Registries({ state, loading }: Props) {
             onSelectionChange={(e) => setSelected(e.detail.selectedItems)}
             trackBy="id"
             columnDefinitions={[
-              { id: "name",     header: "Name",     cell: (r) => r.name },
+              {
+                id: "name", header: "Name",
+                cell: (r) => (
+                  <Button variant="link" onClick={() => setSelected([r])}>
+                    {r.name}
+                  </Button>
+                ),
+              },
               { id: "url",      header: "URL",      cell: (r) => r.url },
               { id: "username", header: "Username", cell: (r) => r.username || "—" },
               { id: "age",      header: "Age",      cell: (r) => formatAge(r.created_at) },
@@ -189,10 +202,15 @@ export default function Registries({ state, loading }: Props) {
                         Look up
                       </Button>
                     )}
+                    <Button
+                      iconName="close"
+                      variant="icon"
+                      onClick={() => { setSelected([]); setCatalogSearch(""); setRepos([]); }}
+                    />
                   </SpaceBetween>
                 }
               >
-                {activeRegistry.name} — catalog
+                {activeRegistry.name} — images
               </Header>
             }
           >
