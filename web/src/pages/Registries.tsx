@@ -170,11 +170,26 @@ export default function Registries({ state, loading }: Props) {
               <Header
                 description={`Browsing ${activeRegistry.url}`}
                 actions={
-                  <Input
-                    placeholder="Search repositories…"
-                    value={catalogSearch}
-                    onChange={(e) => handleSearchChange(e.detail.value)}
-                  />
+                  <SpaceBetween direction="horizontal" size="xs">
+                    <Input
+                      placeholder="Search or type a repo name…"
+                      value={catalogSearch}
+                      onChange={(e) => handleSearchChange(e.detail.value)}
+                      onKeyDown={(e) => {
+                        if (e.detail.key === "Enter" && catalogSearch.trim()) {
+                          handleRepoClick(catalogSearch.trim());
+                        }
+                      }}
+                    />
+                    {catalogSearch.trim() && (
+                      <Button
+                        iconName="search"
+                        onClick={() => handleRepoClick(catalogSearch.trim())}
+                      >
+                        Look up
+                      </Button>
+                    )}
+                  </SpaceBetween>
                 }
               >
                 {activeRegistry.name} — catalog
@@ -196,7 +211,13 @@ export default function Registries({ state, loading }: Props) {
                 },
               ]}
               items={repos}
-              empty={<Box color="text-body-secondary">No repositories found.</Box>}
+              empty={
+                <Box color="text-body-secondary">
+                  {catalogSearch.trim()
+                    ? `No repos matching "${catalogSearch}" in catalog — press Enter or click Look up to query directly.`
+                    : "No repositories found in catalog."}
+                </Box>
+              }
             />
           </Container>
         )}
