@@ -125,7 +125,7 @@ export default function App() {
     domains: <Domains />,
     services: <Services />,
     users: <Users />,
-    registries: <Registries />,
+    registries: <Registries state={state} loading={loading} />,
     "workflow-builder": <WorkflowBuilder onNavigate={setActivePage} />,
   } as Record<string, React.ReactNode>)[activePage];
 

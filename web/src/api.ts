@@ -64,6 +64,7 @@ export interface ClusterState {
   actual_containers: ActualContainer[];
   actual_stacks: ActualStack[];
   container_stats: ContainerStats[];
+  registries: Registry[];
 }
 
 export interface MutationResult {

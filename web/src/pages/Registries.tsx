@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
 import Container from "@cloudscape-design/components/container";
@@ -11,11 +11,15 @@ import Input from "@cloudscape-design/components/input";
 import Modal from "@cloudscape-design/components/modal";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Table from "@cloudscape-design/components/table";
-import { api, CreateRegistryRequest, Registry, formatAge } from "../api";
+import { api, ClusterState, CreateRegistryRequest, Registry, formatAge } from "../api";
 
-export default function Registries() {
-  const [registries, setRegistries] = useState<Registry[]>([]);
-  const [loading, setLoading] = useState(true);
+interface Props {
+  state: ClusterState | null;
+  loading: boolean;
+}
+
+export default function Registries({ state, loading }: Props) {
+  const registries: Registry[] = state?.registries ?? [];
   const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [selected, setSelected] = useState<Registry[]>([]);
   const [showCreate, setShowCreate] = useState(false);
@@ -36,19 +40,6 @@ export default function Registries() {
   const [envMap, setEnvMap] = useState<Record<string, string[] | null>>({});
 
   const activeRegistry = selected.length === 1 ? selected[0] : null;
-
-  const load = useCallback(async () => {
-    try {
-      const data = await api.listRegistries();
-      setRegistries(data ?? []);
-    } catch (e) {
-      addFlash("error", String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
 
   // Reload catalog when selected registry changes.
   useEffect(() => {
@@ -112,7 +103,6 @@ export default function Registries() {
       addFlash("success", `Registry "${form.name}" added`);
       setShowCreate(false);
       setForm({ name: "", url: "", username: "", password: "" });
-      load();
     } catch (e) {
       addFlash("error", String(e));
     } finally {
@@ -130,7 +120,6 @@ export default function Registries() {
       }
     }
     setSelected([]);
-    load();
   }
 
   return (

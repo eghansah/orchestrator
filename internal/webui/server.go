@@ -299,6 +299,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		ActualContainers []actualContainerJSON `json:"actual_containers"`
 		ActualStacks     []actualStackJSON    `json:"actual_stacks"`
 		ContainerStats   []containerStatsJSON `json:"container_stats"`
+		Registries       []registryJSON       `json:"registries"`
 	}
 
 	allStates := s.agent.AllStates()
@@ -312,6 +313,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		ActualContainers: []actualContainerJSON{},
 		ActualStacks:     []actualStackJSON{},
 		ContainerStats:   []containerStatsJSON{},
+		Registries:       []registryJSON{},
 	}
 
 	for _, n := range state.Nodes {
@@ -387,6 +389,16 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 				MemLimitBytes: cs.MemLimitBytes,
 			})
 		}
+	}
+
+	for _, r := range state.Registries {
+		out.Registries = append(out.Registries, registryJSON{
+			ID:        r.ID,
+			Name:      r.Name,
+			URL:       r.URL,
+			Username:  r.Username,
+			CreatedAt: r.CreatedAt.Unix(),
+		})
 	}
 
 	writeJSON(w, out)
