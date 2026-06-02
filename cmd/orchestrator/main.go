@@ -193,7 +193,7 @@ func main() {
 
 	// 5b. Web console (optional) ----------------------------------------------
 	if cfg.webAddr != "" {
-		webSrv := webui.New(peer, ctrl, cfg.adminToken, cfg.webPassword, cfg.webPrefix, webui.LDAPConfig{
+		webSrv := webui.New(peer, ctrl, ag, cfg.adminToken, cfg.webPassword, cfg.webPrefix, webui.LDAPConfig{
 			Addr:           cfg.ldapAddr,
 			UseTLS:         cfg.ldapTLS,
 			Insecure:       cfg.ldapInsecure,
@@ -285,6 +285,8 @@ func main() {
 			slog.Error("agent run error", "err", err)
 		}
 	}()
+
+	go control.NewReconciler(ctrl, ag).Run(ctx)
 
 	// Once we are leader, register this node in the cluster state.
 	go selfRegisterLoop(ctx, peer, cfg.nodeID, cfg.grpcAddr, cfg.dataAddr, ownCertDER)

@@ -9,6 +9,11 @@ export interface NodeInfo {
   cpu_cores: number;
 }
 
+export interface PortAllocation {
+  container_port: number;
+  allocated_port: number;
+}
+
 export interface WorkloadInfo {
   id: string;
   node_id: string;
@@ -16,6 +21,21 @@ export interface WorkloadInfo {
   kind: "container" | "stack";
   name: string;
   created_at: number; // unix seconds
+  port_allocations: PortAllocation[];
+}
+
+export interface ActualContainer {
+  workload_id: string;
+  container_id: string;
+  name: string;
+  status: string; // raw nerdctl status, e.g. "Up 2 minutes"
+  started_at: number; // unix seconds, 0 if not running
+}
+
+export interface ActualStack {
+  workload_id: string;
+  name: string;
+  services: ActualContainer[];
 }
 
 export interface ClusterState {
@@ -24,6 +44,8 @@ export interface ClusterState {
   leader_addr: string;
   nodes: NodeInfo[];
   workloads: WorkloadInfo[];
+  actual_containers: ActualContainer[];
+  actual_stacks: ActualStack[];
 }
 
 export interface MutationResult {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import AppLayout from "@cloudscape-design/components/app-layout";
 import SideNavigation, {
   SideNavigationProps,
@@ -17,8 +17,9 @@ import Ingress from "./pages/Ingress";
 import Services from "./pages/Services";
 import Domains from "./pages/Domains";
 import Users from "./pages/Users";
+import WorkloadDetail from "./pages/WorkloadDetail";
 
-type Page = "overview" | "workloads" | "nodes" | "ingress" | "services" | "domains" | "users";
+type Page = "overview" | "workloads" | "nodes" | "ingress" | "services" | "domains" | "users" | string;
 
 const NAV_ITEMS: SideNavigationProps.Item[] = [
   { type: "link", text: "Overview", href: "#overview" },
@@ -105,16 +106,19 @@ export default function App() {
   }
 
   const sharedProps = { state, error, loading, refetch };
+  const navProps = { ...sharedProps, onNavigate: setActivePage };
 
-  const content = {
+  const content = activePage.startsWith("workload-") ? (
+    <WorkloadDetail workloadId={activePage.slice("workload-".length)} {...navProps} />
+  ) : ({
     overview: <Overview {...sharedProps} />,
-    workloads: <Workloads {...sharedProps} />,
+    workloads: <Workloads {...navProps} />,
     nodes: <Nodes {...sharedProps} />,
     ingress: <Ingress />,
     domains: <Domains />,
     services: <Services />,
     users: <Users />,
-  }[activePage];
+  } as Record<string, React.ReactNode>)[activePage];
 
   return (
     <AppLayout

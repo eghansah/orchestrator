@@ -17,6 +17,7 @@ interface Props {
   loading: boolean;
   error: string | null;
   refetch: () => void;
+  onNavigate: (page: string) => void;
 }
 
 function phaseStatus(phase: string): StatusIndicatorProps.Type {
@@ -37,7 +38,7 @@ function phaseStatus(phase: string): StatusIndicatorProps.Type {
   }
 }
 
-export default function Workloads({ state, loading, refetch }: Props) {
+export default function Workloads({ state, loading, refetch, onNavigate }: Props) {
   const [showRun, setShowRun] = useState(false);
   const [showStack, setShowStack] = useState(false);
   const [notifications, setNotifications] = useState<FlashbarProps.MessageDefinition[]>([]);
@@ -85,6 +86,7 @@ export default function Workloads({ state, loading, refetch }: Props) {
           loadingText="Loading workloads…"
           items={items}
           empty={<span>No workloads. Submit one to get started.</span>}
+          onRowClick={({ detail }) => onNavigate(`workload-${detail.item.id}`)}
           header={
             <Header
               counter={`(${items.length})`}
@@ -117,13 +119,15 @@ export default function Workloads({ state, loading, refetch }: Props) {
               id: "actions",
               header: "",
               cell: (w) => (
-                <Button
-                  variant="inline-link"
-                  loading={removing === w.id}
-                  onClick={() => handleRemove(w.id)}
-                >
-                  Remove
-                </Button>
+                <span onClick={(e) => e.stopPropagation()}>
+                  <Button
+                    variant="inline-link"
+                    loading={removing === w.id}
+                    onClick={() => handleRemove(w.id)}
+                  >
+                    Remove
+                  </Button>
+                </span>
               ),
             },
           ]}

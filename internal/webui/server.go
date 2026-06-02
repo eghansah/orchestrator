@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/eghansah/orchestrator/internal/agent"
 	"github.com/eghansah/orchestrator/internal/control"
 	gen "github.com/eghansah/orchestrator/internal/grpc/gen"
 	internraft "github.com/eghansah/orchestrator/internal/raft"
@@ -34,6 +35,7 @@ import (
 type Server struct {
 	peer        *internraft.Peer
 	ctrl        *control.Server
+	agent       *agent.Agent
 	adminToken  string // required Bearer token for /api/* routes; empty = no auth
 	webPassword string // password for the /api/auth/login endpoint; empty = login disabled
 	prefix      string // URL path prefix, e.g. "/console" (no trailing slash, may be "")
@@ -77,7 +79,7 @@ func (s *Server) revokeSession(token string) {
 
 // New creates a Server. prefix is an optional URL subdirectory (e.g. "/console");
 // pass "" to serve at the root. A trailing slash is stripped automatically.
-func New(peer *internraft.Peer, ctrl *control.Server, adminToken, webPassword, prefix string, ldapCfg LDAPConfig) *Server {
+func New(peer *internraft.Peer, ctrl *control.Server, ag *agent.Agent, adminToken, webPassword, prefix string, ldapCfg LDAPConfig) *Server {
 	p := strings.TrimRight(prefix, "/")
 	if p != "" && !strings.HasPrefix(p, "/") {
 		p = "/" + p
@@ -88,6 +90,7 @@ func New(peer *internraft.Peer, ctrl *control.Server, adminToken, webPassword, p
 	return &Server{
 		peer:        peer,
 		ctrl:        ctrl,
+		agent:       ag,
 		adminToken:  adminToken,
 		webPassword: webPassword,
 		prefix:      p,
@@ -245,20 +248,42 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		CreatedAt       int64           `json:"created_at"`
 		PortAllocations []portAllocJSON `json:"port_allocations"`
 	}
+	type actualContainerJSON struct {
+		WorkloadID  string `json:"workload_id"`
+		ContainerID string `json:"container_id"`
+		Name        string `json:"name"`
+		Status      string `json:"status"`
+		StartedAt   int64  `json:"started_at"` // unix seconds; 0 when not running
+	}
+	type actualStackJSON struct {
+		WorkloadID string               `json:"workload_id"`
+		Name       string               `json:"name"`
+		Services   []actualContainerJSON `json:"services"`
+	}
+	startedAt := func(t time.Time) int64 {
+		if t.IsZero() {
+			return 0
+		}
+		return t.Unix()
+	}
 	type resp struct {
-		LeaderID   string         `json:"leader_id"`
-		IsLeader   bool           `json:"is_leader"`
-		LeaderAddr string         `json:"leader_addr,omitempty"`
-		Nodes      []nodeJSON     `json:"nodes"`
-		Workloads  []workloadJSON `json:"workloads"`
+		LeaderID         string               `json:"leader_id"`
+		IsLeader         bool                 `json:"is_leader"`
+		LeaderAddr       string               `json:"leader_addr,omitempty"`
+		Nodes            []nodeJSON           `json:"nodes"`
+		Workloads        []workloadJSON       `json:"workloads"`
+		ActualContainers []actualContainerJSON `json:"actual_containers"`
+		ActualStacks     []actualStackJSON    `json:"actual_stacks"`
 	}
 
 	out := resp{
-		LeaderID:   leaderID,
-		IsLeader:   isLeader,
-		LeaderAddr: leaderAddr,
-		Nodes:      []nodeJSON{},
-		Workloads:  []workloadJSON{},
+		LeaderID:         leaderID,
+		IsLeader:         isLeader,
+		LeaderAddr:       leaderAddr,
+		Nodes:            []nodeJSON{},
+		Workloads:        []workloadJSON{},
+		ActualContainers: []actualContainerJSON{},
+		ActualStacks:     []actualStackJSON{},
 	}
 
 	for _, n := range state.Nodes {
@@ -286,6 +311,35 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		out.Workloads = append(out.Workloads, wj)
+	}
+
+	for _, ns := range s.agent.AllStates() {
+		for _, c := range ns.Containers {
+			out.ActualContainers = append(out.ActualContainers, actualContainerJSON{
+				WorkloadID:  c.WorkloadID,
+				ContainerID: c.ContainerID,
+				Name:        c.Name,
+				Status:      c.Status,
+				StartedAt:   startedAt(c.StartedAt),
+			})
+		}
+		for _, st := range ns.Stacks {
+			svcs := make([]actualContainerJSON, 0, len(st.Services))
+			for _, svc := range st.Services {
+				svcs = append(svcs, actualContainerJSON{
+					WorkloadID:  svc.WorkloadID,
+					ContainerID: svc.ContainerID,
+					Name:        svc.Name,
+					Status:      svc.Status,
+					StartedAt:   startedAt(svc.StartedAt),
+				})
+			}
+			out.ActualStacks = append(out.ActualStacks, actualStackJSON{
+				WorkloadID: st.WorkloadID,
+				Name:       st.Name,
+				Services:   svcs,
+			})
+		}
 	}
 
 	writeJSON(w, out)

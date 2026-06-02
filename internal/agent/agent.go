@@ -35,8 +35,8 @@ type Agent struct {
 	pollInterval time.Duration
 
 	mu        sync.RWMutex
-	state     types.ActualWorkloadState
-	workloads map[string]types.Workload // workloadID → Workload
+	states    map[string]types.ActualWorkloadState // nodeID → last reported state
+	workloads map[string]types.Workload            // workloadID → Workload
 
 	stateUpdates chan<- types.ActualWorkloadState
 }
@@ -50,6 +50,7 @@ func New(nc *nerdctl.Client, cfg Config) *Agent {
 		id:           cfg.NodeID,
 		nc:           nc,
 		pollInterval: interval,
+		states:       make(map[string]types.ActualWorkloadState),
 		workloads:    make(map[string]types.Workload),
 		stateUpdates: cfg.StateUpdates,
 	}
@@ -112,7 +113,7 @@ func (a *Agent) poll(ctx context.Context) error {
 	}
 
 	a.mu.Lock()
-	a.state = newState
+	a.states[a.id] = newState
 	a.mu.Unlock()
 
 	if a.stateUpdates != nil {
@@ -124,11 +125,22 @@ func (a *Agent) poll(ctx context.Context) error {
 	return nil
 }
 
-// State returns a snapshot of the agent's last observed actual state.
+// State returns this node's last observed actual state.
 func (a *Agent) State() types.ActualWorkloadState {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	return a.state
+	return a.states[a.id]
+}
+
+// AllStates returns a copy of actual state for every node that has reported.
+func (a *Agent) AllStates() map[string]types.ActualWorkloadState {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	cp := make(map[string]types.ActualWorkloadState, len(a.states))
+	for k, v := range a.states {
+		cp[k] = v
+	}
+	return cp
 }
 
 // ── NodeServiceServer implementation ─────────────────────────────────────────
@@ -141,7 +153,7 @@ func (a *Agent) ReportState(_ context.Context, req *gen.ReportStateRequest) (*ge
 	if req.State != nil {
 		s := types.ActualWorkloadStateFromProto(req.State)
 		a.mu.Lock()
-		a.state = s
+		a.states[s.NodeID] = s
 		a.mu.Unlock()
 	}
 	return &gen.ReportStateResponse{}, nil
