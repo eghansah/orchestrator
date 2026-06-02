@@ -18,6 +18,7 @@ import Services from "./pages/Services";
 import Domains from "./pages/Domains";
 import Users from "./pages/Users";
 import Registries from "./pages/Registries";
+import WorkflowBuilder from "./pages/WorkflowBuilder";
 import WorkloadDetail from "./pages/WorkloadDetail";
 import NodeDetail from "./pages/NodeDetail";
 
@@ -32,6 +33,7 @@ const NAV_ITEMS: SideNavigationProps.Item[] = [
   { type: "link", text: "Services", href: "#services" },
   { type: "link", text: "Users", href: "#users" },
   { type: "link", text: "Registries", href: "#registries" },
+  { type: "link", text: "Workflow Builder", href: "#workflow-builder" },
   { type: "divider" },
   { type: "link", text: "Sign out", href: "#signout" },
 ];
@@ -124,6 +126,7 @@ export default function App() {
     services: <Services />,
     users: <Users />,
     registries: <Registries />,
+    "workflow-builder": <WorkflowBuilder onNavigate={setActivePage} />,
   } as Record<string, React.ReactNode>)[activePage];
 
   return (
