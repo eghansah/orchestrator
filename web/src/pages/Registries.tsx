@@ -23,6 +23,7 @@ export default function Registries({ state, loading }: Props) {
   const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [selected, setSelected] = useState<Registry[]>([]);
   const [showCreate, setShowCreate] = useState(false);
+  const [editTarget, setEditTarget] = useState<Registry | null>(null);
   const [form, setForm] = useState<CreateRegistryRequest>({ name: "", url: "", username: "", password: "" });
   const [saving, setSaving] = useState(false);
 
@@ -110,6 +111,27 @@ export default function Registries({ state, loading }: Props) {
     }
   }
 
+  function openEdit(r: Registry) {
+    setEditTarget(r);
+    setForm({ name: r.name, url: r.url, username: r.username, password: "" });
+  }
+
+  async function handleUpdate() {
+    if (!editTarget) return;
+    if (!form.name || !form.url) { addFlash("error", "Name and URL are required"); return; }
+    setSaving(true);
+    try {
+      await api.updateRegistry(editTarget.id, form);
+      addFlash("success", `Registry "${form.name}" updated`);
+      setEditTarget(null);
+      setForm({ name: "", url: "", username: "", password: "" });
+    } catch (e) {
+      addFlash("error", String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleDelete() {
     for (const r of selected) {
       try {
@@ -138,6 +160,12 @@ export default function Registries({ state, loading }: Props) {
                   <SpaceBetween direction="horizontal" size="xs">
                     <Button disabled={selected.length === 0} onClick={handleDelete}>
                       Delete
+                    </Button>
+                    <Button
+                      disabled={selected.length !== 1}
+                      onClick={() => selected.length === 1 && openEdit(selected[0])}
+                    >
+                      Edit
                     </Button>
                     <Button
                       disabled={selected.length !== 1}
@@ -328,6 +356,51 @@ export default function Registries({ state, loading }: Props) {
                 type="password"
                 value={form.password}
                 onChange={(e) => setForm((f) => ({ ...f, password: e.detail.value }))}
+              />
+            </FormField>
+          </SpaceBetween>
+        </Modal>
+        {/* ── Edit registry modal ────────────────────────────────────────── */}
+        <Modal
+          visible={editTarget !== null}
+          header={`Edit registry — ${editTarget?.name ?? ""}`}
+          onDismiss={() => { setEditTarget(null); setForm({ name: "", url: "", username: "", password: "" }); }}
+          footer={
+            <Box float="right">
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button variant="link" onClick={() => { setEditTarget(null); setForm({ name: "", url: "", username: "", password: "" }); }}>
+                  Cancel
+                </Button>
+                <Button variant="primary" loading={saving} onClick={handleUpdate}>Save</Button>
+              </SpaceBetween>
+            </Box>
+          }
+        >
+          <SpaceBetween size="m">
+            <FormField label="Name">
+              <Input
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.detail.value }))}
+              />
+            </FormField>
+            <FormField label="URL" description="Registry root URL">
+              <Input
+                value={form.url}
+                onChange={(e) => setForm((f) => ({ ...f, url: e.detail.value }))}
+              />
+            </FormField>
+            <FormField label="Username" description="Leave blank for unauthenticated registries">
+              <Input
+                value={form.username}
+                onChange={(e) => setForm((f) => ({ ...f, username: e.detail.value }))}
+              />
+            </FormField>
+            <FormField label="Password" description="Leave blank to keep existing password">
+              <Input
+                type="password"
+                value={form.password}
+                onChange={(e) => setForm((f) => ({ ...f, password: e.detail.value }))}
+                placeholder="unchanged"
               />
             </FormField>
           </SpaceBetween>

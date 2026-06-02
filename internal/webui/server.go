@@ -132,6 +132,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/users/{id}/delete", a(s.handleDeleteUser))
 	mux.Handle("GET /api/registries", a(s.handleListRegistries))
 	mux.Handle("POST /api/registries", a(s.handleCreateRegistry))
+	mux.Handle("POST /api/registries/{id}/update", a(s.handleUpdateRegistry))
 	mux.Handle("POST /api/registries/{id}/delete", a(s.handleDeleteRegistry))
 	mux.Handle("GET /api/registries/{id}/catalog", a(s.handleRegistryCatalog))
 	mux.Handle("GET /api/registries/{id}/tags", a(s.handleRegistryTags))
@@ -1174,6 +1175,59 @@ func (s *Server) handleCreateRegistry(w http.ResponseWriter, r *http.Request) {
 		URL:       reg.URL,
 		Username:  reg.Username,
 		CreatedAt: reg.CreatedAt.Unix(),
+	})
+}
+
+func (s *Server) handleUpdateRegistry(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Name     string `json:"name"`
+		URL      string `json:"url"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	state := s.peer.State()
+	existing, ok := state.Registries[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "registry not found")
+		return
+	}
+
+	updated := types.Registry{
+		ID:        existing.ID,
+		Name:      existing.Name,
+		URL:       existing.URL,
+		Username:  existing.Username,
+		Password:  existing.Password,
+		CreatedAt: existing.CreatedAt,
+	}
+	if req.Name != "" {
+		updated.Name = req.Name
+	}
+	if req.URL != "" {
+		updated.URL = strings.TrimRight(req.URL, "/")
+	}
+	updated.Username = req.Username
+	// Only replace password if a new one is provided; empty string keeps existing.
+	if req.Password != "" {
+		updated.Password = req.Password
+	}
+
+	if err := s.peer.ApplyRegistry(updated); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, registryJSON{
+		ID:        updated.ID,
+		Name:      updated.Name,
+		URL:       updated.URL,
+		Username:  updated.Username,
+		CreatedAt: updated.CreatedAt.Unix(),
 	})
 }
 

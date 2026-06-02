@@ -287,6 +287,8 @@ export const api = {
   listRegistries: () => request<Registry[]>("GET", "/api/registries"),
   createRegistry: (req: CreateRegistryRequest) =>
     request<Registry>("POST", "/api/registries", req),
+  updateRegistry: (id: string, req: CreateRegistryRequest) =>
+    request<Registry>("POST", `/api/registries/${id}/update`, req),
   deleteRegistry: (id: string) =>
     request<{ accepted: boolean }>("POST", `/api/registries/${id}/delete`),
   getRegistryCatalog: (id: string, search?: string) =>
