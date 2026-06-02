@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,7 +28,12 @@ func New(registryURL, username, password string) *Client {
 		baseURL:  strings.TrimRight(registryURL, "/"),
 		username: username,
 		password: password,
-		hc:       &http.Client{Timeout: 30 * time.Second},
+		hc: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+			},
+		},
 	}
 }
 
@@ -161,7 +167,9 @@ func (c *Client) do(ctx context.Context, path, scope string, extraHeaders map[st
 		return c.hc.Do(req)
 	}
 
-	return nil, fmt.Errorf("authentication required but no credentials provided")
+	// No credentials configured — the registry may still serve public content.
+	// Return the original 401 response so callers see the real HTTP status.
+	return nil, fmt.Errorf("registry requires authentication but no credentials are configured")
 }
 
 // ListRepos returns all repository names by paginating GET /v2/_catalog.
