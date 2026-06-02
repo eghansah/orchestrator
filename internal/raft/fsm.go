@@ -26,6 +26,8 @@ const (
 	cmdRemoveDomain                  // remove a domain
 	cmdApplyUser                     // add or update a user account (AD allowlist entry)
 	cmdRemoveUser                    // remove a user account
+	cmdApplyRegistry                 // add or update a container registry
+	cmdRemoveRegistry                // remove a container registry
 )
 
 type command struct {
@@ -48,6 +50,7 @@ type ClusterState struct {
 	Services        map[string]types.Service     `json:"services"`
 	Domains         map[string]types.Domain      `json:"domains"`
 	Users           map[string]types.User        `json:"users"`
+	Registries      map[string]types.Registry    `json:"registries"`
 	NextPort        uint32                       `json:"next_port"`         // container port pool
 	NextServicePort uint32                       `json:"next_service_port"` // service port pool
 }
@@ -60,6 +63,7 @@ func newClusterState() ClusterState {
 		Services:        make(map[string]types.Service),
 		Domains:         make(map[string]types.Domain),
 		Users:           make(map[string]types.User),
+		Registries:      make(map[string]types.Registry),
 		NextPort:        portPoolStart,
 		NextServicePort: svcPortPoolStart,
 	}
@@ -232,6 +236,28 @@ func (f *fsm) Apply(l *raft.Log) any {
 			return err
 		}
 		delete(f.state.Users, id)
+
+	case cmdApplyRegistry:
+		var r types.Registry
+		if err := json.Unmarshal(cmd.Data, &r); err != nil {
+			return err
+		}
+		if f.state.Registries == nil {
+			f.state.Registries = make(map[string]types.Registry)
+		}
+		for _, existing := range f.state.Registries {
+			if existing.Name == r.Name && existing.ID != r.ID {
+				return fmt.Errorf("registry name %q already exists", r.Name)
+			}
+		}
+		f.state.Registries[r.ID] = r
+
+	case cmdRemoveRegistry:
+		var id string
+		if err := json.Unmarshal(cmd.Data, &id); err != nil {
+			return err
+		}
+		delete(f.state.Registries, id)
 	}
 	return nil
 }

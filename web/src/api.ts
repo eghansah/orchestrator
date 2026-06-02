@@ -73,6 +73,20 @@ export interface MutationResult {
   error?: string;
 }
 
+export interface WorkloadSpec {
+  id: string;
+  kind: "container" | "stack";
+  name: string;
+  image?: string;
+  command?: string[];
+  env?: string[];
+  ports?: { container_port: number; protocol: string }[];
+  volumes?: { source: string; target: string; read_only: boolean }[];
+  labels?: Record<string, string>;
+  namespace?: string;
+  compose_yaml?: string;
+}
+
 export interface RunRequest {
   name: string;
   image: string;
@@ -144,6 +158,21 @@ export interface CreateUserRequest {
   username: string; // AD username; no password — authentication is handled by LDAP
 }
 
+export interface Registry {
+  id: string;
+  name: string;
+  url: string;
+  username: string;
+  created_at: number; // unix seconds
+}
+
+export interface CreateRegistryRequest {
+  name: string;
+  url: string;
+  username: string;
+  password: string;
+}
+
 // ── Auth token ────────────────────────────────────────────────────────────────
 
 const TOKEN_KEY = "orchestrator_token";
@@ -213,6 +242,7 @@ export const api = {
   },
   logout: () => request<{ ok: boolean }>("POST", "/api/auth/logout"),
   getState: () => request<ClusterState>("GET", "/api/state"),
+  getWorkload: (id: string) => request<WorkloadSpec>("GET", `/api/workloads/${id}`),
   submitContainer: (req: RunRequest) =>
     request<MutationResult>("POST", "/api/workloads/run", req),
   submitStack: (req: StackRequest) =>
@@ -253,6 +283,26 @@ export const api = {
   toggleUser: (id: string) => request<User>("POST", `/api/users/${id}/toggle`),
   deleteUser: (id: string) =>
     request<{ accepted: boolean }>("POST", `/api/users/${id}/delete`),
+  listRegistries: () => request<Registry[]>("GET", "/api/registries"),
+  createRegistry: (req: CreateRegistryRequest) =>
+    request<Registry>("POST", "/api/registries", req),
+  deleteRegistry: (id: string) =>
+    request<{ accepted: boolean }>("POST", `/api/registries/${id}/delete`),
+  getRegistryCatalog: (id: string, search?: string) =>
+    request<{ repos: string[] }>(
+      "GET",
+      `/api/registries/${id}/catalog${search ? `?search=${encodeURIComponent(search)}` : ""}`
+    ),
+  getRepoTags: (id: string, repo: string) =>
+    request<{ tags: string[] }>(
+      "GET",
+      `/api/registries/${id}/tags?repo=${encodeURIComponent(repo)}`
+    ),
+  getImageEnv: (id: string, repo: string, tag: string) =>
+    request<{ env: string[] }>(
+      "GET",
+      `/api/registries/${id}/env?repo=${encodeURIComponent(repo)}&tag=${encodeURIComponent(tag)}`
+    ),
 };
 
 // ── useClusterState hook ──────────────────────────────────────────────────────

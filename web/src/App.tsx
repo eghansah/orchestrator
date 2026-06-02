@@ -17,6 +17,7 @@ import Ingress from "./pages/Ingress";
 import Services from "./pages/Services";
 import Domains from "./pages/Domains";
 import Users from "./pages/Users";
+import Registries from "./pages/Registries";
 import WorkloadDetail from "./pages/WorkloadDetail";
 import NodeDetail from "./pages/NodeDetail";
 
@@ -30,6 +31,7 @@ const NAV_ITEMS: SideNavigationProps.Item[] = [
   { type: "link", text: "Domains", href: "#domains" },
   { type: "link", text: "Services", href: "#services" },
   { type: "link", text: "Users", href: "#users" },
+  { type: "link", text: "Registries", href: "#registries" },
   { type: "divider" },
   { type: "link", text: "Sign out", href: "#signout" },
 ];
@@ -121,6 +123,7 @@ export default function App() {
     domains: <Domains />,
     services: <Services />,
     users: <Users />,
+    registries: <Registries />,
   } as Record<string, React.ReactNode>)[activePage];
 
   return (

@@ -28,6 +28,7 @@ import (
 	"github.com/eghansah/orchestrator/internal/control"
 	gen "github.com/eghansah/orchestrator/internal/grpc/gen"
 	internraft "github.com/eghansah/orchestrator/internal/raft"
+	"github.com/eghansah/orchestrator/internal/registry"
 	"github.com/eghansah/orchestrator/pkg/types"
 )
 
@@ -109,6 +110,7 @@ func (s *Server) Handler() http.Handler {
 	// API routes — all require a valid admin token when one is configured.
 	a := s.auth
 	mux.Handle("GET /api/state", a(s.handleState))
+	mux.Handle("GET /api/workloads/{id}", a(s.handleGetWorkload))
 	mux.Handle("POST /api/workloads/run", a(s.handleRun))
 	mux.Handle("POST /api/workloads/stack", a(s.handleStack))
 	mux.Handle("POST /api/workloads/{id}/remove", a(s.handleRemove))
@@ -128,6 +130,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/users", a(s.handleCreateUser))
 	mux.Handle("POST /api/users/{id}/toggle", a(s.handleToggleUser))
 	mux.Handle("POST /api/users/{id}/delete", a(s.handleDeleteUser))
+	mux.Handle("GET /api/registries", a(s.handleListRegistries))
+	mux.Handle("POST /api/registries", a(s.handleCreateRegistry))
+	mux.Handle("POST /api/registries/{id}/delete", a(s.handleDeleteRegistry))
+	mux.Handle("GET /api/registries/{id}/catalog", a(s.handleRegistryCatalog))
+	mux.Handle("GET /api/registries/{id}/tags", a(s.handleRegistryTags))
+	mux.Handle("GET /api/registries/{id}/env", a(s.handleRegistryEnv))
 
 	// SPA: serve embedded dist/ with index.html fallback for client-side routing.
 	sub, _ := fs.Sub(distFS, "dist")
@@ -453,6 +461,63 @@ func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, resp)
+}
+
+func (s *Server) handleGetWorkload(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	state := s.peer.State()
+	wl, ok := state.Workloads[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "workload not found")
+		return
+	}
+
+	type portSpecJSON struct {
+		ContainerPort uint32 `json:"container_port"`
+		Protocol      string `json:"protocol"`
+	}
+	type volumeSpecJSON struct {
+		Source   string `json:"source"`
+		Target   string `json:"target"`
+		ReadOnly bool   `json:"read_only"`
+	}
+	type workloadSpecJSON struct {
+		ID          string            `json:"id"`
+		Kind        string            `json:"kind"`
+		Name        string            `json:"name"`
+		Image       string            `json:"image,omitempty"`
+		Command     []string          `json:"command,omitempty"`
+		Env         []string          `json:"env,omitempty"`
+		Ports       []portSpecJSON    `json:"ports,omitempty"`
+		Volumes     []volumeSpecJSON  `json:"volumes,omitempty"`
+		Labels      map[string]string `json:"labels,omitempty"`
+		Namespace   string            `json:"namespace,omitempty"`
+		ComposeYAML string            `json:"compose_yaml,omitempty"`
+	}
+
+	out := workloadSpecJSON{
+		ID:   wl.ID,
+		Kind: kindString(wl.Kind),
+		Name: workloadName(wl),
+	}
+	if wl.Container != nil {
+		c := wl.Container
+		out.Image = c.Image
+		out.Command = c.Command
+		out.Env = c.Env
+		out.Labels = c.Labels
+		out.Namespace = c.Namespace
+		for _, p := range c.Ports {
+			out.Ports = append(out.Ports, portSpecJSON{ContainerPort: p.ContainerPort, Protocol: p.Protocol})
+		}
+		for _, v := range c.Volumes {
+			out.Volumes = append(out.Volumes, volumeSpecJSON{Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly})
+		}
+	}
+	if wl.Stack != nil {
+		out.ComposeYAML = wl.Stack.ComposeYAML
+	}
+	writeJSON(w, out)
 }
 
 func (s *Server) handleDrain(w http.ResponseWriter, r *http.Request) {
@@ -1037,6 +1102,168 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"accepted": true})
+}
+
+// ── Registry API handlers ─────────────────────────────────────────────────────
+
+type registryJSON struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	URL       string `json:"url"`
+	Username  string `json:"username"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+func (s *Server) handleListRegistries(w http.ResponseWriter, _ *http.Request) {
+	state := s.peer.State()
+	out := make([]registryJSON, 0, len(state.Registries))
+	for _, r := range state.Registries {
+		out = append(out, registryJSON{
+			ID:        r.ID,
+			Name:      r.Name,
+			URL:       r.URL,
+			Username:  r.Username,
+			CreatedAt: r.CreatedAt.Unix(),
+		})
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleCreateRegistry(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name     string `json:"name"`
+		URL      string `json:"url"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" || req.URL == "" {
+		writeError(w, http.StatusBadRequest, "name and url are required")
+		return
+	}
+	reg := types.Registry{
+		ID:        newRegistryID(),
+		Name:      req.Name,
+		URL:       strings.TrimRight(req.URL, "/"),
+		Username:  req.Username,
+		Password:  req.Password,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := s.peer.ApplyRegistry(reg); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, registryJSON{
+		ID:        reg.ID,
+		Name:      reg.Name,
+		URL:       reg.URL,
+		Username:  reg.Username,
+		CreatedAt: reg.CreatedAt.Unix(),
+	})
+}
+
+func (s *Server) handleDeleteRegistry(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.peer.RemoveRegistry(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"accepted": true})
+}
+
+func (s *Server) registryClient(id string) (*registry.Client, error) {
+	state := s.peer.State()
+	reg, ok := state.Registries[id]
+	if !ok {
+		return nil, fmt.Errorf("registry not found")
+	}
+	return registry.New(reg.URL, reg.Username, reg.Password), nil
+}
+
+func (s *Server) handleRegistryCatalog(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	search := r.URL.Query().Get("search")
+
+	client, err := s.registryClient(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	repos, err := client.ListRepos(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "list repos: "+err.Error())
+		return
+	}
+	if search != "" {
+		filtered := repos[:0]
+		lower := strings.ToLower(search)
+		for _, repo := range repos {
+			if strings.Contains(strings.ToLower(repo), lower) {
+				filtered = append(filtered, repo)
+			}
+		}
+		repos = filtered
+	}
+	if repos == nil {
+		repos = []string{}
+	}
+	writeJSON(w, map[string][]string{"repos": repos})
+}
+
+func (s *Server) handleRegistryTags(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	repo := r.URL.Query().Get("repo")
+	if repo == "" {
+		writeError(w, http.StatusBadRequest, "repo query param is required")
+		return
+	}
+	client, err := s.registryClient(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	tags, err := client.ListTags(r.Context(), repo)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "list tags: "+err.Error())
+		return
+	}
+	if tags == nil {
+		tags = []string{}
+	}
+	writeJSON(w, map[string][]string{"tags": tags})
+}
+
+func (s *Server) handleRegistryEnv(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	repo := r.URL.Query().Get("repo")
+	tag := r.URL.Query().Get("tag")
+	if repo == "" || tag == "" {
+		writeError(w, http.StatusBadRequest, "repo and tag query params are required")
+		return
+	}
+	client, err := s.registryClient(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	env, err := client.GetImageEnv(r.Context(), repo, tag)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "get env: "+err.Error())
+		return
+	}
+	if env == nil {
+		env = []string{}
+	}
+	writeJSON(w, map[string][]string{"env": env})
+}
+
+func newRegistryID() string {
+	b := make([]byte, 8)
+	_, _ = crand.Read(b)
+	return fmt.Sprintf("%x", b)
 }
 
 func newUserID() string {

@@ -9,7 +9,8 @@ import StatusIndicator, {
   StatusIndicatorProps,
 } from "@cloudscape-design/components/status-indicator";
 import Table from "@cloudscape-design/components/table";
-import { ClusterState, ContainerStats, formatAge } from "../api";
+import { useEffect, useState } from "react";
+import { api, ClusterState, ContainerStats, formatAge, WorkloadSpec } from "../api";
 
 function formatBytes(b: number): string {
   if (!b) return "—";
@@ -38,8 +39,66 @@ function phaseStatus(phase: string): StatusIndicatorProps.Type {
   }
 }
 
+function specToYaml(spec: WorkloadSpec): string {
+  if (spec.kind === "stack") {
+    const indented = (spec.compose_yaml ?? "")
+      .split("\n")
+      .map((l) => `  ${l}`)
+      .join("\n");
+    return `kind: stack\nname: ${spec.name}\ncompose_yaml: |\n${indented}\n`;
+  }
+
+  const lines: string[] = [`kind: container`, `name: ${spec.name}`];
+  if (spec.image) lines.push(`image: ${spec.image}`);
+  if (spec.command?.length) {
+    lines.push(`command:`);
+    spec.command.forEach((c) => lines.push(`  - ${c}`));
+  }
+  if (spec.env?.length) {
+    lines.push(`env:`);
+    spec.env.forEach((e) => lines.push(`  - ${e}`));
+  }
+  if (spec.ports?.length) {
+    lines.push(`ports:`);
+    spec.ports.forEach((p) =>
+      lines.push(`  - container_port: ${p.container_port}\n    protocol: ${p.protocol}`)
+    );
+  }
+  if (spec.volumes?.length) {
+    lines.push(`volumes:`);
+    spec.volumes.forEach((v) =>
+      lines.push(
+        `  - source: ${v.source}\n    target: ${v.target}\n    read_only: ${v.read_only}`
+      )
+    );
+  }
+  if (spec.labels && Object.keys(spec.labels).length) {
+    lines.push(`labels:`);
+    Object.entries(spec.labels).forEach(([k, v]) => lines.push(`  ${k}: ${v}`));
+  }
+  if (spec.namespace) lines.push(`namespace: ${spec.namespace}`);
+  return lines.join("\n") + "\n";
+}
+
+function downloadYaml(name: string, content: string) {
+  const blob = new Blob([content], { type: "text/yaml" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${name}.yaml`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function WorkloadDetail({ workloadId, state, loading, onNavigate }: Props) {
   const workload = state?.workloads.find((w) => w.id === workloadId) ?? null;
+  const [spec, setSpec] = useState<WorkloadSpec | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    setSpec(null);
+    api.getWorkload(workloadId).then(setSpec).catch(() => {});
+  }, [workloadId]);
 
   const containers = (state?.actual_containers ?? []).filter(
     (c) => c.workload_id === workloadId
@@ -172,6 +231,46 @@ export default function WorkloadDetail({ workloadId, state, loading, onNavigate 
               )}
             </Container>
           )}
+
+          {/* ── Definition (YAML) ─────────────────────────────────────────── */}
+          {spec && (() => {
+            const yaml = specToYaml(spec);
+            return (
+              <Container
+                header={
+                  <Header
+                    variant="h2"
+                    actions={
+                      <SpaceBetween direction="horizontal" size="xs">
+                        <Button
+                          iconName="copy"
+                          onClick={() => {
+                            navigator.clipboard.writeText(yaml);
+                            setCopied(true);
+                            setTimeout(() => setCopied(false), 2000);
+                          }}
+                        >
+                          {copied ? "Copied!" : "Copy"}
+                        </Button>
+                        <Button
+                          iconName="download"
+                          onClick={() => downloadYaml(spec.name, yaml)}
+                        >
+                          Download
+                        </Button>
+                      </SpaceBetween>
+                    }
+                  >
+                    Definition
+                  </Header>
+                }
+              >
+                <pre style={{ margin: 0, fontFamily: "monospace", fontSize: "0.85rem", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                  {yaml}
+                </pre>
+              </Container>
+            );
+          })()}
         </SpaceBetween>
       )}
     </ContentLayout>

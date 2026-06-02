@@ -173,6 +173,16 @@ func (p *Peer) RemoveUser(userID string) error {
 	return p.apply(cmdRemoveUser, userID)
 }
 
+// ApplyRegistry writes a container registry into the Raft log.
+func (p *Peer) ApplyRegistry(r types.Registry) error {
+	return p.apply(cmdApplyRegistry, r)
+}
+
+// RemoveRegistry removes a container registry from the Raft log.
+func (p *Peer) RemoveRegistry(registryID string) error {
+	return p.apply(cmdRemoveRegistry, registryID)
+}
+
 func (p *Peer) apply(t cmdType, payload any) error {
 	if !p.IsLeader() {
 		return fmt.Errorf("not the leader")

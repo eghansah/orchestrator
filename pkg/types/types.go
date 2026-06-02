@@ -141,6 +141,16 @@ type Domain struct {
 	CreatedAt time.Time
 }
 
+// Registry is a configured Docker Registry v2 endpoint.
+type Registry struct {
+	ID        string
+	Name      string // display name, e.g. "internal-harbor"
+	URL       string // "https://registry.example.com" (no trailing slash)
+	Username  string // empty for unauthenticated registries
+	Password  string // stored in Raft, same pattern as Domain.TLSKey
+	CreatedAt time.Time
+}
+
 // User is an AD-backed web-console account. Authentication is delegated to LDAP;
 // the user store is an allowlist of AD usernames that are permitted to log in.
 type User struct {
