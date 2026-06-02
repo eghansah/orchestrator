@@ -1,0 +1,56 @@
+# ~/.config/systemd/user/orchestrator.service
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp orchestrator.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now orchestrator
+#
+# To start at boot even without a login session:
+#   loginctl enable-linger $USER
+#
+# First-run bootstrap: add --bootstrap to ExecStart, start once,
+# then remove it and restart. Tokens are saved to DataDir and printed
+# to the journal: journalctl --user -u orchestrator -f
+
+[Unit]
+Description=Container Orchestrator Node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+ExecStart=%h/.local/bin/orchestrator \
+  --grpc-addr 0.0.0.0:7946 \
+  --raft-addr 0.0.0.0:7947 \
+  --web-addr 0.0.0.0:7948 \
+  --ingress-addr 0.0.0.0:8080 \
+  --ingress-tls-addr 0.0.0.0:8443 \
+  --dns-addr 0.0.0.0:5353
+
+# Joining an existing cluster — replace ExecStart with:
+#
+#   ExecStart=%h/.local/bin/orchestrator \
+#     --grpc-addr 0.0.0.0:7946 \
+#     --raft-addr 0.0.0.0:7947 \
+#     --web-addr 0.0.0.0:7948 \
+#     --ingress-addr 0.0.0.0:8080 \
+#     --ingress-tls-addr 0.0.0.0:8443 \
+#     --dns-addr 0.0.0.0:5353 \
+#     --join <leader-host>:7946 \
+#     --join-token <token>
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=orchestrator
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target
