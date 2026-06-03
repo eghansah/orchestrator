@@ -16,17 +16,22 @@ import Nodes from "./pages/Nodes";
 import Ingress from "./pages/Ingress";
 import Services from "./pages/Services";
 import Domains from "./pages/Domains";
+import DomainDetail from "./pages/DomainDetail";
 import Users from "./pages/Users";
 import Registries from "./pages/Registries";
 import WorkflowBuilder from "./pages/WorkflowBuilder";
 import WorkloadDetail from "./pages/WorkloadDetail";
 import NodeDetail from "./pages/NodeDetail";
+import Containers from "./pages/Containers";
+import Templates from "./pages/Templates";
 
-type Page = "overview" | "workloads" | "nodes" | "ingress" | "services" | "domains" | "users" | string;
+type Page = "overview" | "workloads" | "containers" | "templates" | "nodes" | "ingress" | "services" | "domains" | "users" | string;
 
 const NAV_ITEMS: SideNavigationProps.Item[] = [
   { type: "link", text: "Overview", href: "#overview" },
   { type: "link", text: "Workloads", href: "#workloads" },
+  { type: "link", text: "Containers", href: "#containers" },
+  { type: "link", text: "Templates", href: "#templates" },
   { type: "link", text: "Nodes", href: "#nodes" },
   { type: "link", text: "Ingress", href: "#ingress" },
   { type: "link", text: "Domains", href: "#domains" },
@@ -117,15 +122,19 @@ export default function App() {
     <WorkloadDetail workloadId={activePage.slice("workload-".length)} {...navProps} />
   ) : activePage.startsWith("node-") ? (
     <NodeDetail nodeId={activePage.slice("node-".length)} {...navProps} />
+  ) : activePage.startsWith("domain-") ? (
+    <DomainDetail domainId={activePage.slice("domain-".length)} onNavigate={setActivePage} />
   ) : ({
     overview: <Overview {...sharedProps} />,
     workloads: <Workloads {...navProps} />,
+    containers: <Containers state={state} loading={loading} error={error} refetch={refetch} />,
+    templates: <Templates {...navProps} />,
     nodes: <Nodes {...navProps} />,
     ingress: <Ingress />,
-    domains: <Domains />,
+    domains: <Domains onNavigate={setActivePage} />,
     services: <Services />,
     users: <Users />,
-    registries: <Registries state={state} loading={loading} />,
+    registries: <Registries state={state} loading={loading} refetch={refetch} />,
     "workflow-builder": <WorkflowBuilder onNavigate={setActivePage} />,
   } as Record<string, React.ReactNode>)[activePage];
 
