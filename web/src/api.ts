@@ -316,6 +316,8 @@ export const api = {
       "/api/services",
       req
     ),
+  updateService: (id: string, req: CreateServiceRequest) =>
+    request<Service>("POST", `/api/services/${id}/update`, req),
   deleteService: (id: string) =>
     request<MutationResult>("POST", `/api/services/${id}/delete`),
   listDomains: () => request<Domain[]>("GET", "/api/domains"),

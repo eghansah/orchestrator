@@ -29,6 +29,12 @@ export default function Services() {
     target_port: "",
   });
   const [selected, setSelected] = useState<Service[]>([]);
+  const [editing, setEditing] = useState<Service | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    workload_name: "",
+    target_port: "",
+  });
 
   const load = useCallback(async () => {
     try {
@@ -81,6 +87,36 @@ export default function Services() {
     }
   }
 
+  function openEdit(svc: Service) {
+    setEditForm({
+      name: svc.name,
+      workload_name: svc.workload_name,
+      target_port: String(svc.target_port),
+    });
+    setEditing(svc);
+  }
+
+  async function handleUpdate() {
+    if (!editing) return;
+    const port = parseInt(editForm.target_port, 10);
+    if (!editForm.name || !editForm.workload_name || isNaN(port) || port <= 0) {
+      addFlash("error", "Name, workload, and a valid container port are required");
+      return;
+    }
+    try {
+      await api.updateService(editing.id, {
+        name: editForm.name,
+        workload_name: editForm.workload_name,
+        target_port: port,
+      });
+      addFlash("success", `Service ${editing.id} updated`);
+      setEditing(null);
+      load();
+    } catch (e) {
+      addFlash("error", String(e));
+    }
+  }
+
   async function handleDelete() {
     for (const svc of selected) {
       try {
@@ -102,6 +138,9 @@ export default function Services() {
 
   const selectedWorkloadOption =
     workloadOptions.find((o) => o.value === createForm.workload_name) ?? null;
+
+  const editWorkloadOption =
+    workloadOptions.find((o) => o.value === editForm.workload_name) ?? null;
 
   return (
     <ContentLayout
@@ -147,11 +186,21 @@ export default function Services() {
           { id: "target_port", header: "Target port", cell: (s) => s.target_port },
           { id: "dns", header: "DNS", cell: (s) => `${s.name}.svc.local` },
           { id: "age", header: "Age", cell: (s) => formatAge(s.created_at) },
+          {
+            id: "actions",
+            header: "",
+            cell: (s) => (
+              <Button variant="inline-link" onClick={() => openEdit(s)}>
+                Edit
+              </Button>
+            ),
+          },
         ]}
         items={services}
         empty="No services"
       />
 
+      {/* ── Create modal ─────────────────────────────────────────────── */}
       <Modal
         visible={creating}
         onDismiss={() => setCreating(false)}
@@ -193,6 +242,59 @@ export default function Services() {
                 type="number"
                 value={createForm.target_port}
                 onChange={(e) => setCreateForm((f) => ({ ...f, target_port: e.detail.value }))}
+                placeholder="3000"
+              />
+            </FormField>
+          </SpaceBetween>
+        </Form>
+      </Modal>
+
+      {/* ── Edit modal ───────────────────────────────────────────────── */}
+      <Modal
+        visible={editing !== null}
+        onDismiss={() => setEditing(null)}
+        header={`Edit service — ${editing?.id}`}
+        footer={
+          <SpaceBetween direction="horizontal" size="xs">
+            <Button variant="link" onClick={() => setEditing(null)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={handleUpdate}>
+              Save
+            </Button>
+          </SpaceBetween>
+        }
+      >
+        <Form>
+          <SpaceBetween size="m">
+            <FormField label="Name" description="Short DNS label (e.g. api, db)" constraintText="Required">
+              <Input
+                value={editForm.name}
+                onChange={(e) => setEditForm((f) => ({ ...f, name: e.detail.value }))}
+                placeholder="api"
+              />
+            </FormField>
+            <FormField label="Workload" constraintText="Required">
+              <Select
+                filteringType="auto"
+                options={workloadOptions}
+                selectedOption={editWorkloadOption}
+                onChange={(e) =>
+                  setEditForm((f) => ({ ...f, workload_name: e.detail.selectedOption.value ?? "" }))
+                }
+                placeholder="Select a workload"
+                empty="No workloads available"
+              />
+            </FormField>
+            <FormField
+              label="Container port"
+              description="Port the container listens on"
+              constraintText="Required — system port is preserved"
+            >
+              <Input
+                type="number"
+                value={editForm.target_port}
+                onChange={(e) => setEditForm((f) => ({ ...f, target_port: e.detail.value }))}
                 placeholder="3000"
               />
             </FormField>

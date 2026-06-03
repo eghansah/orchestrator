@@ -160,6 +160,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/ingress/{id}/delete", a(s.handleDeleteIngress))
 	mux.Handle("GET /api/services", a(s.handleListServices))
 	mux.Handle("POST /api/services", a(s.handleCreateService))
+	mux.Handle("POST /api/services/{id}/update", a(s.handleUpdateService))
 	mux.Handle("POST /api/services/{id}/delete", a(s.handleDeleteService))
 	mux.Handle("GET /api/domains", a(s.handleListDomains))
 	mux.Handle("POST /api/domains", a(s.handleCreateDomain))
@@ -810,6 +811,57 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, resp)
+}
+
+func (s *Server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Name         string `json:"name"`
+		WorkloadName string `json:"workload_name"`
+		TargetPort   uint32 `json:"target_port"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" || req.WorkloadName == "" || req.TargetPort == 0 {
+		writeError(w, http.StatusBadRequest, "name, workload_name, and target_port are required")
+		return
+	}
+	state := s.peer.State()
+	existing, ok := state.Services[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "service not found")
+		return
+	}
+	updated := types.Service{
+		ID:           existing.ID,
+		Name:         req.Name,
+		WorkloadName: req.WorkloadName,
+		TargetPort:   req.TargetPort,
+		SystemPort:   existing.SystemPort,
+		CreatedAt:    existing.CreatedAt,
+	}
+	if err := s.peer.ApplyService(updated); err != nil {
+		writeError(w, http.StatusInternalServerError, "apply service: "+err.Error())
+		return
+	}
+	type svcJSON struct {
+		ID           string `json:"id"`
+		Name         string `json:"name"`
+		WorkloadName string `json:"workload_name"`
+		TargetPort   uint32 `json:"target_port"`
+		SystemPort   uint32 `json:"system_port"`
+		CreatedAt    int64  `json:"created_at"`
+	}
+	writeJSON(w, svcJSON{
+		ID:           updated.ID,
+		Name:         updated.Name,
+		WorkloadName: updated.WorkloadName,
+		TargetPort:   updated.TargetPort,
+		SystemPort:   updated.SystemPort,
+		CreatedAt:    updated.CreatedAt.Unix(),
+	})
 }
 
 func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {
