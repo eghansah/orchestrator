@@ -57,7 +57,8 @@ type config struct {
 	joinAddr    string // gRPC address of an existing node to join through
 	joinToken   string // shared secret required to join the cluster
 	adminToken  string // bearer token required for all ControlService RPCs
-	webPassword string // password for the web console login form
+	webPassword    string // password for the web console login form
+	webDisableMFA  bool   // skip TOTP MFA for all logins when true
 	// LDAP/AD auth
 	ldapAddr           string
 	ldapTLS            bool
@@ -83,6 +84,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.joinToken, "join-token", "", "shared secret required to join the cluster")
 	flag.StringVar(&cfg.adminToken, "admin-token", "", "bearer token for ControlService RPCs (auto-generated if bootstrapping)")
 	flag.StringVar(&cfg.webPassword, "web-password", "", "password for web console login (auto-generated if bootstrapping)")
+	flag.BoolVar(&cfg.webDisableMFA, "web-disable-mfa", false, "disable TOTP MFA for web console logins")
 	flag.StringVar(&cfg.webAddr, "web-addr", ":7948", "web console HTTP listen address (empty to disable)")
 	flag.StringVar(&cfg.webPrefix, "web-prefix", "", "URL prefix for the web console, e.g. /console (empty = serve at root)")
 	flag.StringVar(&cfg.ingressAddr, "ingress-addr", ":8080", "HTTP ingress proxy listen address (empty to disable)")
@@ -193,7 +195,7 @@ func main() {
 
 	// 5b. Web console (optional) ----------------------------------------------
 	if cfg.webAddr != "" {
-		webSrv := webui.New(peer, ctrl, ag, cfg.adminToken, cfg.webPassword, cfg.webPrefix, webui.LDAPConfig{
+		webSrv := webui.New(peer, ctrl, ag, cfg.adminToken, cfg.webPassword, cfg.webPrefix, cfg.webDisableMFA, webui.LDAPConfig{
 			Addr:           cfg.ldapAddr,
 			UseTLS:         cfg.ldapTLS,
 			Insecure:       cfg.ldapInsecure,

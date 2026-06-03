@@ -3,5 +3,5 @@ web/tsconfig.tsbuildinfo
 internal/webui/dist/
 bin/
 dist/
-orchestrator
+/orchestrator
 /ctl

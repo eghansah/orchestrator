@@ -38,13 +38,14 @@ import (
 
 // Server serves the Cloudscape web console and JSON REST API.
 type Server struct {
-	peer        *internraft.Peer
-	ctrl        *control.Server
-	agent       *agent.Agent
-	adminToken  string // required Bearer token for /api/* routes; empty = no auth
-	webPassword string // password for the /api/auth/login endpoint; empty = login disabled
-	prefix      string // URL path prefix, e.g. "/console" (no trailing slash, may be "")
-	ldap        LDAPConfig
+	peer          *internraft.Peer
+	ctrl          *control.Server
+	agent         *agent.Agent
+	adminToken    string // required Bearer token for /api/* routes; empty = no auth
+	webPassword   string // password for the /api/auth/login endpoint; empty = login disabled
+	prefix        string // URL path prefix, e.g. "/console" (no trailing slash, may be "")
+	disableMFA    bool   // when true, skip TOTP step and issue session on password success
+	ldap          LDAPConfig
 
 	sessionsMu sync.RWMutex
 	sessions   map[string]time.Time // per-login token → expiry
@@ -116,7 +117,7 @@ func (s *Server) consumePendingToken(token string) (pendingMFA, bool) {
 
 // New creates a Server. prefix is an optional URL subdirectory (e.g. "/console");
 // pass "" to serve at the root. A trailing slash is stripped automatically.
-func New(peer *internraft.Peer, ctrl *control.Server, ag *agent.Agent, adminToken, webPassword, prefix string, ldapCfg LDAPConfig) *Server {
+func New(peer *internraft.Peer, ctrl *control.Server, ag *agent.Agent, adminToken, webPassword, prefix string, disableMFA bool, ldapCfg LDAPConfig) *Server {
 	p := strings.TrimRight(prefix, "/")
 	if p != "" && !strings.HasPrefix(p, "/") {
 		p = "/" + p
@@ -131,6 +132,7 @@ func New(peer *internraft.Peer, ctrl *control.Server, ag *agent.Agent, adminToke
 		adminToken:  adminToken,
 		webPassword: webPassword,
 		prefix:      p,
+		disableMFA:  disableMFA,
 		ldap:        ldapCfg,
 		sessions:    make(map[string]time.Time),
 		pending:     make(map[string]pendingMFA),
@@ -245,6 +247,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if err := ldapAuthenticate(s.ldap, req.Username, req.Password); err != nil {
 			slog.Warn("LDAP auth failed", "user", req.Username, "err", err)
 			writeError(w, http.StatusUnauthorized, "invalid credentials")
+			return
+		}
+		if s.disableMFA {
+			writeJSON(w, map[string]string{"token": s.newSession()})
 			return
 		}
 		if !u.MFAEnabled {
