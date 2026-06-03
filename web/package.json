@@ -13,6 +13,7 @@
     "@cloudscape-design/components": "^3",
     "@cloudscape-design/design-tokens": "^3",
     "@cloudscape-design/global-styles": "^1",
+    "qrcode.react": "^4",
     "react": "^18",
     "react-dom": "^18"
   },

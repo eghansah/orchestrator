@@ -26,6 +26,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/pquerna/otp/totp"
+
 	"github.com/eghansah/orchestrator/internal/agent"
 	"github.com/eghansah/orchestrator/internal/control"
 	gen "github.com/eghansah/orchestrator/internal/grpc/gen"
@@ -46,9 +48,20 @@ type Server struct {
 
 	sessionsMu sync.RWMutex
 	sessions   map[string]time.Time // per-login token → expiry
+
+	pendingMu sync.Mutex
+	pending   map[string]pendingMFA // short-lived token → pending MFA state
 }
 
 const sessionTTL = 8 * time.Hour
+const pendingTTL = 5 * time.Minute
+
+type pendingMFA struct {
+	username string
+	isSetup  bool   // true = first-time enrollment; false = regular verify
+	secret   string // non-empty only during setup (new secret, not yet persisted)
+	expiry   time.Time
+}
 
 func (s *Server) newSession() string {
 	b := make([]byte, 16)
@@ -80,6 +93,27 @@ func (s *Server) revokeSession(token string) {
 	s.sessionsMu.Unlock()
 }
 
+func (s *Server) newPendingToken(pm pendingMFA) string {
+	b := make([]byte, 16)
+	_, _ = crand.Read(b)
+	token := fmt.Sprintf("%x", b)
+	s.pendingMu.Lock()
+	s.pending[token] = pm
+	s.pendingMu.Unlock()
+	return token
+}
+
+func (s *Server) consumePendingToken(token string) (pendingMFA, bool) {
+	s.pendingMu.Lock()
+	pm, ok := s.pending[token]
+	delete(s.pending, token)
+	s.pendingMu.Unlock()
+	if !ok || time.Now().After(pm.expiry) {
+		return pendingMFA{}, false
+	}
+	return pm, true
+}
+
 // New creates a Server. prefix is an optional URL subdirectory (e.g. "/console");
 // pass "" to serve at the root. A trailing slash is stripped automatically.
 func New(peer *internraft.Peer, ctrl *control.Server, ag *agent.Agent, adminToken, webPassword, prefix string, ldapCfg LDAPConfig) *Server {
@@ -99,6 +133,7 @@ func New(peer *internraft.Peer, ctrl *control.Server, ag *agent.Agent, adminToke
 		prefix:      p,
 		ldap:        ldapCfg,
 		sessions:    make(map[string]time.Time),
+		pending:     make(map[string]pendingMFA),
 	}
 }
 
@@ -108,6 +143,7 @@ func (s *Server) Handler() http.Handler {
 	// Auth routes — unprotected (no Bearer token required).
 	mux.Handle("POST /api/auth/login", http.HandlerFunc(s.handleLogin))
 	mux.Handle("POST /api/auth/logout", http.HandlerFunc(s.handleLogout))
+	mux.Handle("POST /api/auth/mfa", http.HandlerFunc(s.handleMFA))
 
 	// API routes — all require a valid admin token when one is configured.
 	a := s.auth
@@ -134,6 +170,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/users", a(s.handleCreateUser))
 	mux.Handle("POST /api/users/{id}/toggle", a(s.handleToggleUser))
 	mux.Handle("POST /api/users/{id}/delete", a(s.handleDeleteUser))
+	mux.Handle("POST /api/users/{id}/reset-mfa", a(s.handleResetUserMFA))
 	mux.Handle("GET /api/registries", a(s.handleListRegistries))
 	mux.Handle("POST /api/registries", a(s.handleCreateRegistry))
 	mux.Handle("POST /api/registries/{id}/update", a(s.handleUpdateRegistry))
@@ -210,7 +247,38 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
-		writeJSON(w, map[string]string{"token": s.newSession()})
+		if !u.MFAEnabled {
+			key, err := totp.Generate(totp.GenerateOpts{
+				Issuer:      "Orchestrator",
+				AccountName: u.Username,
+			})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "mfa setup error")
+				return
+			}
+			pt := s.newPendingToken(pendingMFA{
+				username: u.Username,
+				isSetup:  true,
+				secret:   key.Secret(),
+				expiry:   time.Now().Add(pendingTTL),
+			})
+			writeJSON(w, map[string]any{
+				"status":        "mfa_setup",
+				"pending_token": pt,
+				"secret":        key.Secret(),
+				"qr_uri":        key.URL(),
+			})
+			return
+		}
+		pt := s.newPendingToken(pendingMFA{
+			username: u.Username,
+			isSetup:  false,
+			expiry:   time.Now().Add(pendingTTL),
+		})
+		writeJSON(w, map[string]any{
+			"status":        "mfa_required",
+			"pending_token": pt,
+		})
 		return
 	}
 
@@ -232,6 +300,49 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	s.revokeSession(token)
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleMFA(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PendingToken string `json:"pending_token"`
+		Code         string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	pm, ok := s.consumePendingToken(req.PendingToken)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "invalid or expired pending token")
+		return
+	}
+	state := s.peer.State()
+	u, found := findUserByUsername(state.Users, pm.username)
+	if !found || !u.Enabled {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	secret := pm.secret
+	if !pm.isSetup {
+		secret = u.MFASecret
+	}
+	if !totp.Validate(req.Code, secret) {
+		writeError(w, http.StatusUnauthorized, "invalid MFA code")
+		return
+	}
+	if pm.isSetup {
+		if !s.peer.IsLeader() {
+			writeError(w, http.StatusServiceUnavailable, "not the leader")
+			return
+		}
+		u.MFASecret = secret
+		u.MFAEnabled = true
+		if err := s.peer.ApplyUser(u); err != nil {
+			writeError(w, http.StatusInternalServerError, "save mfa: "+err.Error())
+			return
+		}
+	}
+	writeJSON(w, map[string]string{"token": s.newSession()})
 }
 
 // ── API handlers ──────────────────────────────────────────────────────────────
@@ -1108,10 +1219,11 @@ func (s *Server) handleImportDomainCert(w http.ResponseWriter, r *http.Request) 
 // ── Users API handlers ────────────────────────────────────────────────────────
 
 type userJSON struct {
-	ID        string `json:"id"`
-	Username  string `json:"username"`
-	Enabled   bool   `json:"enabled"`
-	CreatedAt int64  `json:"created_at"`
+	ID         string `json:"id"`
+	Username   string `json:"username"`
+	Enabled    bool   `json:"enabled"`
+	MFAEnabled bool   `json:"mfa_enabled"`
+	CreatedAt  int64  `json:"created_at"`
 }
 
 func (s *Server) handleListUsers(w http.ResponseWriter, _ *http.Request) {
@@ -1119,10 +1231,11 @@ func (s *Server) handleListUsers(w http.ResponseWriter, _ *http.Request) {
 	out := make([]userJSON, 0, len(state.Users))
 	for _, u := range state.Users {
 		out = append(out, userJSON{
-			ID:        u.ID,
-			Username:  u.Username,
-			Enabled:   u.Enabled,
-			CreatedAt: u.CreatedAt.Unix(),
+			ID:         u.ID,
+			Username:   u.Username,
+			Enabled:    u.Enabled,
+			MFAEnabled: u.MFAEnabled,
+			CreatedAt:  u.CreatedAt.Unix(),
 		})
 	}
 	writeJSON(w, out)
@@ -1159,10 +1272,11 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, userJSON{
-		ID:        u.ID,
-		Username:  u.Username,
-		Enabled:   u.Enabled,
-		CreatedAt: u.CreatedAt.Unix(),
+		ID:         u.ID,
+		Username:   u.Username,
+		Enabled:    u.Enabled,
+		MFAEnabled: u.MFAEnabled,
+		CreatedAt:  u.CreatedAt.Unix(),
 	})
 }
 
@@ -1180,10 +1294,11 @@ func (s *Server) handleToggleUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, userJSON{
-		ID:        existing.ID,
-		Username:  existing.Username,
-		Enabled:   existing.Enabled,
-		CreatedAt: existing.CreatedAt.Unix(),
+		ID:         existing.ID,
+		Username:   existing.Username,
+		Enabled:    existing.Enabled,
+		MFAEnabled: existing.MFAEnabled,
+		CreatedAt:  existing.CreatedAt.Unix(),
 	})
 }
 
@@ -1194,6 +1309,27 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"accepted": true})
+}
+
+func (s *Server) handleResetUserMFA(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	state := s.peer.State()
+	u, ok := state.Users[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if !s.peer.IsLeader() {
+		writeError(w, http.StatusServiceUnavailable, "not the leader")
+		return
+	}
+	u.MFASecret = ""
+	u.MFAEnabled = false
+	if err := s.peer.ApplyUser(u); err != nil {
+		writeError(w, http.StatusInternalServerError, "reset mfa: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 // ── Registry API handlers ─────────────────────────────────────────────────────

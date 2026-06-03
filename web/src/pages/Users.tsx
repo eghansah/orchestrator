@@ -107,6 +107,7 @@ export default function Users() {
         <Header
           variant="h1"
           description="AD accounts permitted to access the web console. Users authenticate with their AD credentials via LDAP."
+          actions={<Button iconName="refresh" onClick={load}>Refresh</Button>}
         >
           Users
         </Header>
@@ -150,25 +151,53 @@ export default function Users() {
                 <Badge color="grey">Disabled</Badge>
               ),
           },
+          {
+            id: "mfa",
+            header: "MFA",
+            cell: (u) =>
+              u.mfa_enabled ? (
+                <Badge color="blue">Enrolled</Badge>
+              ) : (
+                <Badge color="grey">Not enrolled</Badge>
+              ),
+          },
           { id: "age", header: "Added", cell: (u) => formatAge(u.created_at) },
           {
             id: "actions",
             header: "",
             cell: (u) => (
-              <Button
-                variant="inline-link"
-                onClick={async () => {
-                  try {
-                    const resp = await api.toggleUser(u.id);
-                    addFlash("success", `${resp.username} ${resp.enabled ? "enabled" : "disabled"}`);
-                    load();
-                  } catch (e) {
-                    addFlash("error", String(e));
-                  }
-                }}
-              >
-                {u.enabled ? "Disable" : "Enable"}
-              </Button>
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button
+                  variant="inline-link"
+                  onClick={async () => {
+                    try {
+                      const resp = await api.toggleUser(u.id);
+                      addFlash("success", `${resp.username} ${resp.enabled ? "enabled" : "disabled"}`);
+                      load();
+                    } catch (e) {
+                      addFlash("error", String(e));
+                    }
+                  }}
+                >
+                  {u.enabled ? "Disable" : "Enable"}
+                </Button>
+                {u.mfa_enabled && (
+                  <Button
+                    variant="inline-link"
+                    onClick={async () => {
+                      try {
+                        await api.resetUserMFA(u.id);
+                        addFlash("success", `MFA reset for ${u.username}`);
+                        load();
+                      } catch (e) {
+                        addFlash("error", String(e));
+                      }
+                    }}
+                  >
+                    Reset MFA
+                  </Button>
+                )}
+              </SpaceBetween>
             ),
           },
         ]}

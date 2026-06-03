@@ -151,8 +151,14 @@ export interface User {
   id: string;
   username: string;
   enabled: boolean;
+  mfa_enabled: boolean;
   created_at: number; // unix seconds
 }
+
+export type LoginStep1Response =
+  | { status: "mfa_setup"; pending_token: string; secret: string; qr_uri: string }
+  | { status: "mfa_required"; pending_token: string }
+  | { token: string }; // bootstrap mode
 
 export interface CreateUserRequest {
   username: string; // AD username; no password — authentication is handled by LDAP
@@ -254,11 +260,21 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
-  login: async (username: string, password: string): Promise<{ token: string }> => {
+  login: async (username: string, password: string): Promise<LoginStep1Response> => {
     const res = await fetch(getBasePath() + "/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
+    return data as LoginStep1Response;
+  },
+  verifyMFA: async (pendingToken: string, code: string): Promise<{ token: string }> => {
+    const res = await fetch(getBasePath() + "/api/auth/mfa", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pending_token: pendingToken, code }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
@@ -311,6 +327,8 @@ export const api = {
   toggleUser: (id: string) => request<User>("POST", `/api/users/${id}/toggle`),
   deleteUser: (id: string) =>
     request<{ accepted: boolean }>("POST", `/api/users/${id}/delete`),
+  resetUserMFA: (id: string) =>
+    request<{ ok: boolean }>("POST", `/api/users/${id}/reset-mfa`),
   listRegistries: () => request<Registry[]>("GET", "/api/registries"),
   createRegistry: (req: CreateRegistryRequest) =>
     request<Registry>("POST", "/api/registries", req),

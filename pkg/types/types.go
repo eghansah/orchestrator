@@ -176,10 +176,12 @@ type WorkloadTemplate struct {
 // User is an AD-backed web-console account. Authentication is delegated to LDAP;
 // the user store is an allowlist of AD usernames that are permitted to log in.
 type User struct {
-	ID        string
-	Username  string    // AD username used for LDAP bind
-	Enabled   bool
-	CreatedAt time.Time
+	ID         string
+	Username   string    // AD username used for LDAP bind
+	Enabled    bool
+	CreatedAt  time.Time
+	MFASecret  string // base32 TOTP secret; empty = not enrolled
+	MFAEnabled bool   // true after user completes first-time TOTP setup
 }
 
 type ActualContainer struct {
