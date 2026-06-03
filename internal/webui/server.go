@@ -800,13 +800,13 @@ func (s *Server) checkServicePort(workloadName string, targetPort uint32) string
 		if wl.Name() != workloadName {
 			continue
 		}
-		if wl.Kind == types.KindStack {
-			return fmt.Sprintf("workload %q is a compose stack; stack workloads are not supported as service backends — use a container workload", workloadName)
-		}
 		for _, pa := range wl.PortAllocations {
 			if pa.ContainerPort == targetPort {
 				return ""
 			}
+		}
+		if wl.Kind == types.KindStack {
+			return fmt.Sprintf("port %d is not declared in the compose YAML for workload %q — add a host:container port mapping and re-submit", targetPort, workloadName)
 		}
 		return fmt.Sprintf("port %d is not published by workload %q — add the port to the workload definition and re-submit for the service to function", targetPort, workloadName)
 	}

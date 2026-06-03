@@ -28,6 +28,8 @@ const (
 	cmdRemoveUser                    // remove a user account
 	cmdApplyRegistry                 // add or update a container registry
 	cmdRemoveRegistry                // remove a container registry
+	cmdApplyTemplate                 // add or update a workload template
+	cmdRemoveTemplate                // remove a workload template
 )
 
 type command struct {
@@ -50,7 +52,8 @@ type ClusterState struct {
 	Services        map[string]types.Service     `json:"services"`
 	Domains         map[string]types.Domain      `json:"domains"`
 	Users           map[string]types.User        `json:"users"`
-	Registries      map[string]types.Registry    `json:"registries"`
+	Registries      map[string]types.Registry        `json:"registries"`
+	Templates       map[string]types.WorkloadTemplate `json:"templates"`
 	NextPort        uint32                       `json:"next_port"`         // container port pool
 	NextServicePort uint32                       `json:"next_service_port"` // service port pool
 }
@@ -66,7 +69,19 @@ func newClusterState() ClusterState {
 		Registries:      make(map[string]types.Registry),
 		NextPort:        portPoolStart,
 		NextServicePort: svcPortPoolStart,
+		Templates:       make(map[string]types.WorkloadTemplate),
 	}
+}
+
+// scanFreePort returns the lowest port in [start, end] not present in inUse,
+// or 0 if the range is fully exhausted.
+func scanFreePort(inUse map[uint32]bool, start, end uint32) uint32 {
+	for p := start; p <= end; p++ {
+		if !inUse[p] {
+			return p
+		}
+	}
+	return 0
 }
 
 type fsm struct {
@@ -94,29 +109,43 @@ func (f *fsm) Apply(l *raft.Log) any {
 		if err := json.Unmarshal(cmd.Data, &wl); err != nil {
 			return err
 		}
-		// Auto-assign host ports for any container port not yet allocated.
+		// Auto-assign host ports, scanning the full pool so freed ports are reused.
 		if wl.Kind == types.KindContainer && wl.Container != nil {
-			allocated := make(map[uint32]bool)
+			inUse := make(map[uint32]bool)
+			for id, existing := range f.state.Workloads {
+				if id == wl.ID {
+					continue // exclude self (update case)
+				}
+				for _, pa := range existing.PortAllocations {
+					inUse[pa.AllocatedPort] = true
+				}
+			}
+			assigned := make(map[uint32]bool)
 			for _, pa := range wl.PortAllocations {
-				allocated[pa.ContainerPort] = true
+				assigned[pa.ContainerPort] = true
+				inUse[pa.AllocatedPort] = true
 			}
 			for _, pm := range wl.Container.Ports {
-				if allocated[pm.ContainerPort] {
+				if assigned[pm.ContainerPort] {
 					continue
 				}
-				if f.state.NextPort == 0 {
-					f.state.NextPort = portPoolStart
+				port := scanFreePort(inUse, portPoolStart, portPoolEnd)
+				if port == 0 {
+					return fmt.Errorf("container port pool exhausted")
 				}
-				if f.state.NextPort > portPoolEnd {
-					f.state.NextPort = portPoolStart // wrap (shouldn't happen in practice)
-				}
+				inUse[port] = true
 				wl.PortAllocations = append(wl.PortAllocations, types.PortAllocation{
 					ContainerPort: pm.ContainerPort,
-					AllocatedPort: f.state.NextPort,
+					AllocatedPort: port,
 					Protocol:      pm.Protocol,
 				})
-				f.state.NextPort++
 			}
+		}
+		// For stacks, parse the compose YAML to populate PortAllocations so that
+		// Service objects can proxy to stack containers the same way they do for
+		// container workloads.
+		if wl.Kind == types.KindStack && wl.Stack != nil {
+			wl.PortAllocations = parseComposePortAllocations(wl.Stack.ComposeYAML)
 		}
 		f.state.Workloads[wl.ID] = wl
 
@@ -175,14 +204,17 @@ func (f *fsm) Apply(l *raft.Log) any {
 		}
 		// Auto-assign system port on first creation (SystemPort == 0).
 		if svc.SystemPort == 0 {
-			if f.state.NextServicePort == 0 {
-				f.state.NextServicePort = svcPortPoolStart
+			inUse := make(map[uint32]bool)
+			for _, existing := range f.state.Services {
+				if existing.SystemPort > 0 {
+					inUse[existing.SystemPort] = true
+				}
 			}
-			if f.state.NextServicePort > svcPortPoolEnd {
-				f.state.NextServicePort = svcPortPoolStart
+			port := scanFreePort(inUse, svcPortPoolStart, svcPortPoolEnd)
+			if port == 0 {
+				return fmt.Errorf("service port pool exhausted")
 			}
-			svc.SystemPort = f.state.NextServicePort
-			f.state.NextServicePort++
+			svc.SystemPort = port
 		}
 		f.state.Services[svc.ID] = svc
 
@@ -258,6 +290,28 @@ func (f *fsm) Apply(l *raft.Log) any {
 			return err
 		}
 		delete(f.state.Registries, id)
+
+	case cmdApplyTemplate:
+		var t types.WorkloadTemplate
+		if err := json.Unmarshal(cmd.Data, &t); err != nil {
+			return err
+		}
+		if f.state.Templates == nil {
+			f.state.Templates = make(map[string]types.WorkloadTemplate)
+		}
+		for _, existing := range f.state.Templates {
+			if existing.Name == t.Name && existing.ID != t.ID {
+				return fmt.Errorf("template name %q already exists", t.Name)
+			}
+		}
+		f.state.Templates[t.ID] = t
+
+	case cmdRemoveTemplate:
+		var id string
+		if err := json.Unmarshal(cmd.Data, &id); err != nil {
+			return err
+		}
+		delete(f.state.Templates, id)
 	}
 	return nil
 }
