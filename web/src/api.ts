@@ -29,6 +29,7 @@ export interface ContainerStats {
 export interface PortAllocation {
   container_port: number;
   allocated_port: number;
+  protocol: string;
 }
 
 export interface WorkloadInfo {
@@ -311,13 +312,13 @@ export const api = {
     request<MutationResult>("POST", `/api/ingress/${id}/delete`),
   listServices: () => request<Service[]>("GET", "/api/services"),
   createService: (req: CreateServiceRequest) =>
-    request<{ service_id: string; system_port: number; accepted: boolean; reason?: string }>(
+    request<{ service_id: string; system_port: number; accepted: boolean; reason?: string; warning?: string }>(
       "POST",
       "/api/services",
       req
     ),
   updateService: (id: string, req: CreateServiceRequest) =>
-    request<Service>("POST", `/api/services/${id}/update`, req),
+    request<Service & { warning?: string }>("POST", `/api/services/${id}/update`, req),
   deleteService: (id: string) =>
     request<MutationResult>("POST", `/api/services/${id}/delete`),
   listDomains: () => request<Domain[]>("GET", "/api/domains"),

@@ -391,6 +391,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	type portAllocJSON struct {
 		ContainerPort uint32 `json:"container_port"`
 		AllocatedPort uint32 `json:"allocated_port"`
+		Protocol      string `json:"protocol"`
 	}
 	type workloadJSON struct {
 		ID              string          `json:"id"`
@@ -476,6 +477,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 			wj.PortAllocations = append(wj.PortAllocations, portAllocJSON{
 				ContainerPort: pa.ContainerPort,
 				AllocatedPort: pa.AllocatedPort,
+				Protocol:      pa.Protocol,
 			})
 		}
 		out.Workloads = append(out.Workloads, wj)
@@ -790,6 +792,27 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, svcs)
 }
 
+// checkServicePort returns a warning string if workloadName does not publish
+// targetPort as an allocated container port. Returns "" when the port is fine.
+func (s *Server) checkServicePort(workloadName string, targetPort uint32) string {
+	state := s.peer.State()
+	for _, wl := range state.Workloads {
+		if wl.Name() != workloadName {
+			continue
+		}
+		if wl.Kind == types.KindStack {
+			return fmt.Sprintf("workload %q is a compose stack; stack workloads are not supported as service backends — use a container workload", workloadName)
+		}
+		for _, pa := range wl.PortAllocations {
+			if pa.ContainerPort == targetPort {
+				return ""
+			}
+		}
+		return fmt.Sprintf("port %d is not published by workload %q — add the port to the workload definition and re-submit for the service to function", targetPort, workloadName)
+	}
+	return fmt.Sprintf("workload %q not found", workloadName)
+}
+
 func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name         string `json:"name"`
@@ -810,7 +833,14 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 		writeError(w, grpcHTTPStatus(st.Code()), st.Message())
 		return
 	}
-	writeJSON(w, resp)
+	warning := s.checkServicePort(req.WorkloadName, req.TargetPort)
+	writeJSON(w, map[string]any{
+		"service_id":  resp.ServiceId,
+		"system_port": resp.SystemPort,
+		"accepted":    resp.Accepted,
+		"reason":      resp.Reason,
+		"warning":     warning,
+	})
 }
 
 func (s *Server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
@@ -846,21 +876,15 @@ func (s *Server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "apply service: "+err.Error())
 		return
 	}
-	type svcJSON struct {
-		ID           string `json:"id"`
-		Name         string `json:"name"`
-		WorkloadName string `json:"workload_name"`
-		TargetPort   uint32 `json:"target_port"`
-		SystemPort   uint32 `json:"system_port"`
-		CreatedAt    int64  `json:"created_at"`
-	}
-	writeJSON(w, svcJSON{
-		ID:           updated.ID,
-		Name:         updated.Name,
-		WorkloadName: updated.WorkloadName,
-		TargetPort:   updated.TargetPort,
-		SystemPort:   updated.SystemPort,
-		CreatedAt:    updated.CreatedAt.Unix(),
+	warning := s.checkServicePort(req.WorkloadName, req.TargetPort)
+	writeJSON(w, map[string]any{
+		"id":            updated.ID,
+		"name":          updated.Name,
+		"workload_name": updated.WorkloadName,
+		"target_port":   updated.TargetPort,
+		"system_port":   updated.SystemPort,
+		"created_at":    updated.CreatedAt.Unix(),
+		"warning":       warning,
 	})
 }
 

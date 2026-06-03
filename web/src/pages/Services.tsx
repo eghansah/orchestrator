@@ -78,6 +78,7 @@ export default function Services() {
         addFlash("error", resp.reason ?? "rejected");
       } else {
         addFlash("success", `Service ${resp.service_id} created (port ${resp.system_port})`);
+        if (resp.warning) addFlash("warning", resp.warning);
         setCreating(false);
         setCreateForm({ name: "", workload_name: "", target_port: "" });
         load();
@@ -104,12 +105,13 @@ export default function Services() {
       return;
     }
     try {
-      await api.updateService(editing.id, {
+      const resp = await api.updateService(editing.id, {
         name: editForm.name,
         workload_name: editForm.workload_name,
         target_port: port,
       });
       addFlash("success", `Service ${editing.id} updated`);
+      if (resp.warning) addFlash("warning", resp.warning);
       setEditing(null);
       load();
     } catch (e) {

@@ -29,8 +29,13 @@ type Manager struct {
 	dataIP      string
 	ownCert     tls.Certificate
 
-	mu       sync.Mutex
-	active   map[string]context.CancelFunc // serviceID → cancel
+	mu     sync.Mutex
+	active map[string]activeEntry // serviceID → running listener
+}
+
+type activeEntry struct {
+	cancel context.CancelFunc
+	svc    types.Service
 }
 
 func New(peer *internraft.Peer, localNodeID, dataIP string, ownCert tls.Certificate) *Manager {
@@ -39,7 +44,7 @@ func New(peer *internraft.Peer, localNodeID, dataIP string, ownCert tls.Certific
 		localNodeID: localNodeID,
 		dataIP:      dataIP,
 		ownCert:     ownCert,
-		active:      make(map[string]context.CancelFunc),
+		active:      make(map[string]activeEntry),
 	}
 }
 
@@ -63,21 +68,22 @@ func (m *Manager) reconcile(ctx context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Stop listeners for removed services.
-	for id, cancel := range m.active {
-		if _, ok := state.Services[id]; !ok {
-			cancel()
+	// Stop listeners for removed or changed services.
+	for id, entry := range m.active {
+		svc, ok := state.Services[id]
+		if !ok || svc != entry.svc {
+			entry.cancel()
 			delete(m.active, id)
 		}
 	}
 
-	// Start listeners for new services.
+	// Start listeners for new (or just-restarted) services.
 	for id, svc := range state.Services {
 		if _, ok := m.active[id]; ok {
 			continue
 		}
 		svcCtx, cancel := context.WithCancel(ctx)
-		m.active[id] = cancel
+		m.active[id] = activeEntry{cancel: cancel, svc: svc}
 		go m.listenService(svcCtx, svc)
 	}
 }
@@ -109,10 +115,19 @@ func (m *Manager) listenService(ctx context.Context, svc types.Service) {
 	}
 }
 
-func (m *Manager) handleConn(ctx context.Context, conn net.Conn, svc types.Service) {
+func (m *Manager) handleConn(ctx context.Context, conn net.Conn, svcSnapshot types.Service) {
 	defer conn.Close()
 
 	state := m.peer.State()
+
+	// Always use the current service definition from state so that edits are
+	// picked up without waiting for the listener to restart.
+	svc, ok := state.Services[svcSnapshot.ID]
+	if !ok {
+		connError(conn, "service no longer exists")
+		return
+	}
+
 	var wl types.Workload
 	var wlFound bool
 	for _, w := range state.Workloads {
@@ -135,8 +150,11 @@ func (m *Manager) handleConn(ctx context.Context, conn net.Conn, svc types.Servi
 
 	allocatedPort := allocatedPortFor(wl, svc.TargetPort)
 	if allocatedPort == 0 {
-		slog.Warn("service no allocated port", "service", svc.Name, "target_port", svc.TargetPort)
-		connError(conn, "no allocated port for service target port")
+		slog.Warn("service no allocated port", "service", svc.Name, "workload", svc.WorkloadName, "target_port", svc.TargetPort)
+		connError(conn, fmt.Sprintf(
+			"port %d is not published by workload %q — add the port to the workload definition and re-submit",
+			svc.TargetPort, svc.WorkloadName,
+		))
 		return
 	}
 

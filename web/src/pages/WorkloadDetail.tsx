@@ -3,7 +3,11 @@ import Button from "@cloudscape-design/components/button";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Container from "@cloudscape-design/components/container";
 import ContentLayout from "@cloudscape-design/components/content-layout";
+import Flashbar, { FlashbarProps } from "@cloudscape-design/components/flashbar";
+import FormField from "@cloudscape-design/components/form-field";
 import Header from "@cloudscape-design/components/header";
+import Input from "@cloudscape-design/components/input";
+import Modal from "@cloudscape-design/components/modal";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator, {
   StatusIndicatorProps,
@@ -90,15 +94,53 @@ function downloadYaml(name: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
-export default function WorkloadDetail({ workloadId, state, loading, onNavigate }: Props) {
+export default function WorkloadDetail({ workloadId, state, loading, onNavigate, refetch }: Props) {
   const workload = state?.workloads.find((w) => w.id === workloadId) ?? null;
   const [spec, setSpec] = useState<WorkloadSpec | null>(null);
   const [copied, setCopied] = useState(false);
+  const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+  const [templateName, setTemplateName] = useState("");
+  const [templateDesc, setTemplateDesc] = useState("");
+  const [savingTemplate, setSavingTemplate] = useState(false);
 
   useEffect(() => {
     setSpec(null);
     api.getWorkload(workloadId).then(setSpec).catch(() => {});
   }, [workloadId]);
+
+  function addFlash(type: FlashbarProps.Type, msg: string) {
+    const id = String(Date.now());
+    setFlash((f) => [...f, { type, content: msg, id, dismissible: true, onDismiss: () => setFlash((f) => f.filter((x) => x.id !== id)) }]);
+  }
+
+  async function handleSaveTemplate() {
+    if (!spec) return;
+    setSavingTemplate(true);
+    try {
+      await api.createTemplate({
+        name: templateName || spec.name,
+        description: templateDesc,
+        kind: spec.kind,
+        compose_yaml: spec.compose_yaml,
+        image: spec.image,
+        command: spec.command,
+        env: spec.env,
+        ports: spec.ports,
+        volumes: spec.volumes,
+        labels: spec.labels,
+        namespace: spec.namespace,
+      });
+      addFlash("success", `Saved as template "${templateName || spec.name}"`);
+      setShowSaveTemplate(false);
+      setTemplateName("");
+      setTemplateDesc("");
+    } catch (e) {
+      addFlash("error", String(e));
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
 
   const containers = (state?.actual_containers ?? []).filter(
     (c) => c.workload_id === workloadId
@@ -120,9 +162,17 @@ export default function WorkloadDetail({ workloadId, state, loading, onNavigate 
           variant="h1"
           description={workload ? `${workload.kind} · ${workload.node_id || "unscheduled"}` : ""}
           actions={
-            <Button iconName="angle-left" variant="link" onClick={() => onNavigate("workloads")}>
-              Back to Workloads
-            </Button>
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button iconName="refresh" onClick={refetch}>Refresh</Button>
+              {spec && (
+                <Button iconName="upload" onClick={() => { setTemplateName(spec.name); setShowSaveTemplate(true); }}>
+                  Save as template
+                </Button>
+              )}
+              <Button iconName="angle-left" variant="link" onClick={() => onNavigate("workloads")}>
+                Back to Workloads
+              </Button>
+            </SpaceBetween>
           }
         >
           {workload ? workload.name : workloadId}
@@ -137,6 +187,32 @@ export default function WorkloadDetail({ workloadId, state, loading, onNavigate 
         </Header>
       }
     >
+      <Flashbar items={flash} />
+
+      {/* ── Save as template modal ────────────────────────────────────────── */}
+      <Modal
+        visible={showSaveTemplate}
+        onDismiss={() => setShowSaveTemplate(false)}
+        header="Save as template"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button variant="link" onClick={() => setShowSaveTemplate(false)}>Cancel</Button>
+              <Button variant="primary" loading={savingTemplate} onClick={handleSaveTemplate}>Save</Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="m">
+          <FormField label="Template name">
+            <Input value={templateName} onChange={(e) => setTemplateName(e.detail.value)} />
+          </FormField>
+          <FormField label="Description" constraintText="Optional">
+            <Input value={templateDesc} onChange={(e) => setTemplateDesc(e.detail.value)} />
+          </FormField>
+        </SpaceBetween>
+      </Modal>
+
       {loading && !state ? (
         <Box>Loading…</Box>
       ) : !workload ? (
@@ -171,18 +247,48 @@ export default function WorkloadDetail({ workloadId, state, loading, onNavigate 
             </ColumnLayout>
           </Container>
 
-          {/* ── Port Allocations ──────────────────────────────────────────── */}
-          {workload.port_allocations.length > 0 && (
-            <Container header={<Header variant="h2">Port Allocations</Header>}>
-              <Table
-                items={workload.port_allocations}
-                columnDefinitions={[
-                  { id: "cport", header: "Container Port", cell: (p) => p.container_port },
-                  { id: "hport", header: "Host Port", cell: (p) => p.allocated_port },
-                ]}
-              />
-            </Container>
-          )}
+          {/* ── Published Ports (container workloads only) ────────────────── */}
+          {workload.kind === "container" && (() => {
+            // Merge declared ports (spec) with allocated host ports (state).
+            const allocMap = new Map(
+              workload.port_allocations.map((pa) => [pa.container_port, pa])
+            );
+            const declaredPorts = spec?.ports ?? [];
+            // Include any allocation that isn't in the declared list (shouldn't
+            // normally happen but is safe to show).
+            const extraAllocs = workload.port_allocations.filter(
+              (pa) => !declaredPorts.some((p) => p.container_port === pa.container_port)
+            );
+            type PortRow = { container_port: number; protocol: string; allocated_port: number | null };
+            const rows: PortRow[] = [
+              ...declaredPorts.map((p) => ({
+                container_port: p.container_port,
+                protocol: p.protocol || "tcp",
+                allocated_port: allocMap.get(p.container_port)?.allocated_port ?? null,
+              })),
+              ...extraAllocs.map((pa) => ({
+                container_port: pa.container_port,
+                protocol: pa.protocol || "tcp",
+                allocated_port: pa.allocated_port,
+              })),
+            ];
+            return (
+              <Container header={<Header variant="h2">Published Ports</Header>}>
+                {rows.length === 0 ? (
+                  <Box color="text-body-secondary">No ports declared in the workload spec.</Box>
+                ) : (
+                  <Table
+                    items={rows}
+                    columnDefinitions={[
+                      { id: "cport",    header: "Container port", cell: (p) => p.container_port },
+                      { id: "protocol", header: "Protocol",       cell: (p) => p.protocol.toUpperCase() },
+                      { id: "hport",    header: "Host port",      cell: (p) => p.allocated_port ?? "—" },
+                    ]}
+                  />
+                )}
+              </Container>
+            );
+          })()}
 
           {/* ── Containers (single-container workloads) ───────────────────── */}
           {workload.kind === "container" && (
@@ -262,6 +368,9 @@ export default function WorkloadDetail({ workloadId, state, loading, onNavigate 
                     }
                   >
                     Definition
+                    <Box variant="small" color="text-body-secondary" display="inline">
+                      {" "}— reference only; to resubmit a stack use the raw Compose YAML
+                    </Box>
                   </Header>
                 }
               >
