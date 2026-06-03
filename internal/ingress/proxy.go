@@ -83,11 +83,17 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var wl types.Workload
-	for _, w := range state.Workloads {
-		if w.Name() == svc.WorkloadName {
-			wl = w
+	var wlFound bool
+	for _, wk := range state.Workloads {
+		if wk.Name() == svc.WorkloadName {
+			wl = wk
+			wlFound = true
 			break
 		}
+	}
+	if !wlFound {
+		http.Error(w, "workload not found", http.StatusBadGateway)
+		return
 	}
 	if wl.NodeID == "" {
 		http.Error(w, "workload not scheduled", http.StatusBadGateway)

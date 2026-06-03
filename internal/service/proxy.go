@@ -114,22 +114,29 @@ func (m *Manager) handleConn(ctx context.Context, conn net.Conn, svc types.Servi
 
 	state := m.peer.State()
 	var wl types.Workload
-	var ok bool
+	var wlFound bool
 	for _, w := range state.Workloads {
 		if w.Name() == svc.WorkloadName {
 			wl = w
-			ok = true
+			wlFound = true
 			break
 		}
 	}
-	if !ok || wl.NodeID == "" {
-		slog.Warn("service workload not scheduled", "service", svc.Name)
+	if !wlFound {
+		slog.Warn("service workload not found", "service", svc.Name, "workload", svc.WorkloadName)
+		connError(conn, "workload not found")
+		return
+	}
+	if wl.NodeID == "" {
+		slog.Warn("service workload not scheduled", "service", svc.Name, "workload", svc.WorkloadName)
+		connError(conn, "workload not scheduled")
 		return
 	}
 
 	allocatedPort := allocatedPortFor(wl, svc.TargetPort)
 	if allocatedPort == 0 {
 		slog.Warn("service no allocated port", "service", svc.Name, "target_port", svc.TargetPort)
+		connError(conn, "no allocated port for service target port")
 		return
 	}
 
@@ -138,12 +145,19 @@ func (m *Manager) handleConn(ctx context.Context, conn net.Conn, svc types.Servi
 		return
 	}
 
-	node, ok := state.Nodes[wl.NodeID]
-	if !ok {
+	node, nodeOK := state.Nodes[wl.NodeID]
+	if !nodeOK {
 		slog.Warn("service target node not found", "service", svc.Name, "node", wl.NodeID)
+		connError(conn, "target node not found")
 		return
 	}
 	m.proxyRemote(ctx, conn, node, allocatedPort)
+}
+
+// connError writes a single-line plain-text error to the connection before it
+// is closed. This gives TCP clients a readable signal instead of a silent EOF.
+func connError(conn net.Conn, msg string) {
+	_, _ = fmt.Fprintf(conn, "ERROR: %s\r\n", msg)
 }
 
 func (m *Manager) proxyLocal(_ context.Context, conn net.Conn, allocatedPort uint32) {
