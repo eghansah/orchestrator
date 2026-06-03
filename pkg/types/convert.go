@@ -59,7 +59,6 @@ func ContainerSpecToProto(s ContainerSpec) *gen.ContainerSpec {
 	ports := make([]*gen.PortMapping, len(s.Ports))
 	for i, p := range s.Ports {
 		ports[i] = &gen.PortMapping{
-			HostPort:      p.HostPort,
 			ContainerPort: p.ContainerPort,
 			Protocol:      p.Protocol,
 		}
@@ -84,7 +83,7 @@ func ContainerSpecToProto(s ContainerSpec) *gen.ContainerSpec {
 func ContainerSpecFromProto(ps *gen.ContainerSpec) ContainerSpec {
 	ports := make([]PortMapping, len(ps.Ports))
 	for i, p := range ps.Ports {
-		ports[i] = PortMapping{HostPort: p.HostPort, ContainerPort: p.ContainerPort, Protocol: p.Protocol}
+		ports[i] = PortMapping{ContainerPort: p.ContainerPort, Protocol: p.Protocol}
 	}
 	vols := make([]VolumeMount, len(ps.Volumes))
 	for i, v := range ps.Volumes {

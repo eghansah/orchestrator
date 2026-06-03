@@ -29,12 +29,11 @@ import (
 
 	"github.com/eghansah/orchestrator/internal/agent"
 	"github.com/eghansah/orchestrator/internal/control"
-	orchdns "github.com/eghansah/orchestrator/internal/dns"
 	gen "github.com/eghansah/orchestrator/internal/grpc/gen"
 	"github.com/eghansah/orchestrator/internal/ingress"
 	"github.com/eghansah/orchestrator/internal/nerdctl"
+	"github.com/eghansah/orchestrator/internal/proxycfg"
 	internraft "github.com/eghansah/orchestrator/internal/raft"
-	"github.com/eghansah/orchestrator/internal/service"
 	"github.com/eghansah/orchestrator/internal/tlsutil"
 	"github.com/eghansah/orchestrator/internal/webui"
 	"github.com/eghansah/orchestrator/pkg/crypto"
@@ -242,24 +241,11 @@ func main() {
 		defer ingressTLSSrv.Shutdown(context.Background()) //nolint:errcheck
 	}
 
-	// 5d. DNS server (optional) -----------------------------------------------
-	if cfg.dnsAddr != "" {
-		dnsSrv := orchdns.New(peer, cfg.dataAddr)
-		go func() {
-			slog.Info("DNS server listening", "addr", cfg.dnsAddr)
-			if err := dnsSrv.ListenAndServe(cfg.dnsAddr); err != nil {
-				slog.Error("DNS server error", "err", err)
-			}
-		}()
-	}
-
-	// 5e. Service TCP proxy ---------------------------------------------------
-	svcMgr := service.New(peer, cfg.nodeID, cfg.dataAddr, tlsCert)
-	go func() {
-		if err := svcMgr.Run(ctx); err != nil && err != context.Canceled {
-			slog.Error("service manager error", "err", err)
-		}
-	}()
+	// 5d. Proxy config writer -------------------------------------------------
+	// Write the initial config immediately, then re-write whenever Raft state changes.
+	// proxyd watches this file and reloads; the orchestrator is not in the data path.
+	_ = proxycfg.Write(cfg.dataDir, cfg.nodeID, cfg.dataAddr, cfg.dnsAddr, peer.State())
+	go proxycfgWriteLoop(ctx, peer, cfg.dataDir, cfg.nodeID, cfg.dataAddr, cfg.dnsAddr)
 
 	serverTLS := tlsutil.ServerTLSConfig(tlsCert, isPinned)
 	grpcSrv := grpc.NewServer(
@@ -811,6 +797,60 @@ func dieOnErr(err error, msg string) {
 		slog.Error(msg, "err", err)
 		os.Exit(1)
 	}
+}
+
+// proxycfgWriteLoop polls Raft state every 2 seconds and rewrites the proxyd config file
+// whenever it changes. proxyd watches the file and reloads; the orchestrator is not in the
+// data path for DNS or TCP forwarding.
+func proxycfgWriteLoop(ctx context.Context, peer *internraft.Peer, dataDir, nodeID, dataIP, dnsAddr string) {
+	var lastHash uint64
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			state := peer.State()
+			h := stateHash(state)
+			if h == lastHash {
+				continue
+			}
+			if err := proxycfg.Write(dataDir, nodeID, dataIP, dnsAddr, state); err != nil {
+				slog.Warn("proxycfg write failed", "err", err)
+				continue
+			}
+			lastHash = h
+		}
+	}
+}
+
+// stateHash returns a cheap summary of the parts of ClusterState that affect the proxy config.
+func stateHash(state internraft.ClusterState) uint64 {
+	var h uint64
+	for _, svc := range state.Services {
+		h ^= uint64(svc.SystemPort)*2654435761 ^ fnvStr(svc.Name) ^ fnvStr(svc.WorkloadName)
+	}
+	for _, wl := range state.Workloads {
+		h ^= fnvStr(wl.NodeID) ^ fnvStr(wl.Name())
+		for _, pa := range wl.PortAllocations {
+			h ^= uint64(pa.AllocatedPort) * 2246822519
+		}
+	}
+	for _, n := range state.Nodes {
+		h ^= fnvStr(n.DataIP) ^ fnvStr(n.ID)
+	}
+	return h
+}
+
+func fnvStr(s string) uint64 {
+	const prime = 1099511628211
+	var h uint64 = 14695981039346656037
+	for i := 0; i < len(s); i++ {
+		h ^= uint64(s[i])
+		h *= prime
+	}
+	return h
 }
 
 // parseDNSPort extracts the port number from a listen address like ":5353" or "0.0.0.0:5353".

@@ -57,7 +57,6 @@ type ComposeStackSpec struct {
 }
 
 type PortMapping struct {
-	HostPort      uint32
 	ContainerPort uint32
 	Protocol      string // "tcp" | "udp"
 }
