@@ -16,9 +16,10 @@ import { api, ClusterState, CreateRegistryRequest, Registry, formatAge } from ".
 interface Props {
   state: ClusterState | null;
   loading: boolean;
+  refetch: () => void;
 }
 
-export default function Registries({ state, loading }: Props) {
+export default function Registries({ state, loading, refetch }: Props) {
   const registries: Registry[] = state?.registries ?? [];
   const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [selected, setSelected] = useState<Registry[]>([]);
@@ -145,7 +146,7 @@ export default function Registries({ state, loading }: Props) {
   }
 
   return (
-    <ContentLayout header={<Header variant="h1">Registries</Header>}>
+    <ContentLayout header={<Header variant="h1" actions={<Button iconName="refresh" onClick={refetch}>Refresh</Button>}>Registries</Header>}>
       <SpaceBetween size="l">
         <Flashbar items={flash} />
 

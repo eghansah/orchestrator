@@ -137,6 +137,11 @@ func (a *Agent) poll(ctx context.Context) error {
 	return nil
 }
 
+// ContainerLogs returns the last tail lines of logs for the named container.
+func (a *Agent) ContainerLogs(ctx context.Context, name string, tail int) (string, error) {
+	return a.nc.ContainerLogs(ctx, name, tail)
+}
+
 // State returns this node's last observed actual state.
 func (a *Agent) State() types.ActualWorkloadState {
 	a.mu.RLock()

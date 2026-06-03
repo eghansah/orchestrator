@@ -77,7 +77,15 @@ export default function Workloads({ state, loading, refetch, onNavigate }: Props
 
   return (
     <ContentLayout
-      header={<Header variant="h1" description="Containers and Compose stacks running across the cluster. Submit new workloads or remove existing ones.">Workloads</Header>}
+      header={
+        <Header
+          variant="h1"
+          description="Containers and Compose stacks running across the cluster. Submit new workloads or remove existing ones."
+          actions={<Button iconName="refresh" onClick={refetch}>Refresh</Button>}
+        >
+          Workloads
+        </Header>
+      }
       notifications={<Flashbar items={notifications} />}
     >
       <SpaceBetween size="m">

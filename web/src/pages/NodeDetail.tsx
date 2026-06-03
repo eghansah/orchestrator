@@ -50,7 +50,7 @@ function formatBytes(b: number): string {
   return `${b} B`;
 }
 
-export default function NodeDetail({ nodeId, state, loading, onNavigate }: Props) {
+export default function NodeDetail({ nodeId, state, loading, onNavigate, refetch }: Props) {
   const [notifications, setNotifications] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [draining, setDraining] = useState(false);
 
@@ -95,9 +95,12 @@ export default function NodeDetail({ nodeId, state, loading, onNavigate }: Props
           variant="h1"
           description={node ? node.address : ""}
           actions={
-            <Button iconName="angle-left" variant="link" onClick={() => onNavigate("nodes")}>
-              Back to Nodes
-            </Button>
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button iconName="refresh" onClick={refetch}>Refresh</Button>
+              <Button iconName="angle-left" variant="link" onClick={() => onNavigate("nodes")}>
+                Back to Nodes
+              </Button>
+            </SpaceBetween>
           }
         >
           {node ? node.id : nodeId}

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
 import Form from "@cloudscape-design/components/form";
@@ -8,6 +9,26 @@ import Modal from "@cloudscape-design/components/modal";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Textarea from "@cloudscape-design/components/textarea";
 import { api } from "../api";
+
+// Returns true if the YAML contains port bindings that expose on all interfaces
+// (i.e. missing the 127.0.0.1: prefix), e.g. "8080:80" or "0.0.0.0:8080:80",
+// or uses network_mode: host.
+function hasDirectHostBinding(yaml: string): boolean {
+  if (/network_mode\s*:\s*["']?host["']?/m.test(yaml)) return true;
+  const portLine = /^\s*-\s+["']?(.+?)["']?\s*$/gm;
+  let m: RegExpExecArray | null;
+  while ((m = portLine.exec(yaml)) !== null) {
+    const val = m[1].trim().replace(/\/\w+$/, ""); // strip /tcp /udp
+    const parts = val.split(":");
+    if (parts.length === 2 && /^\d+$/.test(parts[0])) {
+      return true; // HOST_PORT:CONTAINER_PORT → binds to 0.0.0.0
+    }
+    if (parts.length === 3 && parts[0] !== "127.0.0.1") {
+      return true; // ADDR:HOST_PORT:CONTAINER_PORT where ADDR is not loopback
+    }
+  }
+  return false;
+}
 
 interface Props {
   visible: boolean;
@@ -93,6 +114,15 @@ export default function SubmitStack({ visible, onDismiss, onSuccess, onError }: 
               onChange={(e) => set("compose_yaml")(e.detail.value)}
             />
           </FormField>
+          {hasDirectHostBinding(fields.compose_yaml) && (
+            <Alert type="warning" header="Direct host binding detected">
+              One or more containers bind ports to all network interfaces (e.g.{" "}
+              <code>8080:80</code>) or use <code>network_mode: host</code>. This
+              exposes services on the host's public interfaces. Prefer binding to{" "}
+              <code>127.0.0.1</code> (e.g. <code>127.0.0.1:8080:80</code>) unless
+              external access is intentional.
+            </Alert>
+          )}
         </SpaceBetween>
       </Form>
     </Modal>

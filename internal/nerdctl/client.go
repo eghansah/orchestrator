@@ -30,6 +30,15 @@ func validateName(name string) error {
 	return nil
 }
 
+// isSpecDescriptor returns true when the YAML looks like the workload spec
+// descriptor format produced by the UI's Definition panel (top-level "kind:"
+// and "compose_yaml:" keys) rather than a raw Docker Compose file.
+func isSpecDescriptor(yaml string) bool {
+	hasKind := strings.Contains(yaml, "\nkind:") || strings.HasPrefix(yaml, "kind:")
+	hasWrapper := strings.Contains(yaml, "\ncompose_yaml:") || strings.HasPrefix(yaml, "compose_yaml:")
+	return hasKind && hasWrapper
+}
+
 const (
 	workloadIDLabel  = "orchestrator.workload-id"
 	defaultNamespace = "orchestrator"
@@ -233,6 +242,27 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	return out, nil
 }
 
+// runStdout is like run but captures stdout and stderr separately so that
+// nerdctl log lines written to stderr do not corrupt parseable stdout output.
+func (c *Client) runStdout(ctx context.Context, args ...string) ([]byte, error) {
+	global := []string{"--namespace", c.namespace}
+	if c.address != "" {
+		global = append(global, "--address", c.address)
+	}
+	full := append(global, args...)
+	cmd := exec.CommandContext(ctx, c.binary, full...)
+	if c.address != "" {
+		cmd.Env = append(os.Environ(), "CONTAINERD_ADDRESS="+c.address)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
+}
+
 func (c *Client) Pull(ctx context.Context, image string) error {
 	_, err := c.run(ctx, "pull", image)
 	return err
@@ -287,6 +317,14 @@ func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types
 	return err
 }
 
+func (c *Client) ContainerLogs(ctx context.Context, name string, tail int) (string, error) {
+	if err := validateName(name); err != nil {
+		return "", err
+	}
+	out, err := c.run(ctx, "logs", "--tail", strconv.Itoa(tail), "--", name)
+	return string(out), err
+}
+
 func (c *Client) StopContainer(ctx context.Context, name string) error {
 	if err := validateName(name); err != nil {
 		return err
@@ -299,7 +337,11 @@ func (c *Client) RemoveContainer(ctx context.Context, name string) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
-	_, err := c.run(ctx, "rm", "-f", "--", name)
+	// Stop first so rootlesskit tears down port-forwarding before the container
+	// is deleted. rm -f would SIGKILL the container process and return before
+	// the network namespace is fully released, leaving the host port held.
+	_, _ = c.run(ctx, "stop", "--", name)
+	_, err := c.run(ctx, "rm", "--", name)
 	return err
 }
 
@@ -365,6 +407,9 @@ func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStac
 	if len(spec.ComposeYAML) > maxComposeYAMLSize {
 		return fmt.Errorf("compose YAML exceeds maximum size of %d bytes", maxComposeYAMLSize)
 	}
+	if isSpecDescriptor(spec.ComposeYAML) {
+		return fmt.Errorf("compose_yaml contains a workload spec descriptor (kind:/compose_yaml: wrapper), not a Docker Compose file — submit the raw compose YAML instead")
+	}
 	dir, err := c.composeDir(spec.Name)
 	if err != nil {
 		return err
@@ -390,8 +435,44 @@ func (c *Client) ComposeDown(ctx context.Context, stackName string) error {
 	if _, err := os.Stat(composeFile); err != nil {
 		return fmt.Errorf("compose file not found for stack %q: %w", stackName, err)
 	}
-	_, err = c.run(ctx, "compose", "-f", composeFile, "--project-name", stackName, "down")
+	// Explicit stop before down for the same reason as RemoveContainer: rootlesskit
+	// must release port-forwarding before containers are deleted. compose down issues
+	// stops internally, but running stop first ensures the network teardown is fully
+	// complete before removal begins.
+	_, _ = c.run(ctx, "compose", "-f", composeFile, "--project-name", stackName, "stop")
+	_, err = c.run(ctx, "compose", "-f", composeFile, "--project-name", stackName, "down", "--remove-orphans")
 	return err
+}
+
+// parseComposePSOutput handles both JSON array and JSONL output from
+// `nerdctl compose ps --format json`, which varies across nerdctl versions.
+func parseComposePSOutput(out []byte) ([]serviceInfo, error) {
+	out = bytes.TrimSpace(out)
+	if len(out) == 0 {
+		return nil, nil
+	}
+	if out[0] == '[' {
+		var services []serviceInfo
+		if err := json.Unmarshal(out, &services); err != nil {
+			return nil, err
+		}
+		return services, nil
+	}
+	// Fall back to JSONL (one object per line).
+	var services []serviceInfo
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var si serviceInfo
+		if err := json.Unmarshal(line, &si); err != nil {
+			continue
+		}
+		services = append(services, si)
+	}
+	return services, scanner.Err()
 }
 
 // serviceInfo matches the per-line JSON from `nerdctl compose ps --format '{{json .}}'`.
@@ -413,26 +494,25 @@ func (c *Client) ComposePS(ctx context.Context, stackName string) ([]types.Actua
 	if _, err := os.Stat(composeFile); err != nil {
 		return nil, nil
 	}
-	out, err := c.run(ctx, "compose", "-f", composeFile, "--project-name", stackName, "ps", "--format", "{{json .}}")
+	// nerdctl compose ps only accepts "table" or "json" as format values;
+	// the Go template syntax {{json .}} used by plain "nerdctl ps" is not supported.
+	// Use runStdout so that nerdctl log lines written to stderr do not corrupt
+	// the JSON output we need to parse.
+	out, err := c.runStdout(ctx, "compose", "-f", composeFile, "--project-name", stackName, "ps", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
-	var result []types.ActualContainer
-	scanner := bufio.NewScanner(bytes.NewReader(out))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var si serviceInfo
-		if err := json.Unmarshal([]byte(line), &si); err != nil {
-			continue
-		}
+	services, err := parseComposePSOutput(out)
+	if err != nil {
+		return nil, fmt.Errorf("parse compose ps output: %w", err)
+	}
+	result := make([]types.ActualContainer, 0, len(services))
+	for _, si := range services {
 		result = append(result, types.ActualContainer{
 			ContainerID: si.ID,
 			Name:        si.Name,
 			Status:      si.Status,
 		})
 	}
-	return result, scanner.Err()
+	return result, nil
 }

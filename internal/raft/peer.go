@@ -183,6 +183,16 @@ func (p *Peer) RemoveRegistry(registryID string) error {
 	return p.apply(cmdRemoveRegistry, registryID)
 }
 
+// ApplyTemplate writes a workload template into the Raft log.
+func (p *Peer) ApplyTemplate(t types.WorkloadTemplate) error {
+	return p.apply(cmdApplyTemplate, t)
+}
+
+// RemoveTemplate removes a workload template from the Raft log.
+func (p *Peer) RemoveTemplate(id string) error {
+	return p.apply(cmdRemoveTemplate, id)
+}
+
 func (p *Peer) apply(t cmdType, payload any) error {
 	if !p.IsLeader() {
 		return fmt.Errorf("not the leader")

@@ -67,7 +67,15 @@ export default function Nodes({ state, loading, refetch, onNavigate }: Props) {
 
   return (
     <ContentLayout
-      header={<Header variant="h1" description="All cluster members and their health status. Drain a node to stop new workloads from being placed on it.">Nodes</Header>}
+      header={
+        <Header
+          variant="h1"
+          description="All cluster members and their health status. Drain a node to stop new workloads from being placed on it."
+          actions={<Button iconName="refresh" onClick={refetch}>Refresh</Button>}
+        >
+          Nodes
+        </Header>
+      }
       notifications={<Flashbar items={notifications} />}
     >
       <Table<NodeInfo>

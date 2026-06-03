@@ -66,9 +66,14 @@ Exec-based, not SDK-based. The wrapper:
 # Generate protobuf stubs (requires protoc + protoc-gen-go + protoc-gen-go-grpc)
 go generate ./proto/...
 
-# Build
+# Build (development)
 go build ./cmd/orchestrator
 go build ./cmd/ctl
+
+# Build release — static binaries, stripped, output to dist/
+# CGO_ENABLED=0 is required; all release builds must be statically linked.
+CGO_ENABLED=0 go build -ldflags="-s -w" -o dist/orchestrator ./cmd/orchestrator
+CGO_ENABLED=0 go build -ldflags="-s -w" -o dist/ctl ./cmd/ctl
 
 # Run all tests
 go test ./...

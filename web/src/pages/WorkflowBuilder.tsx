@@ -82,7 +82,7 @@ function buildComposeYaml(stackName: string, services: ServiceDef[]): string {
     if (ports.length) {
       lines.push(`    ports:`);
       ports.forEach((p) => {
-        const host = p.host ? `${p.host}:` : "";
+        const host = p.host ? `127.0.0.1:${p.host}:` : "";
         lines.push(`      - "${host}${p.container}/${p.protocol}"`);
       });
     }
