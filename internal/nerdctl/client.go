@@ -400,6 +400,9 @@ func (c *Client) composeDir(stackName string) (string, error) {
 }
 
 // ComposeUp writes the compose YAML and runs nerdctl compose up -d.
+// If spec.ResolvedEnv is non-empty (secrets resolved at placement time), a
+// .env file is written alongside the compose file so nerdctl compose picks
+// them up automatically.
 func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStackSpec) error {
 	if err := validateName(spec.Name); err != nil {
 		return err
@@ -420,6 +423,13 @@ func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStac
 	composeFile := filepath.Join(dir, "docker-compose.yml")
 	if err := os.WriteFile(composeFile, []byte(spec.ComposeYAML), 0o600); err != nil {
 		return fmt.Errorf("write compose file: %w", err)
+	}
+	if len(spec.ResolvedEnv) > 0 {
+		envContent := strings.Join(spec.ResolvedEnv, "\n") + "\n"
+		envFile := filepath.Join(dir, ".env")
+		if err := os.WriteFile(envFile, []byte(envContent), 0o600); err != nil {
+			return fmt.Errorf("write env file: %w", err)
+		}
 	}
 	_, err = c.run(ctx, "compose", "-f", composeFile, "--project-name", spec.Name, "up", "-d")
 	return err

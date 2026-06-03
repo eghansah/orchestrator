@@ -38,19 +38,22 @@ const (
 )
 
 type ContainerSpec struct {
-	Name      string
-	Image     string
-	Command   []string
-	Env       []string // KEY=VALUE pairs
-	Ports     []PortMapping
-	Volumes   []VolumeMount
-	Labels    map[string]string
-	Namespace string // nerdctl namespace; defaults to "orchestrator"
+	Name       string
+	Image      string
+	Command    []string
+	Env        []string          // KEY=VALUE pairs
+	Ports      []PortMapping
+	Volumes    []VolumeMount
+	Labels     map[string]string
+	Namespace  string            // nerdctl namespace; defaults to "orchestrator"
+	SecretRefs map[string]string // env_var_name → secret_name; resolved at placement
 }
 
 type ComposeStackSpec struct {
 	Name        string
-	ComposeYAML string // inline compose file content
+	ComposeYAML string            // inline compose file content
+	SecretRefs  map[string]string // env_var_name → secret_name; resolved at placement
+	ResolvedEnv []string          // KEY=VALUE pairs injected from secrets at placement; not persisted in Raft
 }
 
 type PortMapping struct {
@@ -160,6 +163,16 @@ type Registry struct {
 	Username  string // empty for unauthenticated registries
 	Password  string // stored in Raft, same pattern as Domain.TLSKey
 	CreatedAt time.Time
+}
+
+// Secret is a named encrypted value stored in cluster state. The EncryptedValue
+// field holds AES-256-GCM ciphertext; the plaintext is only materialised on the
+// leader at placement time and injected into the container's environment.
+type Secret struct {
+	ID             string
+	Name           string    // unique cluster-wide label
+	EncryptedValue []byte    // AES-256-GCM ciphertext produced by pkg/crypto
+	CreatedAt      time.Time
 }
 
 // WorkloadTemplate is a saved workload definition that can be redeployed.

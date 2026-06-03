@@ -37,6 +37,7 @@ import (
 	"github.com/eghansah/orchestrator/internal/service"
 	"github.com/eghansah/orchestrator/internal/tlsutil"
 	"github.com/eghansah/orchestrator/internal/webui"
+	"github.com/eghansah/orchestrator/pkg/crypto"
 	"github.com/eghansah/orchestrator/pkg/types"
 )
 
@@ -191,7 +192,8 @@ func main() {
 		joinToken:  cfg.joinToken,
 		ownCertDER: ownCertDER,
 	}
-	ctrl := control.New(peer, cfg.nodeID, cfg.grpcAddr, tlsCert)
+	secretsKey := crypto.DeriveKey(cfg.joinToken)
+	ctrl := control.New(peer, cfg.nodeID, cfg.grpcAddr, tlsCert, secretsKey)
 
 	// 5b. Web console (optional) ----------------------------------------------
 	if cfg.webAddr != "" {
@@ -203,7 +205,7 @@ func main() {
 			BaseDN:         cfg.ldapBaseDN,
 			UserFilter:     cfg.ldapUserFilter,
 			GroupDN:        cfg.ldapGroupDN,
-		})
+		}, secretsKey)
 		httpSrv := &http.Server{Addr: cfg.webAddr, Handler: webSrv.Handler()}
 		go func() {
 			slog.Info("web console listening", "addr", cfg.webAddr)

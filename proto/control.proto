@@ -48,6 +48,15 @@ service ControlService {
 
   // ListService returns all services.
   rpc ListService(ListServiceRequest) returns (ListServiceResponse);
+
+  // CreateSecret stores a new named secret (value encrypted before Raft).
+  rpc CreateSecret(CreateSecretRequest) returns (CreateSecretResponse);
+
+  // DeleteSecret removes a named secret.
+  rpc DeleteSecret(DeleteSecretRequest) returns (DeleteSecretResponse);
+
+  // ListSecrets returns all secret metadata (never the encrypted or plaintext values).
+  rpc ListSecrets(ListSecretsRequest) returns (ListSecretsResponse);
 }
 
 message SubmitContainerRequest {
@@ -149,4 +158,30 @@ message ListServiceRequest {}
 
 message ListServiceResponse {
   repeated Service services = 1;
+}
+
+message CreateSecretRequest {
+  string name  = 1; // unique cluster-wide label
+  string value = 2; // plaintext; encrypted by the server before Raft
+}
+
+message CreateSecretResponse {
+  string secret_id = 1;
+  bool   accepted  = 2;
+  string reason    = 3;
+}
+
+message DeleteSecretRequest {
+  string secret_id = 1;
+}
+
+message DeleteSecretResponse {
+  bool   accepted = 1;
+  string reason   = 2;
+}
+
+message ListSecretsRequest {}
+
+message ListSecretsResponse {
+  repeated Secret secrets = 1; // metadata only — no values
 }

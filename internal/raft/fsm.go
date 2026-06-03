@@ -30,6 +30,8 @@ const (
 	cmdRemoveRegistry                // remove a container registry
 	cmdApplyTemplate                 // add or update a workload template
 	cmdRemoveTemplate                // remove a workload template
+	cmdApplySecret                   // add or update a secret
+	cmdRemoveSecret                  // remove a secret
 )
 
 type command struct {
@@ -52,10 +54,11 @@ type ClusterState struct {
 	Services        map[string]types.Service     `json:"services"`
 	Domains         map[string]types.Domain      `json:"domains"`
 	Users           map[string]types.User        `json:"users"`
-	Registries      map[string]types.Registry        `json:"registries"`
+	Registries      map[string]types.Registry         `json:"registries"`
 	Templates       map[string]types.WorkloadTemplate `json:"templates"`
-	NextPort        uint32                       `json:"next_port"`         // container port pool
-	NextServicePort uint32                       `json:"next_service_port"` // service port pool
+	Secrets         map[string]types.Secret           `json:"secrets"`
+	NextPort        uint32                            `json:"next_port"`         // container port pool
+	NextServicePort uint32                            `json:"next_service_port"` // service port pool
 }
 
 func newClusterState() ClusterState {
@@ -70,6 +73,7 @@ func newClusterState() ClusterState {
 		NextPort:        portPoolStart,
 		NextServicePort: svcPortPoolStart,
 		Templates:       make(map[string]types.WorkloadTemplate),
+		Secrets:         make(map[string]types.Secret),
 	}
 }
 
@@ -312,6 +316,28 @@ func (f *fsm) Apply(l *raft.Log) any {
 			return err
 		}
 		delete(f.state.Templates, id)
+
+	case cmdApplySecret:
+		var s types.Secret
+		if err := json.Unmarshal(cmd.Data, &s); err != nil {
+			return err
+		}
+		if f.state.Secrets == nil {
+			f.state.Secrets = make(map[string]types.Secret)
+		}
+		for _, existing := range f.state.Secrets {
+			if existing.Name == s.Name && existing.ID != s.ID {
+				return fmt.Errorf("secret name %q already exists", s.Name)
+			}
+		}
+		f.state.Secrets[s.ID] = s
+
+	case cmdRemoveSecret:
+		var id string
+		if err := json.Unmarshal(cmd.Data, &id); err != nil {
+			return err
+		}
+		delete(f.state.Secrets, id)
 	}
 	return nil
 }

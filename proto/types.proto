@@ -15,11 +15,21 @@ message ContainerSpec {
   repeated VolumeMount volumes = 6;
   map<string, string> labels = 7;
   string namespace   = 8; // nerdctl namespace; defaults to "orchestrator"
+  map<string, string> secret_refs = 9; // env_var_name → secret_name; resolved at placement
 }
 
 message ComposeStackSpec {
   string name         = 1;
   string compose_yaml = 2; // inline compose file content
+  map<string, string> secret_refs = 3; // env_var_name → secret_name; resolved at placement
+}
+
+// Secret holds metadata for a named cluster secret. The encrypted value is
+// stored server-side only; it is never returned in list or get responses.
+message Secret {
+  string id         = 1;
+  string name       = 2;
+  int64  created_at = 3; // unix seconds
 }
 
 message PortMapping {

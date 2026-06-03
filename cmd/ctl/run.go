@@ -19,11 +19,12 @@ func (sl *stringList) Set(v string) error    { *sl = append(*sl, v); return nil 
 func runContainerCmd(server string, args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	name := fs.String("name", "", "container name (required)")
-	var ports, envs, volumes, labels stringList
+	var ports, envs, volumes, labels, secrets stringList
 	fs.Var(&ports, "p", "container port to expose `PORT[/PROTO]` (repeatable); host port is auto-assigned")
 	fs.Var(&envs, "e", "environment variable `KEY=VALUE` (repeatable)")
 	fs.Var(&volumes, "v", "volume `SOURCE:TARGET[:ro]` (repeatable)")
 	fs.Var(&labels, "l", "label `KEY=VALUE` (repeatable)")
+	fs.Var(&secrets, "secret", "inject secret as env var `ENV_VAR=secret_name` (repeatable)")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: ctl run --name NAME [flags] IMAGE [COMMAND...]")
 		fs.PrintDefaults()
@@ -81,13 +82,14 @@ func runContainerCmd(server string, args []string) {
 
 	resp, err := client.SubmitContainer(c, &gen.SubmitContainerRequest{
 		Spec: &gen.ContainerSpec{
-			Name:    *name,
-			Image:   image,
-			Command: command,
-			Env:     []string(envs),
-			Ports:   portMappings,
-			Volumes: parseVolumes(volumes),
-			Labels:  parseLabels(labels),
+			Name:       *name,
+			Image:      image,
+			Command:    command,
+			Env:        []string(envs),
+			Ports:      portMappings,
+			Volumes:    parseVolumes(volumes),
+			Labels:     parseLabels(labels),
+			SecretRefs: parseSecretRefs(secrets),
 		},
 	})
 	if err != nil {
@@ -103,8 +105,10 @@ func runStackCmd(server string, args []string) {
 	fs := flag.NewFlagSet("stack", flag.ExitOnError)
 	name := fs.String("name", "", "stack name (required)")
 	file := fs.String("f", "", "path to compose file (required)")
+	var secrets stringList
+	fs.Var(&secrets, "secret", "inject secret as env var `ENV_VAR=secret_name` (repeatable)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: ctl stack --name NAME -f FILE")
+		fmt.Fprintln(os.Stderr, "Usage: ctl stack --name NAME -f FILE [--secret ENV_VAR=secret_name]")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
@@ -129,6 +133,7 @@ func runStackCmd(server string, args []string) {
 		Spec: &gen.ComposeStackSpec{
 			Name:        *name,
 			ComposeYaml: string(data),
+			SecretRefs:  parseSecretRefs(secrets),
 		},
 	})
 	if err != nil {
@@ -194,6 +199,22 @@ func parseLabels(labels []string) map[string]string {
 	for _, kv := range labels {
 		if k, v, ok := strings.Cut(kv, "="); ok {
 			m[k] = v
+		}
+	}
+	return m
+}
+
+// parseSecretRefs converts "ENV_VAR=secret_name" entries into a map.
+func parseSecretRefs(refs []string) map[string]string {
+	if len(refs) == 0 {
+		return nil
+	}
+	m := make(map[string]string, len(refs))
+	for _, kv := range refs {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			m[k] = v
+		} else {
+			die("invalid --secret %q: expected ENV_VAR=secret_name", kv)
 		}
 	}
 	return m

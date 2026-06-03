@@ -15,6 +15,7 @@ import (
 	gen "github.com/eghansah/orchestrator/internal/grpc/gen"
 	internraft "github.com/eghansah/orchestrator/internal/raft"
 	"github.com/eghansah/orchestrator/internal/tlsutil"
+	"github.com/eghansah/orchestrator/pkg/crypto"
 	"github.com/eghansah/orchestrator/pkg/types"
 )
 
@@ -22,14 +23,15 @@ import (
 // to be the current Raft leader; reads are served from local FSM state.
 type Server struct {
 	gen.UnimplementedControlServiceServer
-	peer     *internraft.Peer
-	nodeID   string
-	grpcAddr string // this node's own gRPC address
-	ownCert  tls.Certificate
+	peer        *internraft.Peer
+	nodeID      string
+	grpcAddr    string // this node's own gRPC address
+	ownCert     tls.Certificate
+	secretsKey  []byte // AES-256 key derived from cluster join-token
 }
 
-func New(peer *internraft.Peer, nodeID, grpcAddr string, ownCert tls.Certificate) *Server {
-	return &Server{peer: peer, nodeID: nodeID, grpcAddr: grpcAddr, ownCert: ownCert}
+func New(peer *internraft.Peer, nodeID, grpcAddr string, ownCert tls.Certificate, secretsKey []byte) *Server {
+	return &Server{peer: peer, nodeID: nodeID, grpcAddr: grpcAddr, ownCert: ownCert, secretsKey: secretsKey}
 }
 
 func newID() string {
@@ -106,7 +108,16 @@ func (s *Server) scheduleAndPlace(ctx context.Context, wl types.Workload) (*gen.
 		wl = committed
 	}
 
-	if err := s.placeOnNode(ctx, nodeAddr, nodeCert, wl); err != nil {
+	// Build a placement copy with secret refs resolved into env vars. The
+	// original workload in Raft retains only the refs, never the values.
+	placed, err := s.resolveSecrets(wl)
+	if err != nil {
+		wl.Phase = types.PhaseFailed
+		_ = s.peer.ApplyWorkload(wl)
+		return &gen.SubmitResponse{Accepted: false, Reason: "resolve secrets: " + err.Error()}, nil
+	}
+
+	if err := s.placeOnNode(ctx, nodeAddr, nodeCert, placed); err != nil {
 		// Mark failed in Raft — the agent never ran it.
 		wl.Phase = types.PhaseFailed
 		_ = s.peer.ApplyWorkload(wl)
@@ -116,6 +127,58 @@ func (s *Server) scheduleAndPlace(ctx context.Context, wl types.Workload) (*gen.
 	wl.Phase = types.PhaseRunning
 	_ = s.peer.ApplyWorkload(wl)
 	return &gen.SubmitResponse{WorkloadId: wl.ID, Accepted: true}, nil
+}
+
+// resolveSecrets returns a shallow copy of wl with SecretRefs resolved into
+// Env entries. The encrypted values are decrypted using s.secretsKey.
+func (s *Server) resolveSecrets(wl types.Workload) (types.Workload, error) {
+	state := s.peer.State()
+
+	resolveRefs := func(refs map[string]string, env []string) ([]string, error) {
+		if len(refs) == 0 {
+			return env, nil
+		}
+		out := make([]string, len(env))
+		copy(out, env)
+		for envVar, secretName := range refs {
+			var found *types.Secret
+			for _, sec := range state.Secrets {
+				if sec.Name == secretName {
+					found = &sec
+					break
+				}
+			}
+			if found == nil {
+				return nil, fmt.Errorf("secret %q not found", secretName)
+			}
+			plaintext, err := crypto.Decrypt(s.secretsKey, found.EncryptedValue)
+			if err != nil {
+				return nil, fmt.Errorf("decrypt secret %q: %w", secretName, err)
+			}
+			out = append(out, envVar+"="+string(plaintext))
+		}
+		return out, nil
+	}
+
+	if wl.Container != nil {
+		specCopy := *wl.Container
+		resolved, err := resolveRefs(specCopy.SecretRefs, specCopy.Env)
+		if err != nil {
+			return wl, err
+		}
+		specCopy.Env = resolved
+		wl.Container = &specCopy
+	}
+	if wl.Stack != nil {
+		specCopy := *wl.Stack
+		resolved, err := resolveRefs(specCopy.SecretRefs, nil)
+		if err != nil {
+			return wl, err
+		}
+		specCopy.ResolvedEnv = resolved
+		wl.Stack = &specCopy
+	}
+	return wl, nil
 }
 
 // ── Remove ────────────────────────────────────────────────────────────────────
@@ -354,6 +417,56 @@ func (s *Server) ListService(_ context.Context, _ *gen.ListServiceRequest) (*gen
 		svcs = append(svcs, types.ServiceToProto(svc))
 	}
 	return &gen.ListServiceResponse{Services: svcs}, nil
+}
+
+// ── Secrets ───────────────────────────────────────────────────────────────────
+
+func (s *Server) CreateSecret(_ context.Context, req *gen.CreateSecretRequest) (*gen.CreateSecretResponse, error) {
+	if req.Name == "" {
+		return nil, status.Error(codes.InvalidArgument, "name is required")
+	}
+	if req.Value == "" {
+		return nil, status.Error(codes.InvalidArgument, "value is required")
+	}
+	if err := s.requireLeader(); err != nil {
+		return nil, err
+	}
+	encrypted, err := crypto.Encrypt(s.secretsKey, []byte(req.Value))
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "encrypt secret: %v", err)
+	}
+	sec := types.Secret{
+		ID:             newID(),
+		Name:           req.Name,
+		EncryptedValue: encrypted,
+		CreatedAt:      time.Now(),
+	}
+	if err := s.peer.ApplySecret(sec); err != nil {
+		return nil, status.Errorf(codes.Internal, "apply secret: %v", err)
+	}
+	return &gen.CreateSecretResponse{SecretId: sec.ID, Accepted: true}, nil
+}
+
+func (s *Server) DeleteSecret(_ context.Context, req *gen.DeleteSecretRequest) (*gen.DeleteSecretResponse, error) {
+	if req.SecretId == "" {
+		return nil, status.Error(codes.InvalidArgument, "secret_id is required")
+	}
+	if err := s.requireLeader(); err != nil {
+		return nil, err
+	}
+	if err := s.peer.RemoveSecret(req.SecretId); err != nil {
+		return nil, status.Errorf(codes.Internal, "remove secret: %v", err)
+	}
+	return &gen.DeleteSecretResponse{Accepted: true}, nil
+}
+
+func (s *Server) ListSecrets(_ context.Context, _ *gen.ListSecretsRequest) (*gen.ListSecretsResponse, error) {
+	state := s.peer.State()
+	secrets := make([]*gen.Secret, 0, len(state.Secrets))
+	for _, sec := range state.Secrets {
+		secrets = append(secrets, types.SecretToProto(sec))
+	}
+	return &gen.ListSecretsResponse{Secrets: secrets}, nil
 }
 
 func phaseIn(phase types.WorkloadPhase, phases []gen.WorkloadPhase) bool {

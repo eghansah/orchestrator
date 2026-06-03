@@ -33,6 +33,7 @@ import (
 	gen "github.com/eghansah/orchestrator/internal/grpc/gen"
 	internraft "github.com/eghansah/orchestrator/internal/raft"
 	"github.com/eghansah/orchestrator/internal/registry"
+	orcrypto "github.com/eghansah/orchestrator/pkg/crypto"
 	"github.com/eghansah/orchestrator/pkg/types"
 )
 
@@ -46,6 +47,7 @@ type Server struct {
 	prefix        string // URL path prefix, e.g. "/console" (no trailing slash, may be "")
 	disableMFA    bool   // when true, skip TOTP step and issue session on password success
 	ldap          LDAPConfig
+	secretsKey    []byte // AES-256 key for secret encryption (derived from join-token)
 
 	sessionsMu sync.RWMutex
 	sessions   map[string]time.Time // per-login token → expiry
@@ -117,7 +119,7 @@ func (s *Server) consumePendingToken(token string) (pendingMFA, bool) {
 
 // New creates a Server. prefix is an optional URL subdirectory (e.g. "/console");
 // pass "" to serve at the root. A trailing slash is stripped automatically.
-func New(peer *internraft.Peer, ctrl *control.Server, ag *agent.Agent, adminToken, webPassword, prefix string, disableMFA bool, ldapCfg LDAPConfig) *Server {
+func New(peer *internraft.Peer, ctrl *control.Server, ag *agent.Agent, adminToken, webPassword, prefix string, disableMFA bool, ldapCfg LDAPConfig, secretsKey []byte) *Server {
 	p := strings.TrimRight(prefix, "/")
 	if p != "" && !strings.HasPrefix(p, "/") {
 		p = "/" + p
@@ -134,6 +136,7 @@ func New(peer *internraft.Peer, ctrl *control.Server, ag *agent.Agent, adminToke
 		prefix:      p,
 		disableMFA:  disableMFA,
 		ldap:        ldapCfg,
+		secretsKey:  secretsKey,
 		sessions:    make(map[string]time.Time),
 		pending:     make(map[string]pendingMFA),
 	}
@@ -187,6 +190,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/registries/{id}/catalog", a(s.handleRegistryCatalog))
 	mux.Handle("GET /api/registries/{id}/tags", a(s.handleRegistryTags))
 	mux.Handle("GET /api/registries/{id}/env", a(s.handleRegistryEnv))
+	mux.Handle("GET /api/secrets", a(s.handleListSecrets))
+	mux.Handle("POST /api/secrets", a(s.handleCreateSecret))
+	mux.Handle("POST /api/secrets/{id}/delete", a(s.handleDeleteSecret))
 
 	// SPA: serve embedded dist/ with index.html fallback for client-side routing.
 	sub, _ := fs.Sub(distFS, "dist")
@@ -430,6 +436,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		ActualStacks     []actualStackJSON    `json:"actual_stacks"`
 		ContainerStats   []containerStatsJSON `json:"container_stats"`
 		Registries       []registryJSON       `json:"registries"`
+		Secrets          []secretJSON         `json:"secrets"`
 	}
 
 	allStates := s.agent.AllStates()
@@ -444,6 +451,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		ActualStacks:     []actualStackJSON{},
 		ContainerStats:   []containerStatsJSON{},
 		Registries:       []registryJSON{},
+		Secrets:          []secretJSON{},
 	}
 
 	for _, n := range state.Nodes {
@@ -530,6 +538,10 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 			Username:  r.Username,
 			CreatedAt: r.CreatedAt.Unix(),
 		})
+	}
+
+	for _, sec := range state.Secrets {
+		out.Secrets = append(out.Secrets, secretJSON{ID: sec.ID, Name: sec.Name, CreatedAt: sec.CreatedAt.Unix()})
 	}
 
 	writeJSON(w, out)
@@ -2007,4 +2019,67 @@ func workloadName(wl types.Workload) string {
 		return wl.Stack.Name
 	}
 	return ""
+}
+
+// ── Secret API handlers ────────────────────────────────────────────────────────
+
+type secretJSON struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+func newSecretID() string {
+	b := make([]byte, 8)
+	_, _ = crand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
+
+func (s *Server) handleListSecrets(w http.ResponseWriter, _ *http.Request) {
+	state := s.peer.State()
+	out := make([]secretJSON, 0, len(state.Secrets))
+	for _, sec := range state.Secrets {
+		out = append(out, secretJSON{ID: sec.ID, Name: sec.Name, CreatedAt: sec.CreatedAt.Unix()})
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" || req.Value == "" {
+		writeError(w, http.StatusBadRequest, "name and value are required")
+		return
+	}
+	encrypted, err := orcrypto.Encrypt(s.secretsKey, []byte(req.Value))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "encrypt: "+err.Error())
+		return
+	}
+	sec := types.Secret{
+		ID:             newSecretID(),
+		Name:           req.Name,
+		EncryptedValue: encrypted,
+		CreatedAt:      time.Now().UTC(),
+	}
+	if err := s.peer.ApplySecret(sec); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, secretJSON{ID: sec.ID, Name: sec.Name, CreatedAt: sec.CreatedAt.Unix()})
+}
+
+func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.peer.RemoveSecret(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"accepted": true})
 }

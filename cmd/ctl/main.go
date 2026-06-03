@@ -77,6 +77,8 @@ doneFlags:
 		ingressCmd(server, rest)
 	case "service":
 		serviceCmd(server, rest)
+	case "secret":
+		secretCmd(server, rest)
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -102,6 +104,7 @@ Commands:
   status  Show full cluster state
   ingress Manage ingress routing rules
   service Manage named service endpoints (DNS + TCP proxy)
+  secret  Manage cluster secrets
 
 Flags:
   --server HOST:PORT   orchestrator gRPC address (default: localhost:7946)

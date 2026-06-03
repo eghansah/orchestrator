@@ -66,6 +66,7 @@ export interface ClusterState {
   actual_stacks: ActualStack[];
   container_stats: ContainerStats[];
   registries: Registry[];
+  secrets: Secret[];
 }
 
 export interface MutationResult {
@@ -211,6 +212,17 @@ export interface CreateRegistryRequest {
   url: string;
   username: string;
   password: string;
+}
+
+export interface Secret {
+  id: string;
+  name: string;
+  created_at: number; // unix seconds
+}
+
+export interface CreateSecretRequest {
+  name: string;
+  value: string;
 }
 
 // ── Auth token ────────────────────────────────────────────────────────────────
@@ -374,6 +386,11 @@ export const api = {
       "GET",
       `/api/registries/${id}/env?repo=${encodeURIComponent(repo)}&tag=${encodeURIComponent(tag)}`
     ),
+  listSecrets: () => request<Secret[]>("GET", "/api/secrets"),
+  createSecret: (req: CreateSecretRequest) =>
+    request<Secret>("POST", "/api/secrets", req),
+  deleteSecret: (id: string) =>
+    request<{ accepted: boolean }>("POST", `/api/secrets/${id}/delete`),
 };
 
 // ── useClusterState hook ──────────────────────────────────────────────────────

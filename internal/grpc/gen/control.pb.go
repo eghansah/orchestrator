@@ -1130,6 +1130,294 @@ func (x *ListServiceResponse) GetServices() []*Service {
 	return nil
 }
 
+type CreateSecretRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`   // unique cluster-wide label
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"` // plaintext; encrypted by the server before Raft
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateSecretRequest) Reset() {
+	*x = CreateSecretRequest{}
+	mi := &file_control_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateSecretRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateSecretRequest) ProtoMessage() {}
+
+func (x *CreateSecretRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_control_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateSecretRequest.ProtoReflect.Descriptor instead.
+func (*CreateSecretRequest) Descriptor() ([]byte, []int) {
+	return file_control_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *CreateSecretRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateSecretRequest) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+type CreateSecretResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SecretId      string                 `protobuf:"bytes,1,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
+	Accepted      bool                   `protobuf:"varint,2,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateSecretResponse) Reset() {
+	*x = CreateSecretResponse{}
+	mi := &file_control_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateSecretResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateSecretResponse) ProtoMessage() {}
+
+func (x *CreateSecretResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_control_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateSecretResponse.ProtoReflect.Descriptor instead.
+func (*CreateSecretResponse) Descriptor() ([]byte, []int) {
+	return file_control_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *CreateSecretResponse) GetSecretId() string {
+	if x != nil {
+		return x.SecretId
+	}
+	return ""
+}
+
+func (x *CreateSecretResponse) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
+func (x *CreateSecretResponse) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type DeleteSecretRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SecretId      string                 `protobuf:"bytes,1,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteSecretRequest) Reset() {
+	*x = DeleteSecretRequest{}
+	mi := &file_control_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteSecretRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteSecretRequest) ProtoMessage() {}
+
+func (x *DeleteSecretRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_control_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteSecretRequest.ProtoReflect.Descriptor instead.
+func (*DeleteSecretRequest) Descriptor() ([]byte, []int) {
+	return file_control_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *DeleteSecretRequest) GetSecretId() string {
+	if x != nil {
+		return x.SecretId
+	}
+	return ""
+}
+
+type DeleteSecretResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Accepted      bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteSecretResponse) Reset() {
+	*x = DeleteSecretResponse{}
+	mi := &file_control_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteSecretResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteSecretResponse) ProtoMessage() {}
+
+func (x *DeleteSecretResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_control_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteSecretResponse.ProtoReflect.Descriptor instead.
+func (*DeleteSecretResponse) Descriptor() ([]byte, []int) {
+	return file_control_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *DeleteSecretResponse) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
+func (x *DeleteSecretResponse) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type ListSecretsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListSecretsRequest) Reset() {
+	*x = ListSecretsRequest{}
+	mi := &file_control_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListSecretsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListSecretsRequest) ProtoMessage() {}
+
+func (x *ListSecretsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_control_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListSecretsRequest.ProtoReflect.Descriptor instead.
+func (*ListSecretsRequest) Descriptor() ([]byte, []int) {
+	return file_control_proto_rawDescGZIP(), []int{27}
+}
+
+type ListSecretsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Secrets       []*Secret              `protobuf:"bytes,1,rep,name=secrets,proto3" json:"secrets,omitempty"` // metadata only — no values
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListSecretsResponse) Reset() {
+	*x = ListSecretsResponse{}
+	mi := &file_control_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListSecretsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListSecretsResponse) ProtoMessage() {}
+
+func (x *ListSecretsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_control_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListSecretsResponse.ProtoReflect.Descriptor instead.
+func (*ListSecretsResponse) Descriptor() ([]byte, []int) {
+	return file_control_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *ListSecretsResponse) GetSecrets() []*Secret {
+	if x != nil {
+		return x.Secrets
+	}
+	return nil
+}
+
 var File_control_proto protoreflect.FileDescriptor
 
 const file_control_proto_rawDesc = "" +
@@ -1198,7 +1486,23 @@ const file_control_proto_rawDesc = "" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x14\n" +
 	"\x12ListServiceRequest\"H\n" +
 	"\x13ListServiceResponse\x121\n" +
-	"\bservices\x18\x01 \x03(\v2\x15.orchestrator.ServiceR\bservices2\xf9\b\n" +
+	"\bservices\x18\x01 \x03(\v2\x15.orchestrator.ServiceR\bservices\"?\n" +
+	"\x13CreateSecretRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"g\n" +
+	"\x14CreateSecretResponse\x12\x1b\n" +
+	"\tsecret_id\x18\x01 \x01(\tR\bsecretId\x12\x1a\n" +
+	"\baccepted\x18\x02 \x01(\bR\baccepted\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\"2\n" +
+	"\x13DeleteSecretRequest\x12\x1b\n" +
+	"\tsecret_id\x18\x01 \x01(\tR\bsecretId\"J\n" +
+	"\x14DeleteSecretResponse\x12\x1a\n" +
+	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x14\n" +
+	"\x12ListSecretsRequest\"E\n" +
+	"\x13ListSecretsResponse\x12.\n" +
+	"\asecrets\x18\x01 \x03(\v2\x14.orchestrator.SecretR\asecrets2\xfb\n" +
+	"\n" +
 	"\x0eControlService\x12U\n" +
 	"\x0fSubmitContainer\x12$.orchestrator.SubmitContainerRequest\x1a\x1c.orchestrator.SubmitResponse\x12M\n" +
 	"\vSubmitStack\x12 .orchestrator.SubmitStackRequest\x1a\x1c.orchestrator.SubmitResponse\x12[\n" +
@@ -1212,7 +1516,10 @@ const file_control_proto_rawDesc = "" +
 	"\vListIngress\x12 .orchestrator.ListIngressRequest\x1a!.orchestrator.ListIngressResponse\x12X\n" +
 	"\rCreateService\x12\".orchestrator.CreateServiceRequest\x1a#.orchestrator.CreateServiceResponse\x12X\n" +
 	"\rDeleteService\x12\".orchestrator.DeleteServiceRequest\x1a#.orchestrator.DeleteServiceResponse\x12R\n" +
-	"\vListService\x12 .orchestrator.ListServiceRequest\x1a!.orchestrator.ListServiceResponseB4Z2github.com/eghansah/orchestrator/internal/grpc/genb\x06proto3"
+	"\vListService\x12 .orchestrator.ListServiceRequest\x1a!.orchestrator.ListServiceResponse\x12U\n" +
+	"\fCreateSecret\x12!.orchestrator.CreateSecretRequest\x1a\".orchestrator.CreateSecretResponse\x12U\n" +
+	"\fDeleteSecret\x12!.orchestrator.DeleteSecretRequest\x1a\".orchestrator.DeleteSecretResponse\x12R\n" +
+	"\vListSecrets\x12 .orchestrator.ListSecretsRequest\x1a!.orchestrator.ListSecretsResponseB4Z2github.com/eghansah/orchestrator/internal/grpc/genb\x06proto3"
 
 var (
 	file_control_proto_rawDescOnce sync.Once
@@ -1226,7 +1533,7 @@ func file_control_proto_rawDescGZIP() []byte {
 	return file_control_proto_rawDescData
 }
 
-var file_control_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_control_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_control_proto_goTypes = []any{
 	(*SubmitContainerRequest)(nil),  // 0: orchestrator.SubmitContainerRequest
 	(*SubmitStackRequest)(nil),      // 1: orchestrator.SubmitStackRequest
@@ -1251,57 +1558,71 @@ var file_control_proto_goTypes = []any{
 	(*DeleteServiceResponse)(nil),   // 20: orchestrator.DeleteServiceResponse
 	(*ListServiceRequest)(nil),      // 21: orchestrator.ListServiceRequest
 	(*ListServiceResponse)(nil),     // 22: orchestrator.ListServiceResponse
-	(*ContainerSpec)(nil),           // 23: orchestrator.ContainerSpec
-	(*ComposeStackSpec)(nil),        // 24: orchestrator.ComposeStackSpec
-	(WorkloadPhase)(0),              // 25: orchestrator.WorkloadPhase
-	(*Workload)(nil),                // 26: orchestrator.Workload
-	(*Node)(nil),                    // 27: orchestrator.Node
-	(*IngressRule)(nil),             // 28: orchestrator.IngressRule
-	(*Service)(nil),                 // 29: orchestrator.Service
-	(*RemoveWorkloadRequest)(nil),   // 30: orchestrator.RemoveWorkloadRequest
-	(*RemoveWorkloadResponse)(nil),  // 31: orchestrator.RemoveWorkloadResponse
+	(*CreateSecretRequest)(nil),     // 23: orchestrator.CreateSecretRequest
+	(*CreateSecretResponse)(nil),    // 24: orchestrator.CreateSecretResponse
+	(*DeleteSecretRequest)(nil),     // 25: orchestrator.DeleteSecretRequest
+	(*DeleteSecretResponse)(nil),    // 26: orchestrator.DeleteSecretResponse
+	(*ListSecretsRequest)(nil),      // 27: orchestrator.ListSecretsRequest
+	(*ListSecretsResponse)(nil),     // 28: orchestrator.ListSecretsResponse
+	(*ContainerSpec)(nil),           // 29: orchestrator.ContainerSpec
+	(*ComposeStackSpec)(nil),        // 30: orchestrator.ComposeStackSpec
+	(WorkloadPhase)(0),              // 31: orchestrator.WorkloadPhase
+	(*Workload)(nil),                // 32: orchestrator.Workload
+	(*Node)(nil),                    // 33: orchestrator.Node
+	(*IngressRule)(nil),             // 34: orchestrator.IngressRule
+	(*Service)(nil),                 // 35: orchestrator.Service
+	(*Secret)(nil),                  // 36: orchestrator.Secret
+	(*RemoveWorkloadRequest)(nil),   // 37: orchestrator.RemoveWorkloadRequest
+	(*RemoveWorkloadResponse)(nil),  // 38: orchestrator.RemoveWorkloadResponse
 }
 var file_control_proto_depIdxs = []int32{
-	23, // 0: orchestrator.SubmitContainerRequest.spec:type_name -> orchestrator.ContainerSpec
-	24, // 1: orchestrator.SubmitStackRequest.spec:type_name -> orchestrator.ComposeStackSpec
-	25, // 2: orchestrator.ListWorkloadsRequest.phases:type_name -> orchestrator.WorkloadPhase
-	26, // 3: orchestrator.ListWorkloadsResponse.workloads:type_name -> orchestrator.Workload
-	27, // 4: orchestrator.ListNodesResponse.nodes:type_name -> orchestrator.Node
-	27, // 5: orchestrator.GetClusterStateResponse.nodes:type_name -> orchestrator.Node
-	26, // 6: orchestrator.GetClusterStateResponse.workloads:type_name -> orchestrator.Workload
-	28, // 7: orchestrator.ListIngressResponse.rules:type_name -> orchestrator.IngressRule
-	29, // 8: orchestrator.ListServiceResponse.services:type_name -> orchestrator.Service
-	0,  // 9: orchestrator.ControlService.SubmitContainer:input_type -> orchestrator.SubmitContainerRequest
-	1,  // 10: orchestrator.ControlService.SubmitStack:input_type -> orchestrator.SubmitStackRequest
-	30, // 11: orchestrator.ControlService.RemoveWorkload:input_type -> orchestrator.RemoveWorkloadRequest
-	3,  // 12: orchestrator.ControlService.ListWorkloads:input_type -> orchestrator.ListWorkloadsRequest
-	5,  // 13: orchestrator.ControlService.ListNodes:input_type -> orchestrator.ListNodesRequest
-	7,  // 14: orchestrator.ControlService.DrainNode:input_type -> orchestrator.DrainNodeRequest
-	9,  // 15: orchestrator.ControlService.GetClusterState:input_type -> orchestrator.GetClusterStateRequest
-	11, // 16: orchestrator.ControlService.CreateIngress:input_type -> orchestrator.CreateIngressRequest
-	13, // 17: orchestrator.ControlService.DeleteIngress:input_type -> orchestrator.DeleteIngressRequest
-	15, // 18: orchestrator.ControlService.ListIngress:input_type -> orchestrator.ListIngressRequest
-	17, // 19: orchestrator.ControlService.CreateService:input_type -> orchestrator.CreateServiceRequest
-	19, // 20: orchestrator.ControlService.DeleteService:input_type -> orchestrator.DeleteServiceRequest
-	21, // 21: orchestrator.ControlService.ListService:input_type -> orchestrator.ListServiceRequest
-	2,  // 22: orchestrator.ControlService.SubmitContainer:output_type -> orchestrator.SubmitResponse
-	2,  // 23: orchestrator.ControlService.SubmitStack:output_type -> orchestrator.SubmitResponse
-	31, // 24: orchestrator.ControlService.RemoveWorkload:output_type -> orchestrator.RemoveWorkloadResponse
-	4,  // 25: orchestrator.ControlService.ListWorkloads:output_type -> orchestrator.ListWorkloadsResponse
-	6,  // 26: orchestrator.ControlService.ListNodes:output_type -> orchestrator.ListNodesResponse
-	8,  // 27: orchestrator.ControlService.DrainNode:output_type -> orchestrator.DrainNodeResponse
-	10, // 28: orchestrator.ControlService.GetClusterState:output_type -> orchestrator.GetClusterStateResponse
-	12, // 29: orchestrator.ControlService.CreateIngress:output_type -> orchestrator.CreateIngressResponse
-	14, // 30: orchestrator.ControlService.DeleteIngress:output_type -> orchestrator.DeleteIngressResponse
-	16, // 31: orchestrator.ControlService.ListIngress:output_type -> orchestrator.ListIngressResponse
-	18, // 32: orchestrator.ControlService.CreateService:output_type -> orchestrator.CreateServiceResponse
-	20, // 33: orchestrator.ControlService.DeleteService:output_type -> orchestrator.DeleteServiceResponse
-	22, // 34: orchestrator.ControlService.ListService:output_type -> orchestrator.ListServiceResponse
-	22, // [22:35] is the sub-list for method output_type
-	9,  // [9:22] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	29, // 0: orchestrator.SubmitContainerRequest.spec:type_name -> orchestrator.ContainerSpec
+	30, // 1: orchestrator.SubmitStackRequest.spec:type_name -> orchestrator.ComposeStackSpec
+	31, // 2: orchestrator.ListWorkloadsRequest.phases:type_name -> orchestrator.WorkloadPhase
+	32, // 3: orchestrator.ListWorkloadsResponse.workloads:type_name -> orchestrator.Workload
+	33, // 4: orchestrator.ListNodesResponse.nodes:type_name -> orchestrator.Node
+	33, // 5: orchestrator.GetClusterStateResponse.nodes:type_name -> orchestrator.Node
+	32, // 6: orchestrator.GetClusterStateResponse.workloads:type_name -> orchestrator.Workload
+	34, // 7: orchestrator.ListIngressResponse.rules:type_name -> orchestrator.IngressRule
+	35, // 8: orchestrator.ListServiceResponse.services:type_name -> orchestrator.Service
+	36, // 9: orchestrator.ListSecretsResponse.secrets:type_name -> orchestrator.Secret
+	0,  // 10: orchestrator.ControlService.SubmitContainer:input_type -> orchestrator.SubmitContainerRequest
+	1,  // 11: orchestrator.ControlService.SubmitStack:input_type -> orchestrator.SubmitStackRequest
+	37, // 12: orchestrator.ControlService.RemoveWorkload:input_type -> orchestrator.RemoveWorkloadRequest
+	3,  // 13: orchestrator.ControlService.ListWorkloads:input_type -> orchestrator.ListWorkloadsRequest
+	5,  // 14: orchestrator.ControlService.ListNodes:input_type -> orchestrator.ListNodesRequest
+	7,  // 15: orchestrator.ControlService.DrainNode:input_type -> orchestrator.DrainNodeRequest
+	9,  // 16: orchestrator.ControlService.GetClusterState:input_type -> orchestrator.GetClusterStateRequest
+	11, // 17: orchestrator.ControlService.CreateIngress:input_type -> orchestrator.CreateIngressRequest
+	13, // 18: orchestrator.ControlService.DeleteIngress:input_type -> orchestrator.DeleteIngressRequest
+	15, // 19: orchestrator.ControlService.ListIngress:input_type -> orchestrator.ListIngressRequest
+	17, // 20: orchestrator.ControlService.CreateService:input_type -> orchestrator.CreateServiceRequest
+	19, // 21: orchestrator.ControlService.DeleteService:input_type -> orchestrator.DeleteServiceRequest
+	21, // 22: orchestrator.ControlService.ListService:input_type -> orchestrator.ListServiceRequest
+	23, // 23: orchestrator.ControlService.CreateSecret:input_type -> orchestrator.CreateSecretRequest
+	25, // 24: orchestrator.ControlService.DeleteSecret:input_type -> orchestrator.DeleteSecretRequest
+	27, // 25: orchestrator.ControlService.ListSecrets:input_type -> orchestrator.ListSecretsRequest
+	2,  // 26: orchestrator.ControlService.SubmitContainer:output_type -> orchestrator.SubmitResponse
+	2,  // 27: orchestrator.ControlService.SubmitStack:output_type -> orchestrator.SubmitResponse
+	38, // 28: orchestrator.ControlService.RemoveWorkload:output_type -> orchestrator.RemoveWorkloadResponse
+	4,  // 29: orchestrator.ControlService.ListWorkloads:output_type -> orchestrator.ListWorkloadsResponse
+	6,  // 30: orchestrator.ControlService.ListNodes:output_type -> orchestrator.ListNodesResponse
+	8,  // 31: orchestrator.ControlService.DrainNode:output_type -> orchestrator.DrainNodeResponse
+	10, // 32: orchestrator.ControlService.GetClusterState:output_type -> orchestrator.GetClusterStateResponse
+	12, // 33: orchestrator.ControlService.CreateIngress:output_type -> orchestrator.CreateIngressResponse
+	14, // 34: orchestrator.ControlService.DeleteIngress:output_type -> orchestrator.DeleteIngressResponse
+	16, // 35: orchestrator.ControlService.ListIngress:output_type -> orchestrator.ListIngressResponse
+	18, // 36: orchestrator.ControlService.CreateService:output_type -> orchestrator.CreateServiceResponse
+	20, // 37: orchestrator.ControlService.DeleteService:output_type -> orchestrator.DeleteServiceResponse
+	22, // 38: orchestrator.ControlService.ListService:output_type -> orchestrator.ListServiceResponse
+	24, // 39: orchestrator.ControlService.CreateSecret:output_type -> orchestrator.CreateSecretResponse
+	26, // 40: orchestrator.ControlService.DeleteSecret:output_type -> orchestrator.DeleteSecretResponse
+	28, // 41: orchestrator.ControlService.ListSecrets:output_type -> orchestrator.ListSecretsResponse
+	26, // [26:42] is the sub-list for method output_type
+	10, // [10:26] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_control_proto_init() }
@@ -1316,7 +1637,7 @@ func file_control_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_control_proto_rawDesc), len(file_control_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   23,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

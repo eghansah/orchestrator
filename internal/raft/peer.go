@@ -193,6 +193,16 @@ func (p *Peer) RemoveTemplate(id string) error {
 	return p.apply(cmdRemoveTemplate, id)
 }
 
+// ApplySecret writes an encrypted secret into the Raft log.
+func (p *Peer) ApplySecret(s types.Secret) error {
+	return p.apply(cmdApplySecret, s)
+}
+
+// RemoveSecret removes a secret from the Raft log.
+func (p *Peer) RemoveSecret(id string) error {
+	return p.apply(cmdRemoveSecret, id)
+}
+
 func (p *Peer) apply(t cmdType, payload any) error {
 	if !p.IsLeader() {
 		return fmt.Errorf("not the leader")

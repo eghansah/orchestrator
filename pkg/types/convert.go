@@ -69,14 +69,15 @@ func ContainerSpecToProto(s ContainerSpec) *gen.ContainerSpec {
 		vols[i] = &gen.VolumeMount{Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly}
 	}
 	return &gen.ContainerSpec{
-		Name:      s.Name,
-		Image:     s.Image,
-		Command:   s.Command,
-		Env:       s.Env,
-		Ports:     ports,
-		Volumes:   vols,
-		Labels:    s.Labels,
-		Namespace: s.Namespace,
+		Name:       s.Name,
+		Image:      s.Image,
+		Command:    s.Command,
+		Env:        s.Env,
+		Ports:      ports,
+		Volumes:    vols,
+		Labels:     s.Labels,
+		Namespace:  s.Namespace,
+		SecretRefs: s.SecretRefs,
 	}
 }
 
@@ -90,23 +91,40 @@ func ContainerSpecFromProto(ps *gen.ContainerSpec) ContainerSpec {
 		vols[i] = VolumeMount{Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly}
 	}
 	return ContainerSpec{
-		Name:      ps.Name,
-		Image:     ps.Image,
-		Command:   ps.Command,
-		Env:       ps.Env,
-		Ports:     ports,
-		Volumes:   vols,
-		Labels:    ps.Labels,
-		Namespace: ps.Namespace,
+		Name:       ps.Name,
+		Image:      ps.Image,
+		Command:    ps.Command,
+		Env:        ps.Env,
+		Ports:      ports,
+		Volumes:    vols,
+		Labels:     ps.Labels,
+		Namespace:  ps.Namespace,
+		SecretRefs: ps.SecretRefs,
 	}
 }
 
 func ComposeStackSpecToProto(s ComposeStackSpec) *gen.ComposeStackSpec {
-	return &gen.ComposeStackSpec{Name: s.Name, ComposeYaml: s.ComposeYAML}
+	return &gen.ComposeStackSpec{Name: s.Name, ComposeYaml: s.ComposeYAML, SecretRefs: s.SecretRefs}
 }
 
 func ComposeStackSpecFromProto(ps *gen.ComposeStackSpec) ComposeStackSpec {
-	return ComposeStackSpec{Name: ps.Name, ComposeYAML: ps.ComposeYaml}
+	return ComposeStackSpec{Name: ps.Name, ComposeYAML: ps.ComposeYaml, SecretRefs: ps.SecretRefs}
+}
+
+func SecretToProto(s Secret) *gen.Secret {
+	return &gen.Secret{
+		Id:        s.ID,
+		Name:      s.Name,
+		CreatedAt: s.CreatedAt.Unix(),
+	}
+}
+
+func SecretFromProto(ps *gen.Secret) Secret {
+	return Secret{
+		ID:        ps.Id,
+		Name:      ps.Name,
+		CreatedAt: time.Unix(ps.CreatedAt, 0),
+	}
 }
 
 func NodeToProto(n Node) *gen.Node {

@@ -32,6 +32,9 @@ const (
 	ControlService_CreateService_FullMethodName   = "/orchestrator.ControlService/CreateService"
 	ControlService_DeleteService_FullMethodName   = "/orchestrator.ControlService/DeleteService"
 	ControlService_ListService_FullMethodName     = "/orchestrator.ControlService/ListService"
+	ControlService_CreateSecret_FullMethodName    = "/orchestrator.ControlService/CreateSecret"
+	ControlService_DeleteSecret_FullMethodName    = "/orchestrator.ControlService/DeleteSecret"
+	ControlService_ListSecrets_FullMethodName     = "/orchestrator.ControlService/ListSecrets"
 )
 
 // ControlServiceClient is the client API for ControlService service.
@@ -68,6 +71,12 @@ type ControlServiceClient interface {
 	DeleteService(ctx context.Context, in *DeleteServiceRequest, opts ...grpc.CallOption) (*DeleteServiceResponse, error)
 	// ListService returns all services.
 	ListService(ctx context.Context, in *ListServiceRequest, opts ...grpc.CallOption) (*ListServiceResponse, error)
+	// CreateSecret stores a new named secret (value encrypted before Raft).
+	CreateSecret(ctx context.Context, in *CreateSecretRequest, opts ...grpc.CallOption) (*CreateSecretResponse, error)
+	// DeleteSecret removes a named secret.
+	DeleteSecret(ctx context.Context, in *DeleteSecretRequest, opts ...grpc.CallOption) (*DeleteSecretResponse, error)
+	// ListSecrets returns all secret metadata (never the encrypted or plaintext values).
+	ListSecrets(ctx context.Context, in *ListSecretsRequest, opts ...grpc.CallOption) (*ListSecretsResponse, error)
 }
 
 type controlServiceClient struct {
@@ -208,6 +217,36 @@ func (c *controlServiceClient) ListService(ctx context.Context, in *ListServiceR
 	return out, nil
 }
 
+func (c *controlServiceClient) CreateSecret(ctx context.Context, in *CreateSecretRequest, opts ...grpc.CallOption) (*CreateSecretResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateSecretResponse)
+	err := c.cc.Invoke(ctx, ControlService_CreateSecret_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlServiceClient) DeleteSecret(ctx context.Context, in *DeleteSecretRequest, opts ...grpc.CallOption) (*DeleteSecretResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteSecretResponse)
+	err := c.cc.Invoke(ctx, ControlService_DeleteSecret_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlServiceClient) ListSecrets(ctx context.Context, in *ListSecretsRequest, opts ...grpc.CallOption) (*ListSecretsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSecretsResponse)
+	err := c.cc.Invoke(ctx, ControlService_ListSecrets_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ControlServiceServer is the server API for ControlService service.
 // All implementations must embed UnimplementedControlServiceServer
 // for forward compatibility.
@@ -242,6 +281,12 @@ type ControlServiceServer interface {
 	DeleteService(context.Context, *DeleteServiceRequest) (*DeleteServiceResponse, error)
 	// ListService returns all services.
 	ListService(context.Context, *ListServiceRequest) (*ListServiceResponse, error)
+	// CreateSecret stores a new named secret (value encrypted before Raft).
+	CreateSecret(context.Context, *CreateSecretRequest) (*CreateSecretResponse, error)
+	// DeleteSecret removes a named secret.
+	DeleteSecret(context.Context, *DeleteSecretRequest) (*DeleteSecretResponse, error)
+	// ListSecrets returns all secret metadata (never the encrypted or plaintext values).
+	ListSecrets(context.Context, *ListSecretsRequest) (*ListSecretsResponse, error)
 	mustEmbedUnimplementedControlServiceServer()
 }
 
@@ -290,6 +335,15 @@ func (UnimplementedControlServiceServer) DeleteService(context.Context, *DeleteS
 }
 func (UnimplementedControlServiceServer) ListService(context.Context, *ListServiceRequest) (*ListServiceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListService not implemented")
+}
+func (UnimplementedControlServiceServer) CreateSecret(context.Context, *CreateSecretRequest) (*CreateSecretResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateSecret not implemented")
+}
+func (UnimplementedControlServiceServer) DeleteSecret(context.Context, *DeleteSecretRequest) (*DeleteSecretResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteSecret not implemented")
+}
+func (UnimplementedControlServiceServer) ListSecrets(context.Context, *ListSecretsRequest) (*ListSecretsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListSecrets not implemented")
 }
 func (UnimplementedControlServiceServer) mustEmbedUnimplementedControlServiceServer() {}
 func (UnimplementedControlServiceServer) testEmbeddedByValue()                        {}
@@ -546,6 +600,60 @@ func _ControlService_ListService_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlService_CreateSecret_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateSecretRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).CreateSecret(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_CreateSecret_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).CreateSecret(ctx, req.(*CreateSecretRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlService_DeleteSecret_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteSecretRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).DeleteSecret(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_DeleteSecret_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).DeleteSecret(ctx, req.(*DeleteSecretRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlService_ListSecrets_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListSecretsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).ListSecrets(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_ListSecrets_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).ListSecrets(ctx, req.(*ListSecretsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ControlService_ServiceDesc is the grpc.ServiceDesc for ControlService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -604,6 +712,18 @@ var ControlService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListService",
 			Handler:    _ControlService_ListService_Handler,
+		},
+		{
+			MethodName: "CreateSecret",
+			Handler:    _ControlService_CreateSecret_Handler,
+		},
+		{
+			MethodName: "DeleteSecret",
+			Handler:    _ControlService_DeleteSecret_Handler,
+		},
+		{
+			MethodName: "ListSecrets",
+			Handler:    _ControlService_ListSecrets_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
