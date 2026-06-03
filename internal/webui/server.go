@@ -1018,7 +1018,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		req.TLSKey = key
 	}
 
-	csr, err := generateCSR(req.Name, req.TLSKey)
+	csr, err := generateCSR(req.Name, req.TLSKey, csrSubject{})
 	if err != nil {
 		slog.Warn("domain CSR generation failed", "name", req.Name, "err", err)
 	}
@@ -1088,7 +1088,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 		newCert = cert
 		newKey = key
-		if csr, err := generateCSR(newName, newKey); err == nil {
+		if csr, err := generateCSR(newName, newKey, csrSubject{}); err == nil {
 			newCSR = csr
 		} else {
 			slog.Warn("domain CSR generation failed", "name", newName, "err", err)
@@ -1099,7 +1099,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		newKey = existing.TLSKey
 	} else {
 		// Both provided — regenerate CSR from the new key.
-		if csr, err := generateCSR(newName, newKey); err == nil {
+		if csr, err := generateCSR(newName, newKey, csrSubject{}); err == nil {
 			newCSR = csr
 		} else {
 			slog.Warn("domain CSR generation failed", "name", newName, "err", err)
@@ -1155,12 +1155,19 @@ func (s *Server) handleRegenerateDomainKeys(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, "domain not found")
 		return
 	}
+	var csrDetails csrSubject
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&csrDetails); err != nil {
+			writeError(w, http.StatusBadRequest, "decode body: "+err.Error())
+			return
+		}
+	}
 	cert, key, err := generateSelfSignedCert(existing.Name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "generate cert: "+err.Error())
 		return
 	}
-	csr, err := generateCSR(existing.Name, key)
+	csr, err := generateCSR(existing.Name, key, csrDetails)
 	if err != nil {
 		slog.Warn("domain CSR generation failed", "name", existing.Name, "err", err)
 	}
@@ -1827,9 +1834,20 @@ func generateSelfSignedCert(name string) (certPEM, keyPEM string, err error) {
 	return certBuf.String(), keyBuf.String(), nil
 }
 
+// csrSubject holds the optional X.509 subject fields a user can supply when
+// generating a CSR. The Common Name is always taken from the domain name.
+type csrSubject struct {
+	Organization       string `json:"organization"`
+	OrganizationalUnit string `json:"organizational_unit"`
+	Country            string `json:"country"`
+	State              string `json:"state"`
+	Locality           string `json:"locality"`
+	EmailAddress       string `json:"email_address"`
+}
+
 // generateCSR creates a PEM-encoded certificate signing request from the
 // given PEM private key. Handles EC PRIVATE KEY, RSA PRIVATE KEY, and PKCS8.
-func generateCSR(name, keyPEM string) (string, error) {
+func generateCSR(name, keyPEM string, subj csrSubject) (string, error) {
 	block, _ := pem.Decode([]byte(keyPEM))
 	if block == nil {
 		return "", fmt.Errorf("failed to decode PEM block")
@@ -1857,9 +1875,29 @@ func generateCSR(name, keyPEM string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse key: %w", err)
 	}
+	subject := pkix.Name{CommonName: name}
+	if subj.Organization != "" {
+		subject.Organization = []string{subj.Organization}
+	}
+	if subj.OrganizationalUnit != "" {
+		subject.OrganizationalUnit = []string{subj.OrganizationalUnit}
+	}
+	if subj.Country != "" {
+		subject.Country = []string{subj.Country}
+	}
+	if subj.State != "" {
+		subject.Province = []string{subj.State}
+	}
+	if subj.Locality != "" {
+		subject.Locality = []string{subj.Locality}
+	}
 	template := &x509.CertificateRequest{
-		Subject:  pkix.Name{CommonName: name},
-		DNSNames: []string{name},
+		Subject:        subject,
+		DNSNames:       []string{name},
+		EmailAddresses: nil,
+	}
+	if subj.EmailAddress != "" {
+		template.EmailAddresses = []string{subj.EmailAddress}
 	}
 	csrDER, err := x509.CreateCertificateRequest(crand.Reader, template, privKey)
 	if err != nil {

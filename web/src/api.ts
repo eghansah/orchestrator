@@ -147,6 +147,15 @@ export interface CreateDomainRequest {
   tls_key?: string;
 }
 
+export interface CSRSubject {
+  organization?: string;
+  organizational_unit?: string;
+  country?: string;
+  state?: string;
+  locality?: string;
+  email_address?: string;
+}
+
 export interface User {
   id: string;
   username: string;
@@ -318,8 +327,8 @@ export const api = {
     request<Domain>("POST", `/api/domains/${id}/toggle`),
   deleteDomain: (id: string) =>
     request<{ accepted: boolean }>("POST", `/api/domains/${id}/delete`),
-  regenerateDomainKeys: (id: string) =>
-    request<Domain>("POST", `/api/domains/${id}/regenerate`),
+  regenerateDomainKeys: (id: string, subj?: CSRSubject) =>
+    request<Domain>("POST", `/api/domains/${id}/regenerate`, subj),
   importDomainCert: (id: string, cert: string) =>
     request<Domain>("POST", `/api/domains/${id}/import-cert`, { tls_cert: cert }),
   listUsers: () => request<User[]>("GET", "/api/users"),

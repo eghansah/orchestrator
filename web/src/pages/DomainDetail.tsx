@@ -19,10 +19,10 @@ import {
   Table,
   Textarea,
 } from "@cloudscape-design/components";
-import { api, Domain, IngressRule, Service, CreateDomainRequest } from "../api";
+import { api, Domain, IngressRule, Service, CreateDomainRequest, CSRSubject } from "../api";
 import { formatAge } from "../api";
 
-type ModalMode = "edit" | "credentials" | "import" | "add-route" | "delete-confirm";
+type ModalMode = "edit" | "credentials" | "import" | "add-route" | "delete-confirm" | "regen-csr";
 
 interface Props {
   domainId: string;
@@ -58,6 +58,7 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
   const [importCert, setImportCert] = useState("");
   const [routePathPrefix, setRoutePathPrefix] = useState("");
   const [routeServiceOption, setRouteServiceOption] = useState<SelectProps.Option | null>(null);
+  const [csrForm, setCsrForm] = useState<CSRSubject>({});
 
   function addFlash(type: FlashbarProps.Type, msg: string) {
     const id = String(Date.now());
@@ -93,6 +94,7 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
     setImportCert("");
     setRoutePathPrefix("");
     setRouteServiceOption(null);
+    setCsrForm({});
   }
 
   function openEdit() {
@@ -142,10 +144,15 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
     }
   }
 
+  function openRegenModal() {
+    setCsrForm({});
+    setMode("regen-csr");
+  }
+
   async function handleRegenerateKeys() {
     if (!domain) return;
     try {
-      const resp = await api.regenerateDomainKeys(domain.id);
+      const resp = await api.regenerateDomainKeys(domain.id, csrForm);
       setGenerated(resp);
       setMode("credentials");
       load();
@@ -209,6 +216,7 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
     mode === "edit" ? `Edit — ${domain?.name}` :
     mode === "add-route" ? "Add route" :
     mode === "delete-confirm" ? "Delete domain" :
+    mode === "regen-csr" ? "Regenerate keys — CSR details" :
     "";
 
   return (
@@ -299,7 +307,7 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
                     >
                       Import signed cert
                     </Button>
-                    <Button onClick={handleRegenerateKeys}>Regenerate keys</Button>
+                    <Button onClick={openRegenModal}>Regenerate keys</Button>
                   </SpaceBetween>
                 }
               >
@@ -403,10 +411,14 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
                 onClick={
                   mode === "import" ? handleImportCert :
                   mode === "add-route" ? handleAddRoute :
+                  mode === "regen-csr" ? handleRegenerateKeys :
                   handleUpdate
                 }
               >
-                {mode === "import" ? "Import" : mode === "add-route" ? "Add" : "Save"}
+                {mode === "import" ? "Import" :
+                 mode === "add-route" ? "Add" :
+                 mode === "regen-csr" ? "Generate" :
+                 "Save"}
               </Button>
             </SpaceBetween>
           )
@@ -513,6 +525,61 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
                   selectedOption={routeServiceOption}
                   onChange={(e) => setRouteServiceOption(e.detail.selectedOption)}
                   placeholder="Select a service"
+                />
+              </FormField>
+            </SpaceBetween>
+          </Form>
+        )}
+
+        {mode === "regen-csr" && (
+          <Form>
+            <SpaceBetween size="m">
+              <Alert type="info">
+                All fields below are optional. The domain name <strong>{domain?.name}</strong> is always used as the Common Name and DNS SAN.
+              </Alert>
+              <FormField label="Common Name (CN)" description="Read-only — taken from the domain name">
+                <Input value={domain?.name ?? ""} disabled />
+              </FormField>
+              <FormField label="Organization (O)">
+                <Input
+                  value={csrForm.organization ?? ""}
+                  onChange={(e) => setCsrForm((f) => ({ ...f, organization: e.detail.value }))}
+                  placeholder="Acme Corp"
+                />
+              </FormField>
+              <FormField label="Organizational Unit (OU)">
+                <Input
+                  value={csrForm.organizational_unit ?? ""}
+                  onChange={(e) => setCsrForm((f) => ({ ...f, organizational_unit: e.detail.value }))}
+                  placeholder="Engineering"
+                />
+              </FormField>
+              <FormField label="Country (C)" description="Two-letter ISO 3166 code, e.g. US">
+                <Input
+                  value={csrForm.country ?? ""}
+                  onChange={(e) => setCsrForm((f) => ({ ...f, country: e.detail.value }))}
+                  placeholder="US"
+                />
+              </FormField>
+              <FormField label="State / Province (ST)">
+                <Input
+                  value={csrForm.state ?? ""}
+                  onChange={(e) => setCsrForm((f) => ({ ...f, state: e.detail.value }))}
+                  placeholder="California"
+                />
+              </FormField>
+              <FormField label="Locality / City (L)">
+                <Input
+                  value={csrForm.locality ?? ""}
+                  onChange={(e) => setCsrForm((f) => ({ ...f, locality: e.detail.value }))}
+                  placeholder="San Francisco"
+                />
+              </FormField>
+              <FormField label="Email Address">
+                <Input
+                  value={csrForm.email_address ?? ""}
+                  onChange={(e) => setCsrForm((f) => ({ ...f, email_address: e.detail.value }))}
+                  placeholder="admin@example.com"
                 />
               </FormField>
             </SpaceBetween>
