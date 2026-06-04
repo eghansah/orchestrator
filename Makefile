@@ -14,28 +14,31 @@ REGISTRY_IMAGE    := internal/localregistry/images/ingressd.tar
 
 all: build
 
-build: bin/orchestrator bin/ctl bin/ingressd
+build: $(DIST)/orchestrator $(DIST)/ctl $(DIST)/ingressd $(DIST)/orchestrator-full
 
-bin/orchestrator: $(ORCHESTRATOR_SRCS)
+$(DIST)/orchestrator: $(ORCHESTRATOR_SRCS)
+	@mkdir -p $(DIST)
 	go build -ldflags "$(LDFLAGS)" -o $@ ./cmd/orchestrator
 
-# Build orchestrator with the ingressd image baked in (requires nerdctl).
-bin/orchestrator-full: $(ORCHESTRATOR_SRCS) $(REGISTRY_IMAGE)
+$(DIST)/orchestrator-full: $(ORCHESTRATOR_SRCS) $(REGISTRY_IMAGE)
+	@mkdir -p $(DIST)
 	go build -tags with_ingressd_image -ldflags "$(LDFLAGS)" -o $@ ./cmd/orchestrator
 
-bin/ctl: $(CTL_SRCS)
+$(DIST)/ctl: $(CTL_SRCS)
+	@mkdir -p $(DIST)
 	go build -ldflags "$(LDFLAGS)" -o $@ ./cmd/ctl
 
-bin/ingressd: $(INGRESSD_SRCS)
+$(DIST)/ingressd: $(INGRESSD_SRCS)
+	@mkdir -p $(DIST)
 	go build -ldflags "$(LDFLAGS)" -o $@ ./cmd/ingressd
 
 # ── Registry image ────────────────────────────────────────────────────────────
 
-# Build the ingressd registry image using pure Go (no Docker/nerdctl required).
+# Builds the ingressd container image using pure Go (no Docker/nerdctl required).
 # Requires internet access to pull haproxy:3.0-alpine on first run.
-$(REGISTRY_IMAGE): bin/ingressd $(INGRESSD_SRCS)
+$(REGISTRY_IMAGE): $(DIST)/ingressd $(INGRESSD_SRCS)
 	go run ./cmd/build-image \
-	  --binary  bin/ingressd \
+	  --binary  $(DIST)/ingressd \
 	  --output  $(REGISTRY_IMAGE) \
 	  --platform linux/amd64
 	@echo "Registry image saved to $(REGISTRY_IMAGE)"
@@ -56,10 +59,6 @@ $(DIST)/checksums.sha256: $(foreach p,$(PLATFORMS),$(DIST)/orchestrator-$(VERSIO
 	@echo ""
 	@cat $(DIST)/checksums.sha256
 
-define build-release
-GOOS=$(word 1,$(subst /, ,$(1))) GOARCH=$(word 2,$(subst /, ,$(1)))
-endef
-
 $(DIST)/orchestrator-$(VERSION)-linux-amd64.tar.gz: $(ORCHESTRATOR_SRCS) $(CTL_SRCS) $(REGISTRY_IMAGE)
 	@mkdir -p $(DIST)/tmp/orchestrator-$(VERSION)-linux-amd64
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags with_ingressd_image -ldflags "$(LDFLAGS)" \
@@ -73,7 +72,6 @@ $(DIST)/orchestrator-$(VERSION)-linux-amd64.tar.gz: $(ORCHESTRATOR_SRCS) $(CTL_S
 
 $(DIST)/orchestrator-$(VERSION)-linux-arm64.tar.gz: $(ORCHESTRATOR_SRCS) $(CTL_SRCS)
 	@mkdir -p $(DIST)/tmp/orchestrator-$(VERSION)-linux-arm64
-	# Build arm64 ingressd binary, assemble its registry image into the embed path, then build orchestrator.
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" \
 		-o $(DIST)/tmp/ingressd-arm64 ./cmd/ingressd
 	go run ./cmd/build-image \
@@ -92,4 +90,4 @@ $(DIST)/orchestrator-$(VERSION)-linux-arm64.tar.gz: $(ORCHESTRATOR_SRCS) $(CTL_S
 # ── Housekeeping ──────────────────────────────────────────────────────────────
 
 clean:
-	rm -rf bin/ $(DIST)/
+	rm -rf $(DIST)/
