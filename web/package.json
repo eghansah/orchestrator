@@ -15,7 +15,9 @@
     "@cloudscape-design/global-styles": "^1",
     "qrcode.react": "^4",
     "react": "^18",
-    "react-dom": "^18"
+    "react-dom": "^18",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/react": "^18",

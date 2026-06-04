@@ -28,6 +28,7 @@ import (
 
 	"github.com/pquerna/otp/totp"
 
+	"github.com/eghansah/orchestrator/docs"
 	"github.com/eghansah/orchestrator/internal/agent"
 	"github.com/eghansah/orchestrator/internal/control"
 	gen "github.com/eghansah/orchestrator/internal/grpc/gen"
@@ -193,6 +194,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/secrets", a(s.handleListSecrets))
 	mux.Handle("POST /api/secrets", a(s.handleCreateSecret))
 	mux.Handle("POST /api/secrets/{id}/delete", a(s.handleDeleteSecret))
+	mux.Handle("GET /api/docs/{name}", a(s.handleDocs))
 
 	// SPA: serve embedded dist/ with index.html fallback for client-side routing.
 	sub, _ := fs.Sub(distFS, "dist")
@@ -909,6 +911,29 @@ func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, resp)
+}
+
+// ── Docs handler ─────────────────────────────────────────────────────────────
+
+var allowedDocs = map[string]string{
+	"deploy":     "deploy.md",
+	"production": "production.md",
+}
+
+func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	filename, ok := allowedDocs[name]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := docs.FS.ReadFile(filename)
+	if err != nil {
+		http.Error(w, "doc not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	_, _ = w.Write(data)
 }
 
 // ── SPA handler ───────────────────────────────────────────────────────────────

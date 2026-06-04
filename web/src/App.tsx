@@ -27,23 +27,47 @@ import WorkloadDetail from "./pages/WorkloadDetail";
 import NodeDetail from "./pages/NodeDetail";
 import Containers from "./pages/Containers";
 import Templates from "./pages/Templates";
+import ServiceDetail from "./pages/ServiceDetail";
+import Docs from "./pages/Docs";
 
-type Page = "overview" | "workloads" | "containers" | "templates" | "nodes" | "ingress" | "services" | "domains" | "users" | string;
+type Page = "overview" | "workloads" | "containers" | "templates" | "nodes" | "ingress" | "services" | "domains" | "users" | "docs" | string;
 
 const NAV_ITEMS: SideNavigationProps.Item[] = [
   { type: "link", text: "Overview", href: "#overview" },
-  { type: "link", text: "Workloads", href: "#workloads" },
-  { type: "link", text: "Containers", href: "#containers" },
-  { type: "link", text: "Templates", href: "#templates" },
+  {
+    type: "section",
+    text: "Workloads",
+    defaultExpanded: true,
+    items: [
+      { type: "link", text: "Workloads", href: "#workloads" },
+      { type: "link", text: "Containers", href: "#containers" },
+      { type: "link", text: "Templates", href: "#templates" },
+      { type: "link", text: "Workflow Builder (experimental)", href: "#workflow-builder" },
+    ],
+  },
   { type: "link", text: "Nodes", href: "#nodes" },
-  { type: "link", text: "Ingress", href: "#ingress" },
-  { type: "link", text: "Domains", href: "#domains" },
-  { type: "link", text: "Services", href: "#services" },
-  { type: "link", text: "Users", href: "#users" },
-  { type: "link", text: "Registries", href: "#registries" },
-  { type: "link", text: "Secrets", href: "#secrets" },
-  { type: "link", text: "Workflow Builder", href: "#workflow-builder" },
+  {
+    type: "section",
+    text: "Networking",
+    defaultExpanded: true,
+    items: [
+      { type: "link", text: "Ingress", href: "#ingress" },
+      { type: "link", text: "Domains", href: "#domains" },
+      { type: "link", text: "Services", href: "#services" },
+    ],
+  },
+  {
+    type: "section",
+    text: "Administration",
+    defaultExpanded: true,
+    items: [
+      { type: "link", text: "Users", href: "#users" },
+      { type: "link", text: "Registries", href: "#registries" },
+      { type: "link", text: "Secrets", href: "#secrets" },
+    ],
+  },
   { type: "divider" },
+  { type: "link", text: "Documentation", href: "#docs" },
   { type: "link", text: "Sign out", href: "#signout" },
 ];
 
@@ -222,6 +246,8 @@ export default function App() {
     <NodeDetail nodeId={activePage.slice("node-".length)} {...navProps} />
   ) : activePage.startsWith("domain-") ? (
     <DomainDetail domainId={activePage.slice("domain-".length)} onNavigate={setActivePage} />
+  ) : activePage.startsWith("service-") ? (
+    <ServiceDetail serviceId={activePage.slice("service-".length)} onNavigate={setActivePage} />
   ) : ({
     overview: <Overview {...sharedProps} />,
     workloads: <Workloads {...navProps} />,
@@ -230,11 +256,12 @@ export default function App() {
     nodes: <Nodes {...navProps} />,
     ingress: <Ingress />,
     domains: <Domains onNavigate={setActivePage} />,
-    services: <Services />,
+    services: <Services onNavigate={setActivePage} />,
     users: <Users />,
     registries: <Registries state={state} loading={loading} refetch={refetch} />,
     secrets: <Secrets state={state} loading={loading} refetch={refetch} />,
     "workflow-builder": <WorkflowBuilder onNavigate={setActivePage} />,
+    docs: <Docs />,
   } as Record<string, React.ReactNode>)[activePage];
 
   return (

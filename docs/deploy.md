@@ -63,6 +63,7 @@ git clone https://github.com/eghansah/orchestrator
 cd orchestrator
 go build -o bin/orchestrator ./cmd/orchestrator
 go build -o bin/ctl         ./cmd/ctl
+go build -o bin/ingressd    ./cmd/ingressd
 ```
 
 Copy to each node:
@@ -70,8 +71,15 @@ Copy to each node:
 ```bash
 for NODE in node1 node2 node3; do
   ssh $NODE mkdir -p ~/bin
-  scp bin/orchestrator bin/ctl $NODE:~/bin/
+  scp bin/orchestrator bin/ctl bin/ingressd $NODE:~/bin/
 done
+```
+
+Build the `ingressd` container image on each node (requires nerdctl and an internet connection for the base image):
+
+```bash
+# On each node — the image embeds the ingressd binary and haproxy
+nerdctl build -t ingressd:latest -f cmd/ingressd/Dockerfile .
 ```
 
 ---
@@ -85,13 +93,17 @@ Open these ports between all cluster nodes (and from operator machines to node1)
 | 7946 | TCP | gRPC — ctl and node-to-node RPC |
 | 7947 | TCP | Raft consensus |
 | 7948 | TCP | Web console (restrict to trusted networks) |
-| 8080 | TCP | HTTP ingress (public-facing) |
+| 8080 | TCP | ingressd container HTTP (host HAProxy forwards here) |
+| 8443 | TCP | ingressd container HTTPS (host HAProxy forwards here) |
+
+Ports 80 and 443 are handled by the **host HAProxy** (see section 9). That process runs as root and is not managed by the orchestrator.
 
 Example with `firewall-cmd` (Fedora/RHEL):
 
 ```bash
 sudo firewall-cmd --permanent --add-port=7946-7948/tcp
 sudo firewall-cmd --permanent --add-port=8080/tcp
+sudo firewall-cmd --permanent --add-port=8443/tcp
 sudo firewall-cmd --reload
 ```
 
@@ -100,6 +112,7 @@ Example with `ufw` (Ubuntu):
 ```bash
 sudo ufw allow 7946:7948/tcp
 sudo ufw allow 8080/tcp
+sudo ufw allow 8443/tcp
 ```
 
 ---
@@ -290,7 +303,134 @@ ctl --server $SERVER rm $WORKLOAD_ID
 
 ---
 
-## 9. Access the web console
+## 9. Deploy proxyd and ingressd
+
+### proxyd — TCP service proxy and DNS
+
+`proxyd` provides DNS resolution for `*.svc.local` names and TCP-proxies named service traffic to the container that currently holds the workload. It reads `<data-dir>/proxy/config.json`, which the orchestrator rewrites automatically every 2 seconds when cluster state changes.
+
+Run it as a systemd user service on **each node**:
+
+```ini
+# ~/.config/systemd/user/proxyd.service
+[Unit]
+Description=Orchestrator service proxy and DNS
+After=orchestrator.service
+Requires=orchestrator.service
+
+[Service]
+ExecStart=%h/bin/proxyd \
+  --config %h/.local/share/orchestrator/proxy/config.json \
+  --node-id NODE_ID
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=default.target
+```
+
+Replace `NODE_ID` with this node's `--node-id` value. Enable:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now proxyd
+```
+
+proxyd starts even if the config file does not exist yet — it waits and applies the config once the orchestrator writes it.
+
+### ingressd — HAProxy-backed HTTP/HTTPS ingress
+
+`ingressd` watches `<data-dir>/ingress/config.json` (written by the orchestrator) and drives an HAProxy process inside a container. HAProxy terminates TLS using certs stored in cluster state and routes requests to backends via their service system ports.
+
+#### Architecture
+
+```
+                ┌─────────────────────────────────────┐
+  client ──────▶│  host HAProxy  :80 / :443  (root)   │
+                │  TCP passthrough → 127.0.0.1:8080/8443│
+                └──────────────┬──────────────────────┘
+                               │  (PROXY protocol optional)
+                ┌──────────────▼──────────────────────┐
+                │  ingressd container                  │
+                │  HAProxy :80 / :443                  │
+                │  ├── TLS termination (per-domain cert)│
+                │  └── host/path routing → backends    │
+                └─────────────────────────────────────┘
+```
+
+The host HAProxy binds the privileged ports 80 and 443 and forwards raw TCP to the container. The container HAProxy handles SSL termination and L7 routing. This keeps all cert management and routing logic inside the orchestrator cluster without requiring root for the container.
+
+#### Run the ingressd container
+
+On **each node** that should receive public ingress traffic:
+
+```bash
+nerdctl run -d \
+  --name ingressd \
+  --restart always \
+  -v ~/.local/share/orchestrator/ingress:/data/ingress \
+  -p 127.0.0.1:8080:80 \
+  -p 127.0.0.1:8443:443 \
+  ingressd:latest \
+  --proxy-protocol   # add this flag when using PROXY protocol on the host HAProxy
+```
+
+The container binds ports 80 and 443 internally and publishes them on `127.0.0.1:8080` and `127.0.0.1:8443` on the host. The volume mount gives the container access to the config and cert files written by the orchestrator.
+
+#### Configure the host HAProxy
+
+Install HAProxy on the host (runs as root to bind privileged ports):
+
+```bash
+# Fedora/RHEL
+sudo dnf install -y haproxy
+
+# Ubuntu/Debian
+sudo apt-get install -y haproxy
+```
+
+Write `/etc/haproxy/haproxy.cfg`:
+
+```haproxy
+global
+    log /dev/log local0
+    maxconn 4096
+
+defaults
+    mode tcp
+    timeout connect 5s
+    timeout client  60s
+    timeout server  60s
+    log global
+
+# Forward plain HTTP to the ingressd container
+frontend fe_http
+    bind :80
+    default_backend be_ingressd_http
+
+# Forward HTTPS (TLS terminated inside the container)
+frontend fe_https
+    bind :443
+    default_backend be_ingressd_https
+
+backend be_ingressd_http
+    server ingressd 127.0.0.1:8080 send-proxy
+
+backend be_ingressd_https
+    server ingressd 127.0.0.1:8443 send-proxy
+```
+
+> Remove `send-proxy` from both backend lines if you start `ingressd` **without** `--proxy-protocol`. The `send-proxy` / `accept-proxy` pair is optional but recommended — it preserves the real client IP for logging and X-Forwarded-For.
+
+Enable and start:
+
+```bash
+sudo systemctl enable --now haproxy
+```
+
+---
+
+## 10. Access the web console  <!-- previously section 9 -->
 
 Open `http://192.168.1.10:7948` in a browser. Log in with:
 
@@ -301,7 +441,7 @@ Open `http://192.168.1.10:7948` in a browser. Log in with:
 
 ---
 
-## Upgrading
+## 11. Upgrading
 
 Rolling upgrade — no downtime:
 
@@ -312,14 +452,17 @@ go build -o bin/ctl         ./cmd/ctl
 
 # Update each non-leader node first
 for NODE in node2 node3; do
-  scp bin/orchestrator $NODE:~/bin/
-  ssh $NODE systemctl --user restart orchestrator
+  scp bin/orchestrator bin/ingressd $NODE:~/bin/
+  ssh $NODE systemctl --user restart orchestrator proxyd
+  # Rebuild and reload ingressd container
+  ssh $NODE "nerdctl build -t ingressd:latest -f orchestrator/cmd/ingressd/Dockerfile orchestrator/ && nerdctl restart ingressd"
   sleep 5
 done
 
 # Then the leader (triggers re-election, usually < 2 s)
-scp bin/orchestrator node1:~/bin/
-ssh node1 systemctl --user restart orchestrator
+scp bin/orchestrator bin/ingressd node1:~/bin/
+ssh node1 systemctl --user restart orchestrator proxyd
+ssh node1 "nerdctl build -t ingressd:latest -f orchestrator/cmd/ingressd/Dockerfile orchestrator/ && nerdctl restart ingressd"
 
 # Verify
 ctl --server $SERVER status

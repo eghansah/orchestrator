@@ -264,8 +264,37 @@ func (c *Client) runStdout(ctx context.Context, args ...string) ([]byte, error) 
 }
 
 func (c *Client) Pull(ctx context.Context, image string) error {
-	_, err := c.run(ctx, "pull", image)
+	args := []string{"pull"}
+	if isLocalhostImage(image) {
+		args = append(args, "--insecure-registry")
+	}
+	args = append(args, image)
+	_, err := c.run(ctx, args...)
 	return err
+}
+
+// isLocalhostImage reports whether the image reference points at a loopback
+// registry (127.0.0.1:* or localhost:*). Such registries require --insecure-registry
+// because they are served over plain HTTP without TLS.
+func isLocalhostImage(image string) bool {
+	// Strip tag or digest.
+	ref := image
+	if i := strings.Index(ref, "@"); i >= 0 {
+		ref = ref[:i]
+	}
+	if i := strings.LastIndex(ref, ":"); i >= 0 {
+		// only strip the port/tag part if there's a '/' before it (i.e. it's a host:port, not name:tag)
+		if strings.ContainsRune(ref[:i], '/') || strings.ContainsRune(ref[:i], ':') || isIPOrLocalhost(ref[:i]) {
+			ref = ref[:i]
+		}
+	}
+	return isIPOrLocalhost(ref)
+}
+
+func isIPOrLocalhost(host string) bool {
+	return host == "localhost" ||
+		strings.HasPrefix(host, "127.") ||
+		host == "::1"
 }
 
 // RunContainer starts a detached container from the given spec, tagged with workloadID.
