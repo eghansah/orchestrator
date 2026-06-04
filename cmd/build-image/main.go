@@ -102,19 +102,21 @@ func main() {
 		log.Fatalf("parse tag: %v", err)
 	}
 
-	log.Printf("writing %s...", *outputPath)
-	f, err := os.Create(*outputPath)
-	if err != nil {
-		log.Fatalf("create output: %v", err)
+	// Buffer the entire tarball in memory before touching the output file.
+	// tarball.Write streams layer downloads on-the-fly; if the process is
+	// interrupted mid-stream the output file would be left truncated. Buffering
+	// ensures we only write a complete tarball to disk.
+	log.Printf("fetching layers and assembling tarball...")
+	var buf bytes.Buffer
+	if err := tarball.Write(tag, img, &buf); err != nil {
+		log.Fatalf("assemble tarball: %v", err)
 	}
-	defer f.Close()
 
-	if err := tarball.Write(tag, img, f); err != nil {
-		log.Fatalf("write tarball: %v", err)
+	log.Printf("writing %s (%.1f MB)...", *outputPath, float64(buf.Len())/(1<<20))
+	if err := os.WriteFile(*outputPath, buf.Bytes(), 0o644); err != nil {
+		log.Fatalf("write file: %v", err)
 	}
-
-	fi, _ := os.Stat(*outputPath)
-	log.Printf("done: %s (%.1f MB)", *outputPath, float64(fi.Size())/(1<<20))
+	log.Printf("done")
 }
 
 // binaryLayer returns a v1.Layer containing the ingressd binary at

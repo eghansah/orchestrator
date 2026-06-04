@@ -34,13 +34,9 @@ $(DIST)/ingressd: $(INGRESSD_SRCS)
 
 # ── Registry image ────────────────────────────────────────────────────────────
 
-# Builds the ingressd container image using pure Go (no Docker/nerdctl required).
-# Requires internet access to pull haproxy:3.0-alpine on first run.
-$(REGISTRY_IMAGE): $(DIST)/ingressd $(INGRESSD_SRCS)
-	go run ./cmd/build-image \
-	  --binary  $(DIST)/ingressd \
-	  --output  $(REGISTRY_IMAGE) \
-	  --platform linux/amd64
+$(REGISTRY_IMAGE): $(INGRESSD_SRCS)
+	docker build -t ingressd:latest -f cmd/ingressd/Dockerfile .
+	docker save ingressd:latest -o $(REGISTRY_IMAGE)
 	@echo "Registry image saved to $(REGISTRY_IMAGE)"
 
 registry-image: $(REGISTRY_IMAGE)
@@ -72,12 +68,8 @@ $(DIST)/orchestrator-$(VERSION)-linux-amd64.tar.gz: $(ORCHESTRATOR_SRCS) $(CTL_S
 
 $(DIST)/orchestrator-$(VERSION)-linux-arm64.tar.gz: $(ORCHESTRATOR_SRCS) $(CTL_SRCS)
 	@mkdir -p $(DIST)/tmp/orchestrator-$(VERSION)-linux-arm64
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" \
-		-o $(DIST)/tmp/ingressd-arm64 ./cmd/ingressd
-	go run ./cmd/build-image \
-		--binary  $(DIST)/tmp/ingressd-arm64 \
-		--output  $(REGISTRY_IMAGE) \
-		--platform linux/arm64
+	docker build --platform linux/arm64 -t ingressd:linux-arm64 -f cmd/ingressd/Dockerfile .
+	docker save ingressd:linux-arm64 -o $(REGISTRY_IMAGE)
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags with_ingressd_image -ldflags "$(LDFLAGS)" \
 		-o $(DIST)/tmp/orchestrator-$(VERSION)-linux-arm64/orchestrator ./cmd/orchestrator
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" \

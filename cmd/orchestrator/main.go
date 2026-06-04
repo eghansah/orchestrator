@@ -339,6 +339,17 @@ func main() {
 	slog.Info("orchestrator running", "node-id", cfg.nodeID)
 	<-ctx.Done()
 	slog.Info("shutting down")
+
+	// Hard-kill after 15 s so Ctrl+C always works even if a subsystem stalls.
+	go func() {
+		time.Sleep(15 * time.Second)
+		slog.Warn("shutdown timed out; forcing exit")
+		os.Exit(1)
+	}()
+
+	if err := peer.Shutdown(); err != nil {
+		slog.Warn("raft shutdown error", "err", err)
+	}
 	grpcSrv.GracefulStop()
 }
 
@@ -934,6 +945,7 @@ func nerdctlCmd(ctx context.Context, bin, namespace, sockAddr string, args ...st
 	}
 	full = append(full, args...)
 	cmd := exec.CommandContext(ctx, bin, full...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if sockAddr != "" {
 		cmd.Env = append(os.Environ(), "CONTAINERD_ADDRESS="+sockAddr)
 	}

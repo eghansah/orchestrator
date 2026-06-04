@@ -46,8 +46,8 @@ func New(tarData []byte) (*Registry, error) {
 // Handler returns an http.Handler implementing the Registry V2 API.
 func (r *Registry) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v2/", r.handlePing)
-	mux.HandleFunc("HEAD /v2/", r.handlePing)
+	mux.HandleFunc("GET /v2/{$}", r.handlePing)
+	mux.HandleFunc("HEAD /v2/{$}", r.handlePing)
 	mux.HandleFunc("GET /v2/{name}/manifests/{ref}", r.handleManifest)
 	mux.HandleFunc("HEAD /v2/{name}/manifests/{ref}", r.handleManifest)
 	mux.HandleFunc("GET /v2/{name}/blobs/{digest}", r.handleBlob)

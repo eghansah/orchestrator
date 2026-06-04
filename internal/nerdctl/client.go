@@ -232,6 +232,7 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	}
 	full := append(global, args...)
 	cmd := exec.CommandContext(ctx, c.binary, full...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if c.address != "" {
 		cmd.Env = append(os.Environ(), "CONTAINERD_ADDRESS="+c.address)
 	}
@@ -251,6 +252,7 @@ func (c *Client) runStdout(ctx context.Context, args ...string) ([]byte, error) 
 	}
 	full := append(global, args...)
 	cmd := exec.CommandContext(ctx, c.binary, full...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if c.address != "" {
 		cmd.Env = append(os.Environ(), "CONTAINERD_ADDRESS="+c.address)
 	}
