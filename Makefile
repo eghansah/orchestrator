@@ -18,19 +18,19 @@ build: $(DIST)/orchestrator $(DIST)/ctl $(DIST)/ingressd $(DIST)/orchestrator-fu
 
 $(DIST)/orchestrator: $(ORCHESTRATOR_SRCS)
 	@mkdir -p $(DIST)
-	go build -ldflags "$(LDFLAGS)" -o $@ ./cmd/orchestrator
+	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $@ ./cmd/orchestrator
 
 $(DIST)/orchestrator-full: $(ORCHESTRATOR_SRCS) $(REGISTRY_IMAGE)
 	@mkdir -p $(DIST)
-	go build -tags with_ingressd_image -ldflags "$(LDFLAGS)" -o $@ ./cmd/orchestrator
+	CGO_ENABLED=0 go build -tags with_ingressd_image -ldflags "$(LDFLAGS)" -o $@ ./cmd/orchestrator
 
 $(DIST)/ctl: $(CTL_SRCS)
 	@mkdir -p $(DIST)
-	go build -ldflags "$(LDFLAGS)" -o $@ ./cmd/ctl
+	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $@ ./cmd/ctl
 
 $(DIST)/ingressd: $(INGRESSD_SRCS)
 	@mkdir -p $(DIST)
-	go build -ldflags "$(LDFLAGS)" -o $@ ./cmd/ingressd
+	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $@ ./cmd/ingressd
 
 # ── Registry image ────────────────────────────────────────────────────────────
 
