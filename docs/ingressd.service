@@ -1,0 +1,50 @@
+# ~/.config/systemd/user/ingressd.service
+#
+# Runs ingressd directly on the host (without a container).
+# The orchestrator must be configured with --ingressd-http "" to disable
+# its built-in container-based auto-deploy of ingressd.
+#
+# Prerequisites:
+#   - haproxy installed and on $PATH (or set --haproxy-bin below)
+#   - orchestrator running so it writes ingress/config.json to DataDir
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp ingressd.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now ingressd
+#
+# To start at boot even without a login session:
+#   loginctl enable-linger $USER
+
+[Unit]
+Description=Ingress Daemon (HAProxy manager)
+After=network-online.target orchestrator.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+ExecStart=%h/.local/bin/ingressd \
+  --config    %h/.local/share/orchestrator/ingress/config.json \
+  --haproxy-cfg %h/.local/share/orchestrator/ingress/haproxy.cfg \
+  --certs-dir %h/.local/share/orchestrator/ingress/certs \
+  --http-addr  0.0.0.0:8080 \
+  --https-addr 0.0.0.0:8443
+
+# Add --proxy-protocol if a host-level load balancer forwards via TCP
+# passthrough and you need to preserve the real client IP.
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ingressd
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target
