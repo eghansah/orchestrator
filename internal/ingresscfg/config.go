@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 
 	internraft "github.com/eghansah/orchestrator/internal/raft"
 	"github.com/eghansah/orchestrator/pkg/types"
@@ -26,12 +27,25 @@ type Config struct {
 	Backends []Backend `json:"backends"`
 }
 
+// parseFQDN extracts the workload name from a container FQDN.
+// "ecouniversal" → "ecouniversal"; "backend.myapp" → "myapp"
+func parseFQDN(fqdn string) string {
+	if i := strings.LastIndex(fqdn, "."); i >= 0 {
+		return fqdn[i+1:]
+	}
+	return fqdn
+}
+
 // Write atomically rewrites <dataDir>/ingress/config.json from current cluster state.
-// Rules whose service or workload is unresolvable or unscheduled are omitted.
+// Rules whose workload is unresolvable or unscheduled are omitted.
+// Each IngressRule has its own SystemPort (allocated by the Raft FSM); no TCP Service required.
 func Write(dataDir string, state internraft.ClusterState) error {
 	var cfg Config
 
 	for _, rule := range state.IngressRules {
+		if rule.SystemPort == 0 {
+			continue
+		}
 		host := rule.Host
 		var tlsCert, tlsKey string
 
@@ -45,12 +59,7 @@ func Write(dataDir string, state internraft.ClusterState) error {
 			tlsKey = d.TLSKey
 		}
 
-		svc, ok := findService(state, rule.ServiceName)
-		if !ok || svc.SystemPort == 0 {
-			continue
-		}
-
-		wl, ok := findWorkload(state, svc.WorkloadName)
+		wl, ok := findWorkload(state, parseFQDN(rule.ContainerFQDN))
 		if !ok || wl.NodeID == "" {
 			continue
 		}
@@ -65,7 +74,7 @@ func Write(dataDir string, state internraft.ClusterState) error {
 			Host:       host,
 			PathPrefix: rule.PathPrefix,
 			NodeDataIP: node.DataIP,
-			SystemPort: svc.SystemPort,
+			SystemPort: rule.SystemPort,
 			TLSCert:    tlsCert,
 			TLSKey:     tlsKey,
 		})
@@ -92,15 +101,6 @@ func Write(dataDir string, state internraft.ClusterState) error {
 // ConfigPath returns the canonical path for the ingress config file.
 func ConfigPath(dataDir string) string {
 	return filepath.Join(dataDir, "ingress", "config.json")
-}
-
-func findService(state internraft.ClusterState, name string) (types.Service, bool) {
-	for _, svc := range state.Services {
-		if svc.Name == name {
-			return svc, true
-		}
-	}
-	return types.Service{}, false
 }
 
 func findWorkload(state internraft.ClusterState, name string) (types.Workload, bool) {

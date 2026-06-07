@@ -691,12 +691,14 @@ func (s *Server) handleDrain(w http.ResponseWriter, r *http.Request) {
 // ── Ingress API handlers ──────────────────────────────────────────────────────
 
 type ingressRuleJSON struct {
-	ID          string `json:"id"`
-	DomainID    string `json:"domain_id"`
-	Host        string `json:"host"`
-	PathPrefix  string `json:"path_prefix"`
-	ServiceName string `json:"service_name"`
-	CreatedAt   int64  `json:"created_at"`
+	ID            string `json:"id"`
+	DomainID      string `json:"domain_id"`
+	Host          string `json:"host"`
+	PathPrefix    string `json:"path_prefix"`
+	ContainerFQDN string `json:"container_fqdn"`
+	ContainerPort uint32 `json:"container_port"`
+	SystemPort    uint32 `json:"system_port"`
+	CreatedAt     int64  `json:"created_at"`
 }
 
 func (s *Server) handleListIngress(w http.ResponseWriter, _ *http.Request) {
@@ -704,12 +706,14 @@ func (s *Server) handleListIngress(w http.ResponseWriter, _ *http.Request) {
 	rules := make([]ingressRuleJSON, 0, len(state.IngressRules))
 	for _, r := range state.IngressRules {
 		rules = append(rules, ingressRuleJSON{
-			ID:          r.ID,
-			DomainID:    r.DomainID,
-			Host:        r.Host,
-			PathPrefix:  r.PathPrefix,
-			ServiceName: r.ServiceName,
-			CreatedAt:   r.CreatedAt.Unix(),
+			ID:            r.ID,
+			DomainID:      r.DomainID,
+			Host:          r.Host,
+			PathPrefix:    r.PathPrefix,
+			ContainerFQDN: r.ContainerFQDN,
+			ContainerPort: r.ContainerPort,
+			SystemPort:    r.SystemPort,
+			CreatedAt:     r.CreatedAt.Unix(),
 		})
 	}
 	writeJSON(w, rules)
@@ -717,9 +721,10 @@ func (s *Server) handleListIngress(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleCreateIngress(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		DomainID    string `json:"domain_id"`
-		PathPrefix  string `json:"path_prefix"`
-		ServiceName string `json:"service_name"`
+		DomainID      string `json:"domain_id"`
+		PathPrefix    string `json:"path_prefix"`
+		ContainerFQDN string `json:"container_fqdn"`
+		ContainerPort uint32 `json:"container_port"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -729,8 +734,12 @@ func (s *Server) handleCreateIngress(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "domain_id is required")
 		return
 	}
-	if req.ServiceName == "" {
-		writeError(w, http.StatusBadRequest, "service_name is required")
+	if req.ContainerFQDN == "" {
+		writeError(w, http.StatusBadRequest, "container_fqdn is required")
+		return
+	}
+	if req.ContainerPort == 0 {
+		writeError(w, http.StatusBadRequest, "container_port is required")
 		return
 	}
 	if !s.peer.IsLeader() {
@@ -744,18 +753,20 @@ func (s *Server) handleCreateIngress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rule := types.IngressRule{
-		ID:          newIngressID(),
-		DomainID:    domain.ID,
-		Host:        domain.Name,
-		PathPrefix:  req.PathPrefix,
-		ServiceName: req.ServiceName,
-		CreatedAt:   time.Now(),
+		ID:            newIngressID(),
+		DomainID:      domain.ID,
+		Host:          domain.Name,
+		PathPrefix:    req.PathPrefix,
+		ContainerFQDN: req.ContainerFQDN,
+		ContainerPort: req.ContainerPort,
+		CreatedAt:     time.Now(),
 	}
 	if err := s.peer.ApplyIngress(rule); err != nil {
 		writeError(w, http.StatusInternalServerError, "apply ingress: "+err.Error())
 		return
 	}
-	writeJSON(w, map[string]any{"rule_id": rule.ID, "accepted": true})
+	committed := s.peer.State().IngressRules[rule.ID]
+	writeJSON(w, map[string]any{"rule_id": rule.ID, "system_port": committed.SystemPort, "accepted": true})
 }
 
 func newIngressID() string {
@@ -785,69 +796,73 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type svcJSON struct {
-		ID           string `json:"id"`
-		Name         string `json:"name"`
-		WorkloadName string `json:"workload_name"`
-		TargetPort   uint32 `json:"target_port"`
-		SystemPort   uint32 `json:"system_port"`
-		CreatedAt    int64  `json:"created_at"`
+		ID            string `json:"id"`
+		Name          string `json:"name"`
+		ContainerFQDN string `json:"container_fqdn"`
+		ContainerPort uint32 `json:"container_port"`
+		SystemPort    uint32 `json:"system_port"`
+		CreatedAt     int64  `json:"created_at"`
 	}
 	svcs := make([]svcJSON, 0, len(resp.Services))
 	for _, s := range resp.Services {
 		svcs = append(svcs, svcJSON{
-			ID:           s.Id,
-			Name:         s.Name,
-			WorkloadName: s.WorkloadName,
-			TargetPort:   s.TargetPort,
-			SystemPort:   s.SystemPort,
-			CreatedAt:    s.CreatedAt,
+			ID:            s.Id,
+			Name:          s.Name,
+			ContainerFQDN: s.ContainerFqdn,
+			ContainerPort: s.ContainerPort,
+			SystemPort:    s.SystemPort,
+			CreatedAt:     s.CreatedAt,
 		})
 	}
 	writeJSON(w, svcs)
 }
 
-// checkServicePort returns a warning string if workloadName does not publish
-// targetPort as an allocated container port. Returns "" when the port is fine.
-func (s *Server) checkServicePort(workloadName string, targetPort uint32) string {
+// checkContainerPort returns a warning string if the container FQDN's workload
+// does not publish containerPort as an allocated port. Returns "" when fine.
+func (s *Server) checkContainerPort(containerFQDN string, containerPort uint32) string {
+	workloadName := containerFQDN
+	if i := strings.LastIndex(containerFQDN, "."); i >= 0 {
+		workloadName = containerFQDN[i+1:]
+	}
 	state := s.peer.State()
 	for _, wl := range state.Workloads {
 		if wl.Name() != workloadName {
 			continue
 		}
 		for _, pa := range wl.PortAllocations {
-			if pa.ContainerPort == targetPort {
+			if pa.ContainerPort == containerPort {
 				return ""
 			}
 		}
 		if wl.Kind == types.KindStack {
-			return fmt.Sprintf("port %d is not declared in the compose YAML for workload %q — add a host:container port mapping and re-submit", targetPort, workloadName)
+			return fmt.Sprintf("port %d is not declared in the compose YAML for workload %q — add a host:container port mapping and re-submit", containerPort, workloadName)
 		}
-		return fmt.Sprintf("port %d is not published by workload %q — add the port to the workload definition and re-submit for the service to function", targetPort, workloadName)
+		return fmt.Sprintf("port %d is not published by workload %q — add the port to the workload definition and re-submit for the service to function", containerPort, workloadName)
 	}
 	return fmt.Sprintf("workload %q not found", workloadName)
 }
 
 func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name         string `json:"name"`
-		WorkloadName string `json:"workload_name"`
-		TargetPort   uint32 `json:"target_port"`
+		Name          string `json:"name"`
+		ContainerFQDN string `json:"container_fqdn"`
+		ContainerPort uint32 `json:"container_port"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	resp, err := s.ctrl.CreateService(r.Context(), &gen.CreateServiceRequest{
-		Name:         req.Name,
-		WorkloadName: req.WorkloadName,
-		TargetPort:   req.TargetPort,
+		Name:          req.Name,
+		ContainerFqdn: req.ContainerFQDN,
+		ContainerPort: req.ContainerPort,
 	})
 	if err != nil {
 		st, _ := status.FromError(err)
 		writeError(w, grpcHTTPStatus(st.Code()), st.Message())
 		return
 	}
-	warning := s.checkServicePort(req.WorkloadName, req.TargetPort)
+	warning := s.checkContainerPort(req.ContainerFQDN, req.ContainerPort)
 	writeJSON(w, map[string]any{
 		"service_id":  resp.ServiceId,
 		"system_port": resp.SystemPort,
@@ -860,16 +875,16 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req struct {
-		Name         string `json:"name"`
-		WorkloadName string `json:"workload_name"`
-		TargetPort   uint32 `json:"target_port"`
+		Name          string `json:"name"`
+		ContainerFQDN string `json:"container_fqdn"`
+		ContainerPort uint32 `json:"container_port"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Name == "" || req.WorkloadName == "" || req.TargetPort == 0 {
-		writeError(w, http.StatusBadRequest, "name, workload_name, and target_port are required")
+	if req.Name == "" || req.ContainerFQDN == "" || req.ContainerPort == 0 {
+		writeError(w, http.StatusBadRequest, "name, container_fqdn, and container_port are required")
 		return
 	}
 	state := s.peer.State()
@@ -879,26 +894,26 @@ func (s *Server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated := types.Service{
-		ID:           existing.ID,
-		Name:         req.Name,
-		WorkloadName: req.WorkloadName,
-		TargetPort:   req.TargetPort,
-		SystemPort:   existing.SystemPort,
-		CreatedAt:    existing.CreatedAt,
+		ID:            existing.ID,
+		Name:          req.Name,
+		ContainerFQDN: req.ContainerFQDN,
+		ContainerPort: req.ContainerPort,
+		SystemPort:    existing.SystemPort,
+		CreatedAt:     existing.CreatedAt,
 	}
 	if err := s.peer.ApplyService(updated); err != nil {
 		writeError(w, http.StatusInternalServerError, "apply service: "+err.Error())
 		return
 	}
-	warning := s.checkServicePort(req.WorkloadName, req.TargetPort)
+	warning := s.checkContainerPort(req.ContainerFQDN, req.ContainerPort)
 	writeJSON(w, map[string]any{
-		"id":            updated.ID,
-		"name":          updated.Name,
-		"workload_name": updated.WorkloadName,
-		"target_port":   updated.TargetPort,
-		"system_port":   updated.SystemPort,
-		"created_at":    updated.CreatedAt.Unix(),
-		"warning":       warning,
+		"id":             updated.ID,
+		"name":           updated.Name,
+		"container_fqdn": updated.ContainerFQDN,
+		"container_port": updated.ContainerPort,
+		"system_port":    updated.SystemPort,
+		"created_at":     updated.CreatedAt.Unix(),
+		"warning":        warning,
 	})
 }
 

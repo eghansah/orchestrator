@@ -61,9 +61,15 @@ type daemon struct {
 	dnsStop   func()                   // stops the current DNS server pair
 }
 
+type desiredEntry struct {
+	entry       proxycfg.Entry
+	backendAddr string // "127.0.0.1:allocatedPort" (local) or "nodeDataIP:systemPort" (remote)
+}
+
 type listenerEntry struct {
-	cancel func()
-	entry  proxycfg.Entry
+	cancel      func()
+	entry       proxycfg.Entry
+	backendAddr string
 }
 
 // watchConfig uses fsnotify to detect config file changes and reloads on each write.
@@ -140,45 +146,59 @@ func (d *daemon) apply(cfg proxycfg.Config) {
 
 	// ── TCP listeners ────────────────────────────────────────────────────────
 
-	// Build a map of desired local entries keyed by listen address.
-	desired := make(map[string]proxycfg.Entry)
+	// Build desired listeners for ALL services — local and remote.
+	// Local: forward to the container's loopback port.
+	// Remote: forward to the remote node's proxyd (which handles the final hop).
+	desired := make(map[string]desiredEntry)
 	for _, e := range cfg.Entries {
-		if e.NodeID != d.nodeID {
+		if e.SystemPort == 0 {
 			continue
 		}
-		if e.AllocatedPort == 0 {
-			continue
+		listenAddr := fmt.Sprintf("%s:%d", cfg.DataIP, e.SystemPort)
+
+		var backendAddr string
+		if e.NodeID == d.nodeID {
+			if e.AllocatedPort == 0 {
+				continue // workload not yet started locally
+			}
+			backendAddr = fmt.Sprintf("127.0.0.1:%d", e.AllocatedPort)
+		} else {
+			if e.NodeDataIP == "" {
+				continue // remote node not yet known
+			}
+			backendAddr = fmt.Sprintf("%s:%d", e.NodeDataIP, e.SystemPort)
 		}
-		addr := fmt.Sprintf("%s:%d", cfg.DataIP, e.SystemPort)
-		desired[addr] = e
+
+		desired[listenAddr] = desiredEntry{entry: e, backendAddr: backendAddr}
 	}
 
 	// Stop listeners for removed or changed entries.
 	for addr, le := range d.listeners {
 		want, ok := desired[addr]
-		if !ok || want != le.entry {
+		if !ok || want.entry != le.entry || want.backendAddr != le.backendAddr {
 			le.cancel()
 			delete(d.listeners, addr)
 		}
 	}
 
 	// Start listeners for new entries.
-	for addr, e := range desired {
+	for addr, de := range desired {
 		if _, running := d.listeners[addr]; running {
 			continue
 		}
 		stop := make(chan struct{})
-		entry := e
+		backendAddr := de.backendAddr
 		listenAddr := addr
 		go func() {
-			listenAndProxy(listenAddr, entry.AllocatedPort, stop)
+			listenAndProxy(listenAddr, backendAddr, stop)
 		}()
 		d.listeners[addr] = listenerEntry{
-			cancel: func() { close(stop) },
-			entry:  e,
+			cancel:      func() { close(stop) },
+			entry:       de.entry,
+			backendAddr: de.backendAddr,
 		}
-		slog.Info("proxy listener started", "addr", addr, "backend_port", e.AllocatedPort,
-			"service", e.ServiceName, "workload", e.WorkloadName)
+		slog.Info("proxy listener started", "addr", addr, "backend", de.backendAddr,
+			"service", de.entry.ServiceName, "local", de.entry.NodeID == d.nodeID)
 	}
 
 	// ── DNS server ───────────────────────────────────────────────────────────
@@ -197,8 +217,8 @@ func (d *daemon) apply(cfg proxycfg.Config) {
 	slog.Info("config applied", "services", len(desired), "dns", cfg.DNSAddr)
 }
 
-// listenAndProxy accepts connections on addr and forwards each to 127.0.0.1:backendPort.
-func listenAndProxy(addr string, backendPort uint32, stop <-chan struct{}) {
+// listenAndProxy accepts connections on addr and forwards each to backendAddr.
+func listenAndProxy(addr string, backendAddr string, stop <-chan struct{}) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		slog.Error("proxy listen failed", "addr", addr, "err", err)
@@ -213,15 +233,15 @@ func listenAndProxy(addr string, backendPort uint32, stop <-chan struct{}) {
 		if err != nil {
 			return // stop channel closed or fatal error
 		}
-		go handleConn(conn, backendPort)
+		go handleConn(conn, backendAddr)
 	}
 }
 
-func handleConn(conn net.Conn, backendPort uint32) {
+func handleConn(conn net.Conn, backendAddr string) {
 	defer conn.Close()
-	backend, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", backendPort))
+	backend, err := net.Dial("tcp", backendAddr)
 	if err != nil {
-		slog.Warn("proxy dial backend failed", "port", backendPort, "err", err)
+		slog.Warn("proxy dial backend failed", "backend", backendAddr, "err", err)
 		return
 	}
 	defer backend.Close()
@@ -254,10 +274,10 @@ func copyBidirectional(a, b net.Conn) {
 // startDNS launches UDP and TCP DNS listeners for the given config.
 // Returns a stop function that shuts both down.
 func startDNS(cfg proxycfg.Config) func() {
-	// Build lookup table: "service.workload" → entry
+	// Build lookup table: service name → entry
 	table := make(map[string]proxycfg.Entry, len(cfg.Entries))
 	for _, e := range cfg.Entries {
-		key := strings.ToLower(e.ServiceName + "." + e.WorkloadName)
+		key := strings.ToLower(e.ServiceName)
 		table[key] = e
 	}
 
@@ -316,11 +336,11 @@ func makeSvcLocalHandler(table map[string]proxycfg.Entry) dns.HandlerFunc {
 			}
 
 		case dns.TypeSRV:
-			// _<service>._tcp.<workload>.svc.local. → strip "_" and "._tcp"
+			// _<service>._tcp.svc.local. → strip "_" and "._tcp"
 			svcPart := strings.TrimPrefix(label, "_")
 			svcPart = strings.TrimSuffix(svcPart, "._tcp")
 			if e, ok := table[svcPart]; ok {
-				target := e.ServiceName + "." + e.WorkloadName + ".svc.local."
+				target := e.ServiceName + ".svc.local."
 				m.Answer = append(m.Answer, &dns.SRV{
 					Hdr:      dns.RR_Header{Name: q.Name, Rrtype: dns.TypeSRV, Class: dns.ClassINET, Ttl: 10},
 					Priority: 10,
@@ -412,10 +432,10 @@ func entriesEqual(a, b []proxycfg.Entry) bool {
 	}
 	m := make(map[string]proxycfg.Entry, len(a))
 	for _, e := range a {
-		m[e.ServiceName+"."+e.WorkloadName] = e
+		m[e.ServiceName] = e
 	}
 	for _, e := range b {
-		if m[e.ServiceName+"."+e.WorkloadName] != e {
+		if m[e.ServiceName] != e {
 			return false
 		}
 	}

@@ -138,6 +138,8 @@ func main() {
 		cfg.dataAddr = detectDataIP()
 	}
 
+	logConfig(cfg)
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -326,6 +328,12 @@ func main() {
 
 	// Once we are leader, register this node in the cluster state.
 	go selfRegisterLoop(ctx, peer, cfg.nodeID, cfg.grpcAddr, cfg.dataAddr, ownCertDER)
+
+	// Once we are leader, register the built-in local registry so the web UI
+	// and other cluster components can discover it.
+	if cfg.registryAddr != "" {
+		go registryRegisterLoop(ctx, peer, cfg.nodeID, cfg.registryAddr)
+	}
 
 	// Periodically forward actual state to the leader's ReportState RPC.
 	go stateReportLoop(ctx, peer, tlsCert, cfg.nodeID, cfg.grpcAddr, stateCh)
@@ -566,6 +574,41 @@ func selfRegisterLoop(ctx context.Context, peer *internraft.Peer, nodeID, grpcAd
 				continue
 			}
 			slog.Info("registered self in cluster state", "node-id", nodeID)
+			return
+		}
+	}
+}
+
+// registryRegisterLoop polls until this node becomes leader, then writes an entry
+// for the built-in local registry into the Raft state so the web UI and scheduler
+// can discover it. The registry is loopback-only; the URL reflects that.
+func registryRegisterLoop(ctx context.Context, peer *internraft.Peer, nodeID, registryAddr string) {
+	id := nodeID + ":local"
+	url := "http://" + registryAddr
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !peer.IsLeader() {
+				continue
+			}
+			if _, ok := peer.State().Registries[id]; ok {
+				return // already registered
+			}
+			r := types.Registry{
+				ID:        id,
+				Name:      "local (" + nodeID + ")",
+				URL:       url,
+				CreatedAt: time.Now(),
+			}
+			if err := peer.ApplyRegistry(r); err != nil {
+				slog.Warn("local registry auto-register failed", "err", err)
+				continue
+			}
+			slog.Info("registered local registry in cluster state", "url", url)
 			return
 		}
 	}
@@ -849,6 +892,47 @@ func detectDataIP() string {
 	return "127.0.0.1"
 }
 
+func setOrUnset(s string) string {
+	if s != "" {
+		return "(set)"
+	}
+	return "(not set)"
+}
+
+func logConfig(cfg config) {
+	slog.Info("configuration",
+		"node-id", cfg.nodeID,
+		"grpc-addr", cfg.grpcAddr,
+		"raft-addr", cfg.raftAddr,
+		"web-addr", cfg.webAddr,
+		"web-prefix", cfg.webPrefix,
+		"web-disable-mfa", cfg.webDisableMFA,
+		"ingress-addr", cfg.ingressAddr,
+		"ingress-tls-addr", cfg.ingressTLSAddr,
+		"dns-addr", cfg.dnsAddr,
+		"data-addr", cfg.dataAddr,
+		"data-dir", cfg.dataDir,
+		"bootstrap", cfg.bootstrap,
+		"join", cfg.joinAddr,
+		"join-token", setOrUnset(cfg.joinToken),
+		"admin-token", setOrUnset(cfg.adminToken),
+		"web-password", setOrUnset(cfg.webPassword),
+		"nerdctl", cfg.nerdctlBin,
+		"namespace", cfg.namespace,
+		"containerd-addr", cfg.containerdAddr,
+		"registry-addr", cfg.registryAddr,
+		"ingressd-http", cfg.ingressdHTTP,
+		"ingressd-https", cfg.ingressdHTTPS,
+		"ldap-addr", cfg.ldapAddr,
+		"ldap-tls", cfg.ldapTLS,
+		"ldap-insecure", cfg.ldapInsecure,
+		"ldap-bind-dn-template", cfg.ldapBindDNTemplate,
+		"ldap-base-dn", cfg.ldapBaseDN,
+		"ldap-user-filter", cfg.ldapUserFilter,
+		"ldap-group-dn", cfg.ldapGroupDN,
+	)
+}
+
 func dieOnErr(err error, msg string) {
 	if err != nil {
 		slog.Error(msg, "err", err)
@@ -886,7 +970,7 @@ func proxycfgWriteLoop(ctx context.Context, peer *internraft.Peer, dataDir, node
 func stateHash(state internraft.ClusterState) uint64 {
 	var h uint64
 	for _, svc := range state.Services {
-		h ^= uint64(svc.SystemPort)*2654435761 ^ fnvStr(svc.Name) ^ fnvStr(svc.WorkloadName)
+		h ^= uint64(svc.SystemPort)*2654435761 ^ fnvStr(svc.Name) ^ fnvStr(svc.ContainerFQDN)
 	}
 	for _, wl := range state.Workloads {
 		h ^= fnvStr(wl.NodeID) ^ fnvStr(wl.Name())
@@ -960,9 +1044,10 @@ func reconcileIngressd(ctx context.Context, cfg config) {
 	image := cfg.registryAddr + "/" + name + ":latest"
 
 	prev, hasPrev := readIngressdState(cfg.dataDir)
-	stale := hasPrev && (prev.RegistryAddr != cfg.registryAddr ||
+	stale := !hasPrev ||
+		prev.RegistryAddr != cfg.registryAddr ||
 		prev.HTTPBind != cfg.ingressdHTTP ||
-		prev.HTTPSBind != cfg.ingressdHTTPS)
+		prev.HTTPSBind != cfg.ingressdHTTPS
 
 	// Check whether the container is currently running.
 	inspectOut, err := nerdctlCmd(ctx, cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr,
@@ -1050,7 +1135,7 @@ func ingresscfgWriteLoop(ctx context.Context, peer *internraft.Peer, dataDir str
 func ingressStateHash(state internraft.ClusterState) uint64 {
 	var h uint64
 	for _, rule := range state.IngressRules {
-		h ^= fnvStr(rule.ID) ^ fnvStr(rule.Host) ^ fnvStr(rule.PathPrefix) ^ fnvStr(rule.ServiceName) ^ fnvStr(rule.DomainID)
+		h ^= fnvStr(rule.ID) ^ fnvStr(rule.Host) ^ fnvStr(rule.PathPrefix) ^ fnvStr(rule.ContainerFQDN) ^ fnvStr(rule.DomainID) ^ uint64(rule.ContainerPort)*2246822519
 	}
 	for _, svc := range state.Services {
 		h ^= fnvStr(svc.Name) ^ uint64(svc.SystemPort)*2654435761

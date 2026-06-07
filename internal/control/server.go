@@ -326,23 +326,28 @@ func (s *Server) removeFromNode(ctx context.Context, addr string, certDER []byte
 // ── Ingress ───────────────────────────────────────────────────────────────────
 
 func (s *Server) CreateIngress(_ context.Context, req *gen.CreateIngressRequest) (*gen.CreateIngressResponse, error) {
-	if req.ServiceName == "" {
-		return nil, status.Error(codes.InvalidArgument, "service_name is required")
+	if req.ContainerFqdn == "" {
+		return nil, status.Error(codes.InvalidArgument, "container_fqdn is required")
+	}
+	if req.ContainerPort == 0 {
+		return nil, status.Error(codes.InvalidArgument, "container_port is required")
 	}
 	if err := s.requireLeader(); err != nil {
 		return nil, err
 	}
 	rule := types.IngressRule{
-		ID:          newID(),
-		Host:        req.Host,
-		PathPrefix:  req.PathPrefix,
-		ServiceName: req.ServiceName,
-		CreatedAt:   time.Now(),
+		ID:            newID(),
+		Host:          req.Host,
+		PathPrefix:    req.PathPrefix,
+		ContainerFQDN: req.ContainerFqdn,
+		ContainerPort: req.ContainerPort,
+		CreatedAt:     time.Now(),
 	}
 	if err := s.peer.ApplyIngress(rule); err != nil {
 		return nil, status.Errorf(codes.Internal, "apply ingress: %v", err)
 	}
-	return &gen.CreateIngressResponse{RuleId: rule.ID, Accepted: true}, nil
+	committed := s.peer.State().IngressRules[rule.ID]
+	return &gen.CreateIngressResponse{RuleId: rule.ID, Accepted: true, SystemPort: committed.SystemPort}, nil
 }
 
 func (s *Server) DeleteIngress(_ context.Context, req *gen.DeleteIngressRequest) (*gen.DeleteIngressResponse, error) {
@@ -373,26 +378,25 @@ func (s *Server) CreateService(_ context.Context, req *gen.CreateServiceRequest)
 	if req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
-	if req.WorkloadName == "" {
-		return nil, status.Error(codes.InvalidArgument, "workload_name is required")
+	if req.ContainerFqdn == "" {
+		return nil, status.Error(codes.InvalidArgument, "container_fqdn is required")
 	}
-	if req.TargetPort == 0 {
-		return nil, status.Error(codes.InvalidArgument, "target_port is required")
+	if req.ContainerPort == 0 {
+		return nil, status.Error(codes.InvalidArgument, "container_port is required")
 	}
 	if err := s.requireLeader(); err != nil {
 		return nil, err
 	}
 	svc := types.Service{
-		ID:           newID(),
-		Name:         req.Name,
-		WorkloadName: req.WorkloadName,
-		TargetPort:   req.TargetPort,
-		CreatedAt:    time.Now(),
+		ID:            newID(),
+		Name:          req.Name,
+		ContainerFQDN: req.ContainerFqdn,
+		ContainerPort: req.ContainerPort,
+		CreatedAt:     time.Now(),
 	}
 	if err := s.peer.ApplyService(svc); err != nil {
 		return nil, status.Errorf(codes.Internal, "apply service: %v", err)
 	}
-	// Read back to get FSM-assigned system port.
 	committed := s.peer.State().Services[svc.ID]
 	return &gen.CreateServiceResponse{ServiceId: svc.ID, SystemPort: committed.SystemPort, Accepted: true}, nil
 }

@@ -12,12 +12,10 @@ import {
   Header,
   Input,
   Modal,
-  Select,
-  SelectProps,
   SpaceBetween,
   Spinner,
 } from "@cloudscape-design/components";
-import { api, Service, WorkloadInfo } from "../api";
+import { api, Service } from "../api";
 import { formatAge } from "../api";
 
 interface Props {
@@ -29,11 +27,10 @@ type ModalMode = "edit" | "delete-confirm" | null;
 
 export default function ServiceDetail({ serviceId, onNavigate }: Props) {
   const [service, setService] = useState<Service | null>(null);
-  const [workloads, setWorkloads] = useState<WorkloadInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [mode, setMode] = useState<ModalMode>(null);
-  const [editForm, setEditForm] = useState({ name: "", workload_name: "", target_port: "" });
+  const [editForm, setEditForm] = useState({ name: "", container_fqdn: "", container_port: "" });
 
   function addFlash(type: FlashbarProps.Type, msg: string) {
     const id = String(Date.now());
@@ -45,10 +42,9 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
 
   const load = useCallback(async () => {
     try {
-      const [allServices, state] = await Promise.all([api.listServices(), api.getState()]);
+      const allServices = await api.listServices();
       const svc = (allServices ?? []).find((s) => s.id === serviceId) ?? null;
       setService(svc);
-      setWorkloads(state?.workloads ?? []);
     } catch (e) {
       addFlash("error", String(e));
     } finally {
@@ -62,26 +58,26 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
     if (!service) return;
     setEditForm({
       name: service.name,
-      workload_name: service.workload_name,
-      target_port: String(service.target_port),
+      container_fqdn: service.container_fqdn,
+      container_port: String(service.container_port),
     });
     setMode("edit");
   }
 
   async function handleUpdate() {
     if (!service) return;
-    const port = parseInt(editForm.target_port, 10);
-    if (!editForm.name || !editForm.workload_name || isNaN(port) || port <= 0) {
-      addFlash("error", "Name, workload, and a valid container port are required");
+    const port = parseInt(editForm.container_port, 10);
+    if (!editForm.name || !editForm.container_fqdn || isNaN(port) || port <= 0) {
+      addFlash("error", "Name, container FQDN, and a valid container port are required");
       return;
     }
     try {
       const resp = await api.updateService(service.id, {
         name: editForm.name,
-        workload_name: editForm.workload_name,
-        target_port: port,
+        container_fqdn: editForm.container_fqdn,
+        container_port: port,
       });
-      addFlash("success", "Service updated");
+      addFlash("success", "TCP service updated");
       if (resp.warning) addFlash("warning", resp.warning);
       setMode(null);
       load();
@@ -94,27 +90,19 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
     if (!service) return;
     try {
       await api.deleteService(service.id);
-      onNavigate("services");
+      onNavigate("tcp-services");
     } catch (e) {
       addFlash("error", String(e));
       setMode(null);
     }
   }
 
-  const workloadOptions: SelectProps.Option[] = workloads.map((w) => ({
-    value: w.name,
-    label: w.name,
-    description: w.phase,
-  }));
-
-  const editWorkloadOption = workloadOptions.find((o) => o.value === editForm.workload_name) ?? null;
-
   if (loading) return <Spinner />;
   if (!service) {
     return (
-      <ContentLayout header={<Header variant="h1">Service not found</Header>}>
-        <Button variant="inline-link" onClick={() => onNavigate("services")}>
-          ← Back to Services
+      <ContentLayout header={<Header variant="h1">TCP service not found</Header>}>
+        <Button variant="inline-link" onClick={() => onNavigate("tcp-services")}>
+          ← Back to TCP Services
         </Button>
       </ContentLayout>
     );
@@ -140,11 +128,11 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
       }
     >
       <SpaceBetween size="l">
-        <Button variant="inline-link" onClick={() => onNavigate("services")}>
-          ← Back to Services
+        <Button variant="inline-link" onClick={() => onNavigate("tcp-services")}>
+          ← Back to TCP Services
         </Button>
 
-        <Container header={<Header variant="h2">Service details</Header>}>
+        <Container header={<Header variant="h2">TCP service details</Header>}>
           <ColumnLayout columns={3} variant="text-grid">
             <div>
               <Box variant="awsui-key-label">Name</Box>
@@ -159,12 +147,12 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
               <Box>{formatAge(service.created_at)}</Box>
             </div>
             <div>
-              <Box variant="awsui-key-label">Workload</Box>
-              <Box>{service.workload_name}</Box>
+              <Box variant="awsui-key-label">Container FQDN</Box>
+              <Box>{service.container_fqdn}</Box>
             </div>
             <div>
               <Box variant="awsui-key-label">Container port</Box>
-              <Box>{service.target_port}</Box>
+              <Box>{service.container_port}</Box>
             </div>
             <div>
               <Box variant="awsui-key-label">System port</Box>
@@ -190,7 +178,7 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
       <Modal
         visible={mode === "edit"}
         onDismiss={() => setMode(null)}
-        header="Edit service"
+        header="Edit TCP service"
         footer={
           <SpaceBetween direction="horizontal" size="xs">
             <Button variant="link" onClick={() => setMode(null)}>Cancel</Button>
@@ -207,16 +195,11 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
                 placeholder="api"
               />
             </FormField>
-            <FormField label="Workload" constraintText="Required">
-              <Select
-                filteringType="auto"
-                options={workloadOptions}
-                selectedOption={editWorkloadOption}
-                onChange={(e) =>
-                  setEditForm((f) => ({ ...f, workload_name: e.detail.selectedOption.value ?? "" }))
-                }
-                placeholder="Select a workload"
-                empty="No workloads available"
+            <FormField label="Container FQDN" description='e.g. "ecouniversal" or "backend.myapp"' constraintText="Required">
+              <Input
+                value={editForm.container_fqdn}
+                onChange={(e) => setEditForm((f) => ({ ...f, container_fqdn: e.detail.value }))}
+                placeholder="ecouniversal"
               />
             </FormField>
             <FormField
@@ -226,8 +209,8 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
             >
               <Input
                 type="number"
-                value={editForm.target_port}
-                onChange={(e) => setEditForm((f) => ({ ...f, target_port: e.detail.value }))}
+                value={editForm.container_port}
+                onChange={(e) => setEditForm((f) => ({ ...f, container_port: e.detail.value }))}
                 placeholder="3000"
               />
             </FormField>
@@ -239,7 +222,7 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
       <Modal
         visible={mode === "delete-confirm"}
         onDismiss={() => setMode(null)}
-        header="Delete service"
+        header="Delete TCP service"
         footer={
           <SpaceBetween direction="horizontal" size="xs">
             <Button variant="link" onClick={() => setMode(null)}>Cancel</Button>
@@ -247,7 +230,7 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
           </SpaceBetween>
         }
       >
-        Are you sure you want to delete service <strong>{service.name}</strong>? This cannot be undone.
+        Are you sure you want to delete TCP service <strong>{service.name}</strong>? This cannot be undone.
       </Modal>
     </ContentLayout>
   );

@@ -9,12 +9,10 @@ import {
   Header,
   Input,
   Modal,
-  Select,
-  SelectProps,
   SpaceBetween,
   Table,
 } from "@cloudscape-design/components";
-import { api, Service, WorkloadInfo } from "../api";
+import { api, Service } from "../api";
 import { formatAge } from "../api";
 
 interface Props {
@@ -23,22 +21,20 @@ interface Props {
 
 export default function Services({ onNavigate }: Props) {
   const [services, setServices] = useState<Service[]>([]);
-  const [workloads, setWorkloads] = useState<WorkloadInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState({
     name: "",
-    workload_name: "",
-    target_port: "",
+    container_fqdn: "",
+    container_port: "",
   });
   const [selected, setSelected] = useState<Service[]>([]);
 
   const load = useCallback(async () => {
     try {
-      const [data, state] = await Promise.all([api.listServices(), api.getState()]);
+      const data = await api.listServices();
       setServices(data ?? []);
-      setWorkloads(state?.workloads ?? []);
     } catch (e) {
       addFlash("error", String(e));
     } finally {
@@ -61,24 +57,24 @@ export default function Services({ onNavigate }: Props) {
   }
 
   async function handleCreate() {
-    const port = parseInt(createForm.target_port, 10);
-    if (!createForm.name || !createForm.workload_name || isNaN(port) || port <= 0) {
-      addFlash("error", "Name, workload, and a valid container port are required");
+    const port = parseInt(createForm.container_port, 10);
+    if (!createForm.name || !createForm.container_fqdn || isNaN(port) || port <= 0) {
+      addFlash("error", "Name, container FQDN, and a valid container port are required");
       return;
     }
     try {
       const resp = await api.createService({
         name: createForm.name,
-        workload_name: createForm.workload_name,
-        target_port: port,
+        container_fqdn: createForm.container_fqdn,
+        container_port: port,
       });
       if (!resp.accepted) {
         addFlash("error", resp.reason ?? "rejected");
       } else {
-        addFlash("success", `Service ${resp.service_id} created (port ${resp.system_port})`);
+        addFlash("success", `TCP service ${resp.service_id} created (system port ${resp.system_port})`);
         if (resp.warning) addFlash("warning", resp.warning);
         setCreating(false);
-        setCreateForm({ name: "", workload_name: "", target_port: "" });
+        setCreateForm({ name: "", container_fqdn: "", container_port: "" });
         load();
       }
     } catch (e) {
@@ -99,31 +95,22 @@ export default function Services({ onNavigate }: Props) {
     load();
   }
 
-  const workloadOptions: SelectProps.Option[] = workloads.map((w) => ({
-    value: w.name,
-    label: w.name,
-    description: w.phase,
-  }));
-
-  const selectedWorkloadOption =
-    workloadOptions.find((o) => o.value === createForm.workload_name) ?? null;
-
   return (
     <ContentLayout
       notifications={<Flashbar items={flash} />}
       header={
         <Header
           variant="h1"
-          description="Named TCP endpoints for container-to-container communication. Each service gets a stable port and is reachable via DNS at <name>.svc.local."
+          description="Named TCP endpoints for workloads. Internally, each TCP service allocates a system port on the node running the workload; proxyd listens on that port and forwards traffic to the container. The service is reachable both within the cluster (via DNS at <name>.<workload>.svc.local) and from outside the cluster (directly at <node-data-ip>:<system-port>)."
           actions={<Button iconName="refresh" onClick={load}>Refresh</Button>}
         >
-          Services
+          TCP Services
         </Header>
       }
     >
       <Table
         loading={loading}
-        loadingText="Loading services"
+        loadingText="Loading TCP services"
         header={
           <Header
             actions={
@@ -132,12 +119,12 @@ export default function Services({ onNavigate }: Props) {
                   Delete
                 </Button>
                 <Button variant="primary" onClick={() => setCreating(true)}>
-                  Create service
+                  Create TCP service
                 </Button>
               </SpaceBetween>
             }
           >
-            Services
+            TCP Services
           </Header>
         }
         selectionType="multi"
@@ -156,20 +143,20 @@ export default function Services({ onNavigate }: Props) {
             ),
           },
           { id: "system_port", header: "System port", cell: (s) => s.system_port },
-          { id: "workload", header: "Workload", cell: (s) => s.workload_name },
-          { id: "target_port", header: "Target port", cell: (s) => s.target_port },
+          { id: "container_fqdn", header: "Container FQDN", cell: (s) => s.container_fqdn },
+          { id: "container_port", header: "Container port", cell: (s) => s.container_port },
           { id: "dns", header: "DNS", cell: (s) => `${s.name}.svc.local` },
           { id: "age", header: "Age", cell: (s) => formatAge(s.created_at) },
         ]}
         items={services}
-        empty="No services"
+        empty="No TCP services"
       />
 
       {/* ── Create modal ─────────────────────────────────────────────── */}
       <Modal
         visible={creating}
         onDismiss={() => setCreating(false)}
-        header="Create service"
+        header="Create TCP service"
         footer={
           <SpaceBetween direction="horizontal" size="xs">
             <Button variant="link" onClick={() => setCreating(false)}>
@@ -190,23 +177,18 @@ export default function Services({ onNavigate }: Props) {
                 placeholder="api"
               />
             </FormField>
-            <FormField label="Workload" constraintText="Required">
-              <Select
-                filteringType="auto"
-                options={workloadOptions}
-                selectedOption={selectedWorkloadOption}
-                onChange={(e) =>
-                  setCreateForm((f) => ({ ...f, workload_name: e.detail.selectedOption.value ?? "" }))
-                }
-                placeholder="Select a workload"
-                empty="No workloads available"
+            <FormField label="Container FQDN" description='Container name, e.g. "ecouniversal" or "backend.myapp" for compose' constraintText="Required">
+              <Input
+                value={createForm.container_fqdn}
+                onChange={(e) => setCreateForm((f) => ({ ...f, container_fqdn: e.detail.value }))}
+                placeholder="ecouniversal"
               />
             </FormField>
             <FormField label="Container port" description="Port the container listens on" constraintText="Required">
               <Input
                 type="number"
-                value={createForm.target_port}
-                onChange={(e) => setCreateForm((f) => ({ ...f, target_port: e.detail.value }))}
+                value={createForm.container_port}
+                onChange={(e) => setCreateForm((f) => ({ ...f, container_port: e.detail.value }))}
                 placeholder="3000"
               />
             </FormField>

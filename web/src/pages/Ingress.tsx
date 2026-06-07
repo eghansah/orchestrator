@@ -14,33 +14,32 @@ import {
   SpaceBetween,
   Table,
 } from "@cloudscape-design/components";
-import { api, IngressRule, Domain, Service } from "../api";
+
+import { api, IngressRule, Domain } from "../api";
 import { formatAge } from "../api";
 
 export default function Ingress() {
   const [rules, setRules] = useState<IngressRule[]>([]);
   const [domains, setDomains] = useState<Domain[]>([]);
-  const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState({
     domain_id: "",
     path_prefix: "/",
-    service_name: "",
+    container_fqdn: "",
+    container_port: "",
   });
   const [selected, setSelected] = useState<IngressRule[]>([]);
 
   const load = useCallback(async () => {
     try {
-      const [rulesData, domainsData, servicesData] = await Promise.all([
+      const [rulesData, domainsData] = await Promise.all([
         api.listIngress(),
         api.listDomains(),
-        api.listServices(),
       ]);
       setRules(rulesData ?? []);
       setDomains(domainsData ?? []);
-      setServices(servicesData ?? []);
     } catch (e) {
       addFlash("error", String(e));
     } finally {
@@ -63,26 +62,32 @@ export default function Ingress() {
   }
 
   async function handleCreate() {
+    const port = parseInt(createForm.container_port, 10);
     if (!createForm.domain_id) {
       addFlash("error", "A domain is required");
       return;
     }
-    if (!createForm.service_name) {
-      addFlash("error", "A service is required");
+    if (!createForm.container_fqdn) {
+      addFlash("error", "A container FQDN is required");
+      return;
+    }
+    if (isNaN(port) || port <= 0) {
+      addFlash("error", "A valid container port is required");
       return;
     }
     try {
       const resp = await api.createIngress({
         domain_id: createForm.domain_id,
         path_prefix: createForm.path_prefix || "/",
-        service_name: createForm.service_name,
+        container_fqdn: createForm.container_fqdn,
+        container_port: port,
       });
       if (!resp.accepted) {
         addFlash("error", "rejected");
       } else {
-        addFlash("success", `Rule ${resp.rule_id} created`);
+        addFlash("success", `Web service ${resp.rule_id} created (system port ${resp.system_port})`);
         setCreating(false);
-        setCreateForm({ domain_id: "", path_prefix: "/", service_name: "" });
+        setCreateForm({ domain_id: "", path_prefix: "/", container_fqdn: "", container_port: "" });
         load();
       }
     } catch (e) {
@@ -113,15 +118,6 @@ export default function Ingress() {
   const selectedDomainOption =
     domainOptions.find((o) => o.value === createForm.domain_id) ?? null;
 
-  const serviceOptions: SelectProps.Option[] = services.map((s) => ({
-    value: s.name,
-    label: s.name,
-    description: `port ${s.system_port} → ${s.workload_name}`,
-  }));
-
-  const selectedServiceOption =
-    serviceOptions.find((o) => o.value === createForm.service_name) ?? null;
-
   const domainNameById = (id: string) =>
     domains.find((d) => d.id === id)?.name ?? id;
 
@@ -131,16 +127,16 @@ export default function Ingress() {
       header={
         <Header
           variant="h1"
-          description="HTTP routing rules that direct inbound traffic to containers by domain and URL path prefix. Longest prefix wins."
+          description="HTTP/HTTPS routing rules that direct inbound web traffic to workloads by domain and URL path prefix. Internally, ingressd drives an HAProxy frontend that matches the Host header and path, then forwards to the TCP service backing the workload. Longest path prefix wins."
           actions={<Button iconName="refresh" onClick={load}>Refresh</Button>}
         >
-          Ingress
+          Web Services
         </Header>
       }
     >
       <Table
         loading={loading}
-        loadingText="Loading ingress rules"
+        loadingText="Loading web services"
         header={
           <Header
             actions={
@@ -149,12 +145,12 @@ export default function Ingress() {
                   Delete
                 </Button>
                 <Button variant="primary" onClick={() => setCreating(true)}>
-                  Create rule
+                  Create web service
                 </Button>
               </SpaceBetween>
             }
           >
-            Ingress rules
+            Web Services
           </Header>
         }
         selectionType="multi"
@@ -165,17 +161,19 @@ export default function Ingress() {
           { id: "id", header: "ID", cell: (r) => r.id },
           { id: "domain", header: "Domain", cell: (r) => domainNameById(r.domain_id) || r.host || "—" },
           { id: "path", header: "Path", cell: (r) => r.path_prefix || "/" },
-          { id: "service", header: "Service", cell: (r) => r.service_name },
+          { id: "container_fqdn", header: "Container FQDN", cell: (r) => r.container_fqdn },
+          { id: "container_port", header: "Container port", cell: (r) => r.container_port },
+          { id: "system_port", header: "System port", cell: (r) => r.system_port },
           { id: "age", header: "Age", cell: (r) => formatAge(r.created_at) },
         ]}
         items={rules}
-        empty="No ingress rules"
+        empty="No web services"
       />
 
       <Modal
         visible={creating}
         onDismiss={() => setCreating(false)}
-        header="Create ingress rule"
+        header="Create web service"
         footer={
           <SpaceBetween direction="horizontal" size="xs">
             <Button variant="link" onClick={() => setCreating(false)}>
@@ -213,19 +211,26 @@ export default function Ingress() {
               />
             </FormField>
             <FormField
-              label="Service"
-              description="The service to route matching requests to"
+              label="Container FQDN"
+              description='Container name, e.g. "ecouniversal" or "backend.myapp" for compose'
               constraintText="Required"
             >
-              <Select
-                filteringType="auto"
-                options={serviceOptions}
-                selectedOption={selectedServiceOption}
-                onChange={(e) =>
-                  setCreateForm((f) => ({ ...f, service_name: e.detail.selectedOption.value ?? "" }))
-                }
-                placeholder="Select a service"
-                empty="No services available — create one in the Services page first"
+              <Input
+                value={createForm.container_fqdn}
+                onChange={(e) => setCreateForm((f) => ({ ...f, container_fqdn: e.detail.value }))}
+                placeholder="ecouniversal"
+              />
+            </FormField>
+            <FormField
+              label="Container port"
+              description="Port the container listens on"
+              constraintText="Required"
+            >
+              <Input
+                type="number"
+                value={createForm.container_port}
+                onChange={(e) => setCreateForm((f) => ({ ...f, container_port: e.detail.value }))}
+                placeholder="8080"
               />
             </FormField>
           </SpaceBetween>

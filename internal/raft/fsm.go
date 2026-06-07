@@ -40,10 +40,12 @@ type command struct {
 }
 
 const (
-	portPoolStart    uint32 = 30000
-	portPoolEnd      uint32 = 32767
-	svcPortPoolStart uint32 = 40000
-	svcPortPoolEnd   uint32 = 42767
+	portPoolStart        uint32 = 30000
+	portPoolEnd          uint32 = 32767
+	svcPortPoolStart     uint32 = 40000
+	svcPortPoolEnd       uint32 = 42767
+	ingressPortPoolStart uint32 = 43000
+	ingressPortPoolEnd   uint32 = 45767
 )
 
 // ClusterState is the desired-state view maintained by the FSM.
@@ -188,6 +190,20 @@ func (f *fsm) Apply(l *raft.Log) any {
 		}
 		if f.state.IngressRules == nil {
 			f.state.IngressRules = make(map[string]types.IngressRule)
+		}
+		// Auto-assign system port from the ingress pool on first creation.
+		if rule.SystemPort == 0 {
+			inUse := make(map[uint32]bool)
+			for _, r := range f.state.IngressRules {
+				if r.SystemPort > 0 {
+					inUse[r.SystemPort] = true
+				}
+			}
+			port := scanFreePort(inUse, ingressPortPoolStart, ingressPortPoolEnd)
+			if port == 0 {
+				return fmt.Errorf("ingress port pool exhausted")
+			}
+			rule.SystemPort = port
 		}
 		f.state.IngressRules[rule.ID] = rule
 

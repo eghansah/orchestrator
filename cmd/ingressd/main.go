@@ -401,6 +401,15 @@ func (d *daemon) generateHAProxyCfg(cfg ingresscfg.Config) string {
 	for _, b := range cfg.Backends {
 		id := safeID(b.ID)
 		fmt.Fprintf(&sb, "backend be_%s\n", id)
+		prefix := b.PathPrefix
+		if prefix == "" {
+			prefix = "/"
+		}
+		if prefix != "/" {
+			// Strip the prefix before forwarding so the app receives requests at its own root.
+			// ^/prefix/?(.*)$ → /\1 handles /prefix, /prefix/, and /prefix/anything.
+			fmt.Fprintf(&sb, "    http-request replace-path ^%s/?(.*)$ /\\1\n", rePathEscape(prefix))
+		}
 		fmt.Fprintf(&sb, "    server primary %s:%d check\n", b.NodeDataIP, b.SystemPort)
 		sb.WriteString("\n")
 	}
@@ -410,6 +419,20 @@ func (d *daemon) generateHAProxyCfg(cfg ingresscfg.Config) string {
 	sb.WriteString("    http-request deny deny_status 502\n")
 	sb.WriteString("\n")
 
+	return sb.String()
+}
+
+// rePathEscape escapes regex metacharacters in a path prefix for use in HAProxy
+// replace-path patterns. Path segments rarely contain these but we escape to be safe.
+func rePathEscape(s string) string {
+	var sb strings.Builder
+	for _, c := range s {
+		switch c {
+		case '.', '+', '?', '*', '(', ')', '[', ']', '{', '}', '^', '$', '|', '\\':
+			sb.WriteRune('\\')
+		}
+		sb.WriteRune(c)
+	}
 	return sb.String()
 }
 

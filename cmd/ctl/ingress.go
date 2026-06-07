@@ -43,15 +43,15 @@ func ingressListCmd(server string, args []string) {
 	}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(tw, "ID\tHOST\tPATH\tSERVICE\tAGE")
+	fmt.Fprintln(tw, "ID\tHOST\tPATH\tCONTAINER FQDN\tPORT\tSYSTEM PORT\tAGE")
 	for _, r := range resp.Rules {
 		host := fmtOrDash(r.Host)
 		path := r.PathPrefix
 		if path == "" {
 			path = "/"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			r.Id, host, path, r.ServiceName, fmtAge(r.CreatedAt),
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%s\n",
+			r.Id, host, path, r.ContainerFqdn, r.ContainerPort, r.SystemPort, fmtAge(r.CreatedAt),
 		)
 	}
 	_ = tw.Flush()
@@ -61,15 +61,21 @@ func ingressCreateCmd(server string, args []string) {
 	fs := flag.NewFlagSet("ingress create", flag.ExitOnError)
 	host := fs.String("host", "", "Host header to match (empty = match all)")
 	path := fs.String("path", "/", "URL path prefix to match")
-	service := fs.String("service", "", "service name to route to")
+	fqdn := fs.String("fqdn", "", "container FQDN: \"workload\" or \"service.workload\"")
+	port := fs.Uint("port", 0, "container port to route to")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: ctl ingress create --service NAME [--host HOST] [--path PREFIX]")
+		fmt.Fprintln(os.Stderr, "Usage: ctl ingress create --fqdn FQDN --port PORT [--host HOST] [--path PREFIX]")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
 
-	if *service == "" {
-		fmt.Fprintln(os.Stderr, "error: --service is required")
+	if *fqdn == "" {
+		fmt.Fprintln(os.Stderr, "error: --fqdn is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+	if *port == 0 {
+		fmt.Fprintln(os.Stderr, "error: --port is required")
 		fs.Usage()
 		os.Exit(1)
 	}
@@ -80,9 +86,10 @@ func ingressCreateCmd(server string, args []string) {
 	defer cancel()
 
 	resp, err := client.CreateIngress(c, &gen.CreateIngressRequest{
-		Host:        *host,
-		PathPrefix:  *path,
-		ServiceName: *service,
+		Host:          *host,
+		PathPrefix:    *path,
+		ContainerFqdn: *fqdn,
+		ContainerPort: uint32(*port),
 	})
 	if err != nil {
 		die("create ingress: %v", err)
@@ -90,7 +97,7 @@ func ingressCreateCmd(server string, args []string) {
 	if !resp.Accepted {
 		die("rejected: %s", resp.Reason)
 	}
-	fmt.Printf("created ingress rule %s\n", resp.RuleId)
+	fmt.Printf("created web service %s (system port %d)\n", resp.RuleId, resp.SystemPort)
 }
 
 func ingressDeleteCmd(server string, args []string) {

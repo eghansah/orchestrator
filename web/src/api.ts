@@ -108,29 +108,32 @@ export interface IngressRule {
   domain_id: string;
   host: string;
   path_prefix: string;
-  service_name: string;
+  container_fqdn: string;
+  container_port: number;
+  system_port: number;
   created_at: number; // unix seconds
 }
 
 export interface CreateIngressRequest {
   domain_id: string;
   path_prefix: string;
-  service_name: string;
+  container_fqdn: string;
+  container_port: number;
 }
 
 export interface Service {
   id: string;
   name: string;
-  workload_name: string;
-  target_port: number;
+  container_fqdn: string;
+  container_port: number;
   system_port: number;
   created_at: number; // unix seconds
 }
 
 export interface CreateServiceRequest {
   name: string;
-  workload_name: string;
-  target_port: number;
+  container_fqdn: string;
+  container_port: number;
 }
 
 export interface Domain {
@@ -315,7 +318,7 @@ export const api = {
     request<MutationResult>("POST", `/api/nodes/${id}/drain`),
   listIngress: () => request<IngressRule[]>("GET", "/api/ingress"),
   createIngress: (req: CreateIngressRequest) =>
-    request<{ rule_id: string; accepted: boolean }>(
+    request<{ rule_id: string; system_port: number; accepted: boolean }>(
       "POST",
       "/api/ingress",
       req

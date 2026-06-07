@@ -532,9 +532,10 @@ func (x *GetClusterStateResponse) GetLeaderId() string {
 
 type CreateIngressRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Host          string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`                                  // Host header to match; empty = match all
-	PathPrefix    string                 `protobuf:"bytes,2,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`    // URL path prefix; empty = "/"
-	ServiceName   string                 `protobuf:"bytes,3,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"` // target service name
+	Host          string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`                                              // Host header to match; empty = match all
+	PathPrefix    string                 `protobuf:"bytes,2,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`                // URL path prefix; empty = "/"
+	ContainerFqdn string                 `protobuf:"bytes,3,opt,name=container_fqdn,json=containerFqdn,proto3" json:"container_fqdn,omitempty"`       // target container: "workload" or "service.workload"
+	ContainerPort uint32                 `protobuf:"varint,4,opt,name=container_port,json=containerPort,proto3" json:"container_port,omitempty"`      // port the container listens on
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -583,11 +584,18 @@ func (x *CreateIngressRequest) GetPathPrefix() string {
 	return ""
 }
 
-func (x *CreateIngressRequest) GetServiceName() string {
+func (x *CreateIngressRequest) GetContainerFqdn() string {
 	if x != nil {
-		return x.ServiceName
+		return x.ContainerFqdn
 	}
 	return ""
+}
+
+func (x *CreateIngressRequest) GetContainerPort() uint32 {
+	if x != nil {
+		return x.ContainerPort
+	}
+	return 0
 }
 
 type CreateIngressResponse struct {
@@ -595,6 +603,7 @@ type CreateIngressResponse struct {
 	RuleId        string                 `protobuf:"bytes,1,opt,name=rule_id,json=ruleId,proto3" json:"rule_id,omitempty"`
 	Accepted      bool                   `protobuf:"varint,2,opt,name=accepted,proto3" json:"accepted,omitempty"`
 	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	SystemPort    uint32                 `protobuf:"varint,4,opt,name=system_port,json=systemPort,proto3" json:"system_port,omitempty"` // auto-assigned from ingress pool
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -828,9 +837,9 @@ func (x *ListIngressResponse) GetRules() []*IngressRule {
 
 type CreateServiceRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                     // short DNS label, e.g. "api"
-	WorkloadName  string                 `protobuf:"bytes,2,opt,name=workload_name,json=workloadName,proto3" json:"workload_name,omitempty"` // stable workload name (Container.Name or Stack.Name)
-	TargetPort    uint32                 `protobuf:"varint,3,opt,name=target_port,json=targetPort,proto3" json:"target_port,omitempty"`      // container port to proxy to
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                              // short DNS label, e.g. "api"
+	ContainerFqdn string                 `protobuf:"bytes,2,opt,name=container_fqdn,json=containerFqdn,proto3" json:"container_fqdn,omitempty"`       // target container: "workload" or "service.workload"
+	ContainerPort uint32                 `protobuf:"varint,3,opt,name=container_port,json=containerPort,proto3" json:"container_port,omitempty"`      // port the container listens on
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -872,16 +881,16 @@ func (x *CreateServiceRequest) GetName() string {
 	return ""
 }
 
-func (x *CreateServiceRequest) GetWorkloadName() string {
+func (x *CreateServiceRequest) GetContainerFqdn() string {
 	if x != nil {
-		return x.WorkloadName
+		return x.ContainerFqdn
 	}
 	return ""
 }
 
-func (x *CreateServiceRequest) GetTargetPort() uint32 {
+func (x *CreateServiceRequest) GetContainerPort() uint32 {
 	if x != nil {
-		return x.TargetPort
+		return x.ContainerPort
 	}
 	return 0
 }

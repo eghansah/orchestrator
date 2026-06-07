@@ -283,22 +283,23 @@ ctl --server $ORCHESTRATOR_SERVER status
 ```bash
 SERVER=192.168.1.10:7946
 
-# Run a test container
+# Run a test container (publish port 80)
 ctl --server $SERVER run --name smoke nginx:alpine -p 80
 
 # Wait for running phase
 ctl --server $SERVER ps
 
-# Create an ingress rule
-WORKLOAD_ID=$(ctl --server $SERVER ps | grep smoke | awk '{print $1}')
-ctl --server $SERVER ingress create --workload $WORKLOAD_ID --port 80
+# Create a TCP service
+ctl --server $SERVER service create --name smoke-tcp --fqdn smoke --port 80
+# → created TCP service <id> (system port 40000)
 
-# Hit the ingress on any node
-curl -s -o /dev/null -w "%{http_code}" http://192.168.1.10:8080/
+# Hit the TCP service directly on any node
+curl -s -o /dev/null -w "%{http_code}" http://192.168.1.10:40000/
 # → 200
 
 # Clean up
-ctl --server $SERVER rm $WORKLOAD_ID
+ctl --server $SERVER service delete <id>
+ctl --server $SERVER rm smoke
 ```
 
 ---
@@ -430,7 +431,122 @@ sudo systemctl enable --now haproxy
 
 ---
 
-## 10. Access the web console  <!-- previously section 9 -->
+## 10. TCP Services
+
+A **TCP service** exposes a container as a named, stable TCP endpoint. The cluster auto-assigns a **system port** in the range 40000–42767. proxyd listens on that port on every node's data IP and forwards connections to the container, regardless of which node the container is running on.
+
+### Prerequisites
+
+- The workload must be running and the container must publish the target port in its spec (e.g. `-p 8080` in `ctl run`).
+- proxyd must be running on each node (see section 9).
+
+### Container FQDN format
+
+The FQDN identifies which container to route traffic to:
+
+| Workload type | FQDN format | Example |
+|---|---|---|
+| Single container named `api` | `api` | `api` |
+| Compose stack `myapp`, service `backend` | `backend.myapp` | `backend.myapp` |
+
+### Create a TCP service
+
+```bash
+ctl --server $SERVER service create \
+  --name api \
+  --fqdn ecouniversal \
+  --port 8080
+# → created TCP service abc123 (system port 40000)
+```
+
+`--name` is the short DNS label used to reach the service within the cluster.
+`--fqdn` is the container FQDN.
+`--port` is the port the container listens on.
+
+### List and delete
+
+```bash
+ctl --server $SERVER service list
+# ID        NAME   SYSTEM PORT   CONTAINER FQDN   CONTAINER PORT   AGE
+# abc123    api    40000         ecouniversal      8080             2m
+
+ctl --server $SERVER service delete abc123
+```
+
+### Reaching the service
+
+| From | Address |
+|---|---|
+| Any cluster container (via DNS) | `api.svc.local:40000` |
+| Any node externally | `<node-data-ip>:40000` |
+
+The DNS name (`api.svc.local`) resolves to the node's data IP via proxyd. The system port is the same on every node, so any node's IP reaches the container regardless of placement.
+
+---
+
+## 11. Web Services
+
+A **web service** routes inbound HTTP/HTTPS traffic to a container based on the `Host` header and an optional URL path prefix. Each web service gets its own **system port** in the range 43000–45767, managed independently — no TCP service is required first.
+
+ingressd's HAProxy matches the request, strips the path prefix if configured, and forwards to the container via proxyd.
+
+### Prerequisites
+
+- A **domain** must be registered in the cluster with a valid TLS certificate (see the Domains section in the web console or `ctl domain` commands).
+- ingressd must be running (see section 9).
+- The workload must be running and publish the target port.
+
+### Create a web service
+
+```bash
+ctl --server $SERVER ingress create \
+  --host myapp.example.com \
+  --fqdn ecouniversal \
+  --port 8080
+# → created web service def456 (system port 43000)
+```
+
+With a path prefix (multiple apps on one domain):
+
+```bash
+ctl --server $SERVER ingress create \
+  --host myapp.example.com \
+  --path /api \
+  --fqdn backend.myapp \
+  --port 3000
+
+ctl --server $SERVER ingress create \
+  --host myapp.example.com \
+  --path / \
+  --fqdn frontend.myapp \
+  --port 80
+```
+
+Longest path prefix wins — `/api` is matched before `/`.
+
+The path prefix is **stripped** before the request reaches the container. A request for `GET /api/users` arrives at the container as `GET /users`.
+
+### List and delete
+
+```bash
+ctl --server $SERVER ingress list
+# ID        HOST                PATH   CONTAINER FQDN     PORT   SYSTEM PORT   AGE
+# def456    myapp.example.com   /      ecouniversal        8080   43000         5m
+
+ctl --server $SERVER ingress delete def456
+```
+
+### Via the web console
+
+Web services can also be managed from the **Web Services** page in the console, or from the **Domains** page where you can add routes directly to a domain by clicking **Add route**.
+
+### TLS
+
+TLS is terminated by ingressd using the certificate stored against the domain. The container receives plain HTTP — no TLS configuration is needed on the container side. Upload or generate a certificate in the **Domains** page before creating the web service.
+
+---
+
+## 12. Access the web console
 
 Open `http://192.168.1.10:7948` in a browser. Log in with:
 
@@ -441,7 +557,7 @@ Open `http://192.168.1.10:7948` in a browser. Log in with:
 
 ---
 
-## 11. Upgrading
+## 13. Upgrading
 
 Rolling upgrade — no downtime:
 

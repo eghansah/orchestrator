@@ -91,23 +91,25 @@ message Node {
 // ── Ingress ───────────────────────────────────────────────────────────────────
 
 message IngressRule {
-  string id           = 1;
-  string host         = 2; // Host header to match; empty = match all
-  string path_prefix  = 3; // URL path prefix to match; empty = "/"
-  string service_name = 4; // target service (routes via named Service record)
-  int64  created_at   = 5; // unix seconds
+  string id             = 1;
+  string host           = 2; // Host header to match; empty = match all
+  string path_prefix    = 3; // URL path prefix to match; empty = "/"
+  string container_fqdn = 4; // target container: "workload" or "service.workload"
+  uint32 container_port = 5; // port the container listens on
+  uint32 system_port    = 6; // auto-assigned from ingress pool (43000–45767)
+  int64  created_at     = 7; // unix seconds
 }
 
 // ── Service discovery ─────────────────────────────────────────────────────────
 
-// Service exposes a named TCP endpoint for a workload. The system auto-assigns
-// a port from the service pool (40000–42767). Containers reach it via DNS
-// <name>.svc.local on that port.
+// Service exposes a named TCP endpoint for a container. The system auto-assigns
+// a port from the service pool (40000–42767). Clients reach it via
+// nodeDataIP:SystemPort; proxyd forwards to the container.
 message Service {
   string id             = 1;
   string name           = 2; // short DNS label, e.g. "api"
-  string workload_name  = 3; // stable workload name (Container.Name or Stack.Name)
-  uint32 target_port    = 4; // container port to proxy to
+  string container_fqdn = 3; // target container: "workload" or "service.workload"
+  uint32 container_port = 4; // port the container listens on
   uint32 system_port    = 5; // auto-assigned host port (40000–42767)
   int64  created_at     = 6; // unix seconds
 }

@@ -30,7 +30,7 @@ import Templates from "./pages/Templates";
 import ServiceDetail from "./pages/ServiceDetail";
 import Docs from "./pages/Docs";
 
-type Page = "overview" | "workloads" | "containers" | "templates" | "nodes" | "ingress" | "services" | "domains" | "users" | "docs" | string;
+type Page = "overview" | "workloads" | "containers" | "templates" | "nodes" | "web-services" | "tcp-services" | "domains" | "users" | "docs" | string;
 
 const NAV_ITEMS: SideNavigationProps.Item[] = [
   { type: "link", text: "Overview", href: "#overview" },
@@ -51,9 +51,9 @@ const NAV_ITEMS: SideNavigationProps.Item[] = [
     text: "Networking",
     defaultExpanded: true,
     items: [
-      { type: "link", text: "Ingress", href: "#ingress" },
       { type: "link", text: "Domains", href: "#domains" },
-      { type: "link", text: "Services", href: "#services" },
+      { type: "link", text: "Web Services", href: "#web-services" },
+      { type: "link", text: "TCP Services", href: "#tcp-services" },
     ],
   },
   {
@@ -254,9 +254,9 @@ export default function App() {
     containers: <Containers state={state} loading={loading} error={error} refetch={refetch} />,
     templates: <Templates {...navProps} />,
     nodes: <Nodes {...navProps} />,
-    ingress: <Ingress />,
+    "web-services": <Ingress />,
+    "tcp-services": <Services onNavigate={setActivePage} />,
     domains: <Domains onNavigate={setActivePage} />,
-    services: <Services onNavigate={setActivePage} />,
     users: <Users />,
     registries: <Registries state={state} loading={loading} refetch={refetch} />,
     secrets: <Secrets state={state} loading={loading} refetch={refetch} />,

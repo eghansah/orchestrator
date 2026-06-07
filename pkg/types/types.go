@@ -121,25 +121,32 @@ type Node struct {
 	DataIP     string // routable IP for container traffic (ingress backend)
 }
 
+// IngressRule is an HTTP/HTTPS routing rule. ContainerFQDN identifies the target
+// container (e.g. "ecouniversal" or "backend.myapp") and ContainerPort is the
+// port it listens on. SystemPort is auto-assigned from the ingress pool (43000–45767)
+// and used by proxyd and ingressd to route traffic — no TCP Service required.
 type IngressRule struct {
-	ID          string
-	DomainID    string // required; host is derived from the linked Domain
-	Host        string // matched against Host header; empty = match all
-	PathPrefix  string // matched against URL path prefix; empty = "/"
-	ServiceName string // routes to this named Service
-	CreatedAt   time.Time
+	ID            string
+	DomainID      string // required; host is derived from the linked Domain
+	Host          string // matched against Host header; empty = match all
+	PathPrefix    string // matched against URL path prefix; empty = "/"
+	ContainerFQDN string // target container: "workload" or "service.workload"
+	ContainerPort uint32 // port the container listens on
+	SystemPort    uint32 // auto-assigned from ingress port pool (43000–45767)
+	CreatedAt     time.Time
 }
 
-// Service is a named TCP endpoint backed by a workload. The system auto-assigns
-// a host port in the service pool (40000–42767). Containers resolve the service
-// via DNS <name>.svc.local and connect on SystemPort.
+// Service is a named TCP endpoint. ContainerFQDN identifies the target container
+// (e.g. "ecouniversal" or "backend.myapp") and ContainerPort is the port it listens
+// on. SystemPort is auto-assigned from the service pool (40000–42767); proxyd
+// listens on nodeDataIP:SystemPort and forwards to the container.
 type Service struct {
-	ID           string
-	Name         string    // short DNS label, e.g. "api"
-	WorkloadName string    // stable workload name (Container.Name or Stack.Name)
-	TargetPort   uint32    // container port to proxy to
-	SystemPort   uint32    // auto-assigned host port
-	CreatedAt    time.Time
+	ID            string
+	Name          string    // short DNS label, e.g. "api"
+	ContainerFQDN string    // target container: "workload" or "service.workload"
+	ContainerPort uint32    // port the container listens on
+	SystemPort    uint32    // auto-assigned host port
+	CreatedAt     time.Time
 }
 
 // Domain is a named TLS-enabled virtual host. The ingress uses the stored

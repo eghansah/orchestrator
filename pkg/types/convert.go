@@ -163,43 +163,47 @@ func NodeFromProto(pn *gen.Node) Node {
 
 func ServiceToProto(s Service) *gen.Service {
 	return &gen.Service{
-		Id:           s.ID,
-		Name:         s.Name,
-		WorkloadName: s.WorkloadName,
-		TargetPort:   s.TargetPort,
-		SystemPort:   s.SystemPort,
-		CreatedAt:    s.CreatedAt.Unix(),
+		Id:            s.ID,
+		Name:          s.Name,
+		ContainerFqdn: s.ContainerFQDN,
+		ContainerPort: s.ContainerPort,
+		SystemPort:    s.SystemPort,
+		CreatedAt:     s.CreatedAt.Unix(),
 	}
 }
 
 func ServiceFromProto(ps *gen.Service) Service {
 	return Service{
-		ID:           ps.Id,
-		Name:         ps.Name,
-		WorkloadName: ps.WorkloadName,
-		TargetPort:   ps.TargetPort,
-		SystemPort:   ps.SystemPort,
-		CreatedAt:    time.Unix(ps.CreatedAt, 0),
+		ID:            ps.Id,
+		Name:          ps.Name,
+		ContainerFQDN: ps.ContainerFqdn,
+		ContainerPort: ps.ContainerPort,
+		SystemPort:    ps.SystemPort,
+		CreatedAt:     time.Unix(ps.CreatedAt, 0),
 	}
 }
 
 func IngressRuleToProto(r IngressRule) *gen.IngressRule {
 	return &gen.IngressRule{
-		Id:          r.ID,
-		Host:        r.Host,
-		PathPrefix:  r.PathPrefix,
-		ServiceName: r.ServiceName,
-		CreatedAt:   r.CreatedAt.Unix(),
+		Id:            r.ID,
+		Host:          r.Host,
+		PathPrefix:    r.PathPrefix,
+		ContainerFqdn: r.ContainerFQDN,
+		ContainerPort: r.ContainerPort,
+		SystemPort:    r.SystemPort,
+		CreatedAt:     r.CreatedAt.Unix(),
 	}
 }
 
 func IngressRuleFromProto(pr *gen.IngressRule) IngressRule {
 	return IngressRule{
-		ID:          pr.Id,
-		Host:        pr.Host,
-		PathPrefix:  pr.PathPrefix,
-		ServiceName: pr.ServiceName,
-		CreatedAt:   time.Unix(pr.CreatedAt, 0),
+		ID:            pr.Id,
+		Host:          pr.Host,
+		PathPrefix:    pr.PathPrefix,
+		ContainerFQDN: pr.ContainerFqdn,
+		ContainerPort: pr.ContainerPort,
+		SystemPort:    pr.SystemPort,
+		CreatedAt:     time.Unix(pr.CreatedAt, 0),
 	}
 }
 

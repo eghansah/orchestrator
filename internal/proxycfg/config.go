@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 
 	internraft "github.com/eghansah/orchestrator/internal/raft"
 	"github.com/eghansah/orchestrator/pkg/types"
@@ -13,7 +14,6 @@ import (
 // and (for local entries) bind a TCP listener.
 type Entry struct {
 	ServiceName   string `json:"service_name"`
-	WorkloadName  string `json:"workload_name"`
 	SystemPort    uint32 `json:"system_port"`
 	AllocatedPort uint32 `json:"allocated_port"` // loopback port nerdctl bound
 	NodeID        string `json:"node_id"`
@@ -28,8 +28,18 @@ type Config struct {
 	Entries     []Entry `json:"entries"`
 }
 
+// parseFQDN extracts the workload name from a container FQDN.
+// "ecouniversal" → "ecouniversal"; "backend.myapp" → "myapp"
+func parseFQDN(fqdn string) string {
+	if i := strings.LastIndex(fqdn, "."); i >= 0 {
+		return fqdn[i+1:]
+	}
+	return fqdn
+}
+
 // Write atomically rewrites <dataDir>/proxy/config.json from current cluster state.
-// Services whose workload is unscheduled (NodeID == "") are omitted.
+// Entries are generated for both TCP Services and IngressRules (which have their own SystemPort).
+// Entries whose workload is unscheduled (NodeID == "") are omitted.
 func Write(dataDir, localNodeID, dataIP, dnsAddr string, state internraft.ClusterState) error {
 	cfg := Config{
 		LocalNodeID: localNodeID,
@@ -38,7 +48,7 @@ func Write(dataDir, localNodeID, dataIP, dnsAddr string, state internraft.Cluste
 	}
 
 	for _, svc := range state.Services {
-		wl, ok := findWorkload(state, svc.WorkloadName)
+		wl, ok := findWorkload(state, parseFQDN(svc.ContainerFQDN))
 		if !ok || wl.NodeID == "" {
 			continue
 		}
@@ -48,9 +58,29 @@ func Write(dataDir, localNodeID, dataIP, dnsAddr string, state internraft.Cluste
 		}
 		cfg.Entries = append(cfg.Entries, Entry{
 			ServiceName:   svc.Name,
-			WorkloadName:  svc.WorkloadName,
 			SystemPort:    svc.SystemPort,
-			AllocatedPort: allocatedPortFor(wl.PortAllocations, svc.TargetPort),
+			AllocatedPort: allocatedPortFor(wl.PortAllocations, svc.ContainerPort),
+			NodeID:        wl.NodeID,
+			NodeDataIP:    node.DataIP,
+		})
+	}
+
+	for _, rule := range state.IngressRules {
+		if rule.SystemPort == 0 {
+			continue
+		}
+		wl, ok := findWorkload(state, parseFQDN(rule.ContainerFQDN))
+		if !ok || wl.NodeID == "" {
+			continue
+		}
+		node, ok := state.Nodes[wl.NodeID]
+		if !ok {
+			continue
+		}
+		cfg.Entries = append(cfg.Entries, Entry{
+			ServiceName:   rule.ID,
+			SystemPort:    rule.SystemPort,
+			AllocatedPort: allocatedPortFor(wl.PortAllocations, rule.ContainerPort),
 			NodeID:        wl.NodeID,
 			NodeDataIP:    node.DataIP,
 		})

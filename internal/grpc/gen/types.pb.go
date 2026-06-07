@@ -759,10 +759,12 @@ func (x *Node) GetDataIp() string {
 type IngressRule struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Host          string                 `protobuf:"bytes,2,opt,name=host,proto3" json:"host,omitempty"`                                  // Host header to match; empty = match all
-	PathPrefix    string                 `protobuf:"bytes,3,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`    // URL path prefix to match; empty = "/"
-	ServiceName   string                 `protobuf:"bytes,4,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"` // target service (routes via named Service record)
-	CreatedAt     int64                  `protobuf:"varint,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`      // unix seconds
+	Host          string                 `protobuf:"bytes,2,opt,name=host,proto3" json:"host,omitempty"`                                              // Host header to match; empty = match all
+	PathPrefix    string                 `protobuf:"bytes,3,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`                // URL path prefix to match; empty = "/"
+	ContainerFqdn string                 `protobuf:"bytes,4,opt,name=container_fqdn,json=containerFqdn,proto3" json:"container_fqdn,omitempty"`       // target container: "workload" or "service.workload"
+	ContainerPort uint32                 `protobuf:"varint,5,opt,name=container_port,json=containerPort,proto3" json:"container_port,omitempty"`      // port the container listens on
+	SystemPort    uint32                 `protobuf:"varint,6,opt,name=system_port,json=systemPort,proto3" json:"system_port,omitempty"`               // auto-assigned from ingress pool (43000–45767)
+	CreatedAt     int64                  `protobuf:"varint,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`                  // unix seconds
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -818,11 +820,25 @@ func (x *IngressRule) GetPathPrefix() string {
 	return ""
 }
 
-func (x *IngressRule) GetServiceName() string {
+func (x *IngressRule) GetContainerFqdn() string {
 	if x != nil {
-		return x.ServiceName
+		return x.ContainerFqdn
 	}
 	return ""
+}
+
+func (x *IngressRule) GetContainerPort() uint32 {
+	if x != nil {
+		return x.ContainerPort
+	}
+	return 0
+}
+
+func (x *IngressRule) GetSystemPort() uint32 {
+	if x != nil {
+		return x.SystemPort
+	}
+	return 0
 }
 
 func (x *IngressRule) GetCreatedAt() int64 {
@@ -832,17 +848,17 @@ func (x *IngressRule) GetCreatedAt() int64 {
 	return 0
 }
 
-// Service exposes a named TCP endpoint for a workload. The system auto-assigns
-// a port from the service pool (40000–42767). Containers reach it via DNS
-// <name>.svc.local on that port.
+// Service exposes a named TCP endpoint for a container. The system auto-assigns
+// a port from the service pool (40000–42767); proxyd listens on that port and
+// forwards to the container.
 type Service struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`                                     // short DNS label, e.g. "api"
-	WorkloadName  string                 `protobuf:"bytes,3,opt,name=workload_name,json=workloadName,proto3" json:"workload_name,omitempty"` // stable workload name (Container.Name or Stack.Name)
-	TargetPort    uint32                 `protobuf:"varint,4,opt,name=target_port,json=targetPort,proto3" json:"target_port,omitempty"`      // container port to proxy to
-	SystemPort    uint32                 `protobuf:"varint,5,opt,name=system_port,json=systemPort,proto3" json:"system_port,omitempty"`      // auto-assigned host port (40000–42767)
-	CreatedAt     int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`         // unix seconds
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`                                              // short DNS label, e.g. "api"
+	ContainerFqdn string                 `protobuf:"bytes,3,opt,name=container_fqdn,json=containerFqdn,proto3" json:"container_fqdn,omitempty"`       // target container: "workload" or "service.workload"
+	ContainerPort uint32                 `protobuf:"varint,4,opt,name=container_port,json=containerPort,proto3" json:"container_port,omitempty"`      // port the container listens on
+	SystemPort    uint32                 `protobuf:"varint,5,opt,name=system_port,json=systemPort,proto3" json:"system_port,omitempty"`               // auto-assigned host port (40000–42767)
+	CreatedAt     int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`                  // unix seconds
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -891,16 +907,16 @@ func (x *Service) GetName() string {
 	return ""
 }
 
-func (x *Service) GetWorkloadName() string {
+func (x *Service) GetContainerFqdn() string {
 	if x != nil {
-		return x.WorkloadName
+		return x.ContainerFqdn
 	}
 	return ""
 }
 
-func (x *Service) GetTargetPort() uint32 {
+func (x *Service) GetContainerPort() uint32 {
 	if x != nil {
-		return x.TargetPort
+		return x.ContainerPort
 	}
 	return 0
 }

@@ -68,24 +68,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var svc types.Service
-	var svcFound bool
-	for _, s := range state.Services {
-		if s.Name == rule.ServiceName {
-			svc = s
-			svcFound = true
-			break
-		}
-	}
-	if !svcFound {
-		http.Error(w, "service not found", http.StatusBadGateway)
-		return
-	}
-
+	workloadName := parseFQDN(rule.ContainerFQDN)
 	var wl types.Workload
 	var wlFound bool
 	for _, wk := range state.Workloads {
-		if wk.Name() == svc.WorkloadName {
+		if wk.Name() == workloadName {
 			wl = wk
 			wlFound = true
 			break
@@ -100,9 +87,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allocatedPort := allocatedPortFor(wl, svc.TargetPort)
+	allocatedPort := allocatedPortFor(wl, rule.ContainerPort)
 	if allocatedPort == 0 {
-		http.Error(w, "no allocated port for service target port", http.StatusBadGateway)
+		http.Error(w, "no allocated port for container port", http.StatusBadGateway)
 		return
 	}
 
@@ -224,6 +211,15 @@ func (p *Proxy) matchRule(state internraft.ClusterState, host, path string) (typ
 	}
 
 	return best, bestLen >= 0
+}
+
+// parseFQDN extracts the workload name from a container FQDN.
+// "ecouniversal" → "ecouniversal"; "backend.myapp" → "myapp"
+func parseFQDN(fqdn string) string {
+	if i := strings.LastIndex(fqdn, "."); i >= 0 {
+		return fqdn[i+1:]
+	}
+	return fqdn
 }
 
 func splitHostPort(hostport string) (host, port string, err error) {
