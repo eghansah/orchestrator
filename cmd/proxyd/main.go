@@ -83,14 +83,13 @@ func (d *daemon) watchConfig() {
 	}
 	defer watcher.Close()
 
-	if err := watcher.Add(d.configPath); err != nil {
-		// File may not exist yet; watch the parent directory instead.
-		dir := dirOf(d.configPath)
-		if addErr := watcher.Add(dir); addErr != nil {
-			slog.Warn("cannot watch config dir, falling back to polling", "dir", dir, "err", addErr)
-			d.pollConfig()
-			return
-		}
+	// Watch the parent directory, not the file: the config is rewritten via
+	// tmp + rename, which replaces the inode and would kill a file-level watch.
+	dir := dirOf(d.configPath)
+	if err := watcher.Add(dir); err != nil {
+		slog.Warn("cannot watch config dir, falling back to polling", "dir", dir, "err", err)
+		d.pollConfig()
+		return
 	}
 
 	for {
