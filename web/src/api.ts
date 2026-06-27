@@ -228,6 +228,53 @@ export interface CreateSecretRequest {
   value: string;
 }
 
+export interface ContainerInspectResult {
+  id: string;
+  name: string;
+  status: string;
+  running: boolean;
+  pid: number;
+  started_at: string;
+  image: string;
+  env: string[];
+  port_bindings: Record<string, { host_ip: string; host_port: string }[]>;
+  networks: { name: string; ip_address: string; gateway: string; mac_address: string }[];
+  mounts: { type: string; name: string; source: string; destination: string; mode: string; rw: boolean }[];
+}
+
+export interface NetworkListEntry {
+  network_id: string;
+  name: string;
+  driver: string;
+  ipv4: string;
+  labels: string;
+}
+
+export interface NetworkInspectResult {
+  name: string;
+  id: string;
+  driver: string;
+  subnet: string;
+  gateway: string;
+  containers: { name: string; ipv4_address: string }[];
+  labels: Record<string, string>;
+}
+
+export interface VolumeListEntry {
+  name: string;
+  driver: string;
+  mountpoint: string;
+  labels: string;
+}
+
+export interface VolumeInspectResult {
+  name: string;
+  driver: string;
+  mountpoint: string;
+  labels: Record<string, string>;
+  scope: string;
+}
+
 // ── Auth token ────────────────────────────────────────────────────────────────
 
 const TOKEN_KEY = "orchestrator_token";
@@ -323,17 +370,19 @@ export const api = {
       "/api/ingress",
       req
     ),
+  updateIngress: (id: string, req: CreateIngressRequest) =>
+    request<IngressRule>("POST", `/api/ingress/${id}/update`, req),
   deleteIngress: (id: string) =>
     request<MutationResult>("POST", `/api/ingress/${id}/delete`),
   listServices: () => request<Service[]>("GET", "/api/services"),
   createService: (req: CreateServiceRequest) =>
-    request<{ service_id: string; system_port: number; accepted: boolean; reason?: string; warning?: string }>(
+    request<{ service_id: string; system_port: number; accepted: boolean; reason?: string }>(
       "POST",
       "/api/services",
       req
     ),
   updateService: (id: string, req: CreateServiceRequest) =>
-    request<Service & { warning?: string }>("POST", `/api/services/${id}/update`, req),
+    request<Service>("POST", `/api/services/${id}/update`, req),
   deleteService: (id: string) =>
     request<MutationResult>("POST", `/api/services/${id}/delete`),
   listDomains: () => request<Domain[]>("GET", "/api/domains"),
@@ -374,6 +423,10 @@ export const api = {
     request<{ accepted: boolean; workload_id?: string; reason?: string }>("POST", `/api/templates/${id}/deploy`),
   getContainerLogs: (name: string, tail = 200) =>
     request<{ logs: string }>("GET", `/api/containers/${encodeURIComponent(name)}/logs?tail=${tail}`),
+  inspectContainer: (name: string) =>
+    request<ContainerInspectResult>("GET", `/api/containers/${encodeURIComponent(name)}/inspect`),
+  restartContainer: (name: string) =>
+    request<{ ok: boolean }>("POST", `/api/containers/${encodeURIComponent(name)}/restart`),
   getRegistryCatalog: (id: string, search?: string) =>
     request<{ repos: string[] }>(
       "GET",
@@ -394,6 +447,12 @@ export const api = {
     request<Secret>("POST", "/api/secrets", req),
   deleteSecret: (id: string) =>
     request<{ accepted: boolean }>("POST", `/api/secrets/${id}/delete`),
+  listNetworks: () => request<NetworkListEntry[]>("GET", "/api/networks"),
+  inspectNetwork: (name: string) =>
+    request<NetworkInspectResult>("GET", `/api/networks/${encodeURIComponent(name)}/inspect`),
+  listVolumes: () => request<VolumeListEntry[]>("GET", "/api/volumes"),
+  inspectVolume: (name: string) =>
+    request<VolumeInspectResult>("GET", `/api/volumes/${encodeURIComponent(name)}/inspect`),
 };
 
 // ── useClusterState hook ──────────────────────────────────────────────────────

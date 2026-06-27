@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -161,6 +162,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/nodes/{id}/drain", a(s.handleDrain))
 	mux.Handle("GET /api/ingress", a(s.handleListIngress))
 	mux.Handle("POST /api/ingress", a(s.handleCreateIngress))
+	mux.Handle("POST /api/ingress/{id}/update", a(s.handleUpdateIngress))
 	mux.Handle("POST /api/ingress/{id}/delete", a(s.handleDeleteIngress))
 	mux.Handle("GET /api/services", a(s.handleListServices))
 	mux.Handle("POST /api/services", a(s.handleCreateService))
@@ -188,6 +190,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/templates/{id}/delete", a(s.handleDeleteTemplate))
 	mux.Handle("POST /api/templates/{id}/deploy", a(s.handleDeployTemplate))
 	mux.Handle("GET /api/containers/{name}/logs", a(s.handleContainerLogs))
+	mux.Handle("GET /api/containers/{name}/inspect", a(s.handleInspectContainer))
+	mux.Handle("POST /api/containers/{name}/restart", a(s.handleRestartContainer))
 	mux.Handle("GET /api/registries/{id}/catalog", a(s.handleRegistryCatalog))
 	mux.Handle("GET /api/registries/{id}/tags", a(s.handleRegistryTags))
 	mux.Handle("GET /api/registries/{id}/env", a(s.handleRegistryEnv))
@@ -195,6 +199,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/secrets", a(s.handleCreateSecret))
 	mux.Handle("POST /api/secrets/{id}/delete", a(s.handleDeleteSecret))
 	mux.Handle("GET /api/docs/{name}", a(s.handleDocs))
+	mux.Handle("GET /api/networks", a(s.handleListNetworks))
+	mux.Handle("GET /api/networks/{name}/inspect", a(s.handleInspectNetwork))
+	mux.Handle("GET /api/volumes", a(s.handleListVolumes))
+	mux.Handle("GET /api/volumes/{name}/inspect", a(s.handleInspectVolume))
 
 	// SPA: serve embedded dist/ with index.html fallback for client-side routing.
 	sub, _ := fs.Sub(distFS, "dist")
@@ -514,6 +522,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 					StartedAt:   startedAt(svc.StartedAt),
 				})
 			}
+			sort.Slice(svcs, func(i, j int) bool { return svcs[i].Name < svcs[j].Name })
 			out.ActualStacks = append(out.ActualStacks, actualStackJSON{
 				WorkloadID: st.WorkloadID,
 				Name:       st.Name,
@@ -545,6 +554,17 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	for _, sec := range state.Secrets {
 		out.Secrets = append(out.Secrets, secretJSON{ID: sec.ID, Name: sec.Name, CreatedAt: sec.CreatedAt.Unix()})
 	}
+
+	// The slices above are built by ranging over Go maps, whose iteration
+	// order is randomized per request. Sort by a stable key so the web UI
+	// (which polls every few seconds) doesn't reshuffle rows on each refresh.
+	sort.Slice(out.Nodes, func(i, j int) bool { return out.Nodes[i].ID < out.Nodes[j].ID })
+	sort.Slice(out.Workloads, func(i, j int) bool { return out.Workloads[i].ID < out.Workloads[j].ID })
+	sort.Slice(out.ActualContainers, func(i, j int) bool { return out.ActualContainers[i].Name < out.ActualContainers[j].Name })
+	sort.Slice(out.ActualStacks, func(i, j int) bool { return out.ActualStacks[i].Name < out.ActualStacks[j].Name })
+	sort.Slice(out.ContainerStats, func(i, j int) bool { return out.ContainerStats[i].Name < out.ContainerStats[j].Name })
+	sort.Slice(out.Registries, func(i, j int) bool { return out.Registries[i].Name < out.Registries[j].Name })
+	sort.Slice(out.Secrets, func(i, j int) bool { return out.Secrets[i].Name < out.Secrets[j].Name })
 
 	writeJSON(w, out)
 }
@@ -716,6 +736,15 @@ func (s *Server) handleListIngress(w http.ResponseWriter, _ *http.Request) {
 			CreatedAt:     r.CreatedAt.Unix(),
 		})
 	}
+	sort.Slice(rules, func(i, j int) bool {
+		if rules[i].Host != rules[j].Host {
+			return rules[i].Host < rules[j].Host
+		}
+		if rules[i].PathPrefix != rules[j].PathPrefix {
+			return rules[i].PathPrefix < rules[j].PathPrefix
+		}
+		return rules[i].ID < rules[j].ID
+	})
 	writeJSON(w, rules)
 }
 
@@ -740,6 +769,10 @@ func (s *Server) handleCreateIngress(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ContainerPort == 0 {
 		writeError(w, http.StatusBadRequest, "container_port is required")
+		return
+	}
+	if msg := s.checkContainerPort(req.ContainerFQDN, req.ContainerPort); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 	if !s.peer.IsLeader() {
@@ -786,6 +819,67 @@ func (s *Server) handleDeleteIngress(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+func (s *Server) handleUpdateIngress(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		DomainID      string `json:"domain_id"`
+		PathPrefix    string `json:"path_prefix"`
+		ContainerFQDN string `json:"container_fqdn"`
+		ContainerPort uint32 `json:"container_port"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.DomainID == "" || req.ContainerFQDN == "" || req.ContainerPort == 0 {
+		writeError(w, http.StatusBadRequest, "domain_id, container_fqdn, and container_port are required")
+		return
+	}
+	if !s.peer.IsLeader() {
+		writeError(w, http.StatusServiceUnavailable, "not the leader")
+		return
+	}
+	state := s.peer.State()
+	existing, ok := state.IngressRules[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "ingress rule not found")
+		return
+	}
+	domain, ok := state.Domains[req.DomainID]
+	if !ok {
+		writeError(w, http.StatusBadRequest, "domain not found")
+		return
+	}
+	if msg := s.checkContainerPort(req.ContainerFQDN, req.ContainerPort); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
+	updated := types.IngressRule{
+		ID:            existing.ID,
+		DomainID:      domain.ID,
+		Host:          domain.Name,
+		PathPrefix:    req.PathPrefix,
+		ContainerFQDN: req.ContainerFQDN,
+		ContainerPort: req.ContainerPort,
+		SystemPort:    existing.SystemPort,
+		CreatedAt:     existing.CreatedAt,
+	}
+	if err := s.peer.ApplyIngress(updated); err != nil {
+		writeError(w, http.StatusInternalServerError, "apply ingress: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{
+		"id":             updated.ID,
+		"domain_id":      updated.DomainID,
+		"host":           updated.Host,
+		"path_prefix":    updated.PathPrefix,
+		"container_fqdn": updated.ContainerFQDN,
+		"container_port": updated.ContainerPort,
+		"system_port":    updated.SystemPort,
+		"created_at":     updated.CreatedAt.Unix(),
+	})
+}
+
 // ── Services API handlers ─────────────────────────────────────────────────────
 
 func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
@@ -814,11 +908,19 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:     s.CreatedAt,
 		})
 	}
+	sort.Slice(svcs, func(i, j int) bool {
+		if svcs[i].Name != svcs[j].Name {
+			return svcs[i].Name < svcs[j].Name
+		}
+		return svcs[i].ID < svcs[j].ID
+	})
 	writeJSON(w, svcs)
 }
 
-// checkContainerPort returns a warning string if the container FQDN's workload
-// does not publish containerPort as an allocated port. Returns "" when fine.
+// checkContainerPort returns a non-empty error string when no host port has
+// been allocated for containerPort on the workload identified by containerFQDN.
+// Returns "" when a valid allocation is found. Callers must reject the request
+// on a non-empty return — without an AllocatedPort, proxyd has nothing to route to.
 func (s *Server) checkContainerPort(containerFQDN string, containerPort uint32) string {
 	workloadName := containerFQDN
 	if i := strings.LastIndex(containerFQDN, "."); i >= 0 {
@@ -830,16 +932,16 @@ func (s *Server) checkContainerPort(containerFQDN string, containerPort uint32) 
 			continue
 		}
 		for _, pa := range wl.PortAllocations {
-			if pa.ContainerPort == containerPort {
+			if pa.ContainerPort == containerPort && pa.AllocatedPort != 0 {
 				return ""
 			}
 		}
-		if wl.Kind == types.KindStack {
-			return fmt.Sprintf("port %d is not declared in the compose YAML for workload %q — add a host:container port mapping and re-submit", containerPort, workloadName)
-		}
-		return fmt.Sprintf("port %d is not published by workload %q — add the port to the workload definition and re-submit for the service to function", containerPort, workloadName)
+		return fmt.Sprintf(
+			"no host port allocated for container port %d on workload %q — "+
+				"add a ports entry (e.g. ports: [\"%d\"]) to the workload definition and redeploy",
+			containerPort, workloadName, containerPort)
 	}
-	return fmt.Sprintf("workload %q not found", workloadName)
+	return fmt.Sprintf("workload %q not found — deploy the workload before creating a service", workloadName)
 }
 
 func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
@@ -852,6 +954,10 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if msg := s.checkContainerPort(req.ContainerFQDN, req.ContainerPort); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
 	resp, err := s.ctrl.CreateService(r.Context(), &gen.CreateServiceRequest{
 		Name:          req.Name,
 		ContainerFqdn: req.ContainerFQDN,
@@ -862,13 +968,11 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 		writeError(w, grpcHTTPStatus(st.Code()), st.Message())
 		return
 	}
-	warning := s.checkContainerPort(req.ContainerFQDN, req.ContainerPort)
 	writeJSON(w, map[string]any{
 		"service_id":  resp.ServiceId,
 		"system_port": resp.SystemPort,
 		"accepted":    resp.Accepted,
 		"reason":      resp.Reason,
-		"warning":     warning,
 	})
 }
 
@@ -901,11 +1005,14 @@ func (s *Server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
 		SystemPort:    existing.SystemPort,
 		CreatedAt:     existing.CreatedAt,
 	}
+	if msg := s.checkContainerPort(req.ContainerFQDN, req.ContainerPort); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
 	if err := s.peer.ApplyService(updated); err != nil {
 		writeError(w, http.StatusInternalServerError, "apply service: "+err.Error())
 		return
 	}
-	warning := s.checkContainerPort(req.ContainerFQDN, req.ContainerPort)
 	writeJSON(w, map[string]any{
 		"id":             updated.ID,
 		"name":           updated.Name,
@@ -913,7 +1020,6 @@ func (s *Server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
 		"container_port": updated.ContainerPort,
 		"system_port":    updated.SystemPort,
 		"created_at":     updated.CreatedAt.Unix(),
-		"warning":        warning,
 	})
 }
 
@@ -1001,6 +1107,126 @@ func (h spaHandler) serveIndex(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(data)
+}
+
+// ── Networks ──────────────────────────────────────────────────────────────────
+
+func (s *Server) handleListNetworks(w http.ResponseWriter, r *http.Request) {
+	networks, err := s.agent.ListNetworks(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "list networks: "+err.Error())
+		return
+	}
+	type networkJSON struct {
+		NetworkID string `json:"network_id"`
+		Name      string `json:"name"`
+		Driver    string `json:"driver"`
+		IPv4      string `json:"ipv4"`
+		Labels    string `json:"labels"`
+	}
+	out := make([]networkJSON, 0, len(networks))
+	for _, n := range networks {
+		out = append(out, networkJSON{
+			NetworkID: n.NetworkID,
+			Name:      n.Name,
+			Driver:    n.Driver,
+			IPv4:      n.IPv4,
+			Labels:    n.Labels,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	writeJSON(w, out)
+}
+
+func (s *Server) handleInspectNetwork(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	detail, err := s.agent.InspectNetwork(r.Context(), name)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "inspect network: "+err.Error())
+		return
+	}
+	type containerOnNet struct {
+		Name        string `json:"name"`
+		IPv4Address string `json:"ipv4_address"`
+	}
+	type networkDetailJSON struct {
+		Name       string            `json:"name"`
+		ID         string            `json:"id"`
+		Driver     string            `json:"driver"`
+		Subnet     string            `json:"subnet"`
+		Gateway    string            `json:"gateway"`
+		Containers []containerOnNet  `json:"containers"`
+		Labels     map[string]string `json:"labels"`
+	}
+	out := networkDetailJSON{
+		Name:       detail.Name,
+		ID:         detail.ID,
+		Driver:     detail.Driver,
+		Containers: []containerOnNet{},
+		Labels:     detail.Labels,
+	}
+	if len(detail.IPAM.Config) > 0 {
+		out.Subnet = detail.IPAM.Config[0].Subnet
+		out.Gateway = detail.IPAM.Config[0].Gateway
+	}
+	for _, c := range detail.Containers {
+		out.Containers = append(out.Containers, containerOnNet{
+			Name:        c.Name,
+			IPv4Address: c.IPv4Address,
+		})
+	}
+	sort.Slice(out.Containers, func(i, j int) bool { return out.Containers[i].Name < out.Containers[j].Name })
+	writeJSON(w, out)
+}
+
+// ── Volumes ───────────────────────────────────────────────────────────────────
+
+func (s *Server) handleListVolumes(w http.ResponseWriter, r *http.Request) {
+	volumes, err := s.agent.ListVolumes(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "list volumes: "+err.Error())
+		return
+	}
+	type volumeJSON struct {
+		Name       string `json:"name"`
+		Driver     string `json:"driver"`
+		Mountpoint string `json:"mountpoint"`
+		Labels     string `json:"labels"`
+	}
+	out := make([]volumeJSON, 0, len(volumes))
+	for _, v := range volumes {
+		out = append(out, volumeJSON{
+			Name:       v.Name,
+			Driver:     v.Driver,
+			Mountpoint: v.Mountpoint,
+			Labels:     v.Labels,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	writeJSON(w, out)
+}
+
+func (s *Server) handleInspectVolume(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	detail, err := s.agent.InspectVolume(r.Context(), name)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "inspect volume: "+err.Error())
+		return
+	}
+	type volumeDetailJSON struct {
+		Name       string            `json:"name"`
+		Driver     string            `json:"driver"`
+		Mountpoint string            `json:"mountpoint"`
+		Labels     map[string]string `json:"labels"`
+		Scope      string            `json:"scope"`
+	}
+	writeJSON(w, volumeDetailJSON{
+		Name:       detail.Name,
+		Driver:     detail.Driver,
+		Mountpoint: detail.Mountpoint,
+		Labels:     detail.Labels,
+		Scope:      detail.Scope,
+	})
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1115,6 +1341,12 @@ func (s *Server) handleListDomains(w http.ResponseWriter, _ *http.Request) {
 	for _, d := range state.Domains {
 		out = append(out, domainToJSON(d))
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ID < out[j].ID
+	})
 	writeJSON(w, out)
 }
 
@@ -1379,6 +1611,12 @@ func (s *Server) handleListUsers(w http.ResponseWriter, _ *http.Request) {
 			CreatedAt:  u.CreatedAt.Unix(),
 		})
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Username != out[j].Username {
+			return out[i].Username < out[j].Username
+		}
+		return out[i].ID < out[j].ID
+	})
 	writeJSON(w, out)
 }
 
@@ -1495,6 +1733,12 @@ func (s *Server) handleListRegistries(w http.ResponseWriter, _ *http.Request) {
 			CreatedAt: r.CreatedAt.Unix(),
 		})
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ID < out[j].ID
+	})
 	writeJSON(w, out)
 }
 
@@ -1705,6 +1949,98 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"logs": logs})
 }
 
+func (s *Server) handleInspectContainer(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	detail, err := s.agent.InspectContainer(r.Context(), name)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "inspect container: "+err.Error())
+		return
+	}
+
+	type portBinding struct {
+		HostIP   string `json:"host_ip"`
+		HostPort string `json:"host_port"`
+	}
+	type networkEntry struct {
+		Name       string `json:"name"`
+		IPAddress  string `json:"ip_address"`
+		Gateway    string `json:"gateway"`
+		MacAddress string `json:"mac_address"`
+	}
+	type mountEntry struct {
+		Type        string `json:"type"`
+		Name        string `json:"name"`
+		Source      string `json:"source"`
+		Destination string `json:"destination"`
+		Mode        string `json:"mode"`
+		RW          bool   `json:"rw"`
+	}
+	type resp struct {
+		ID           string                   `json:"id"`
+		Name         string                   `json:"name"`
+		Status       string                   `json:"status"`
+		Running      bool                     `json:"running"`
+		Pid          int                      `json:"pid"`
+		StartedAt    string                   `json:"started_at"`
+		Image        string                   `json:"image"`
+		Env          []string                 `json:"env"`
+		PortBindings map[string][]portBinding `json:"port_bindings"`
+		Networks     []networkEntry           `json:"networks"`
+		Mounts       []mountEntry             `json:"mounts"`
+	}
+
+	out := resp{
+		ID:        detail.ID,
+		Name:      strings.TrimPrefix(detail.Name, "/"),
+		Status:    detail.State.Status,
+		Running:   detail.State.Running,
+		Pid:       detail.State.Pid,
+		StartedAt: detail.State.StartedAt,
+		Image:     detail.Config.Image,
+		Env:       detail.Config.Env,
+		Mounts:    []mountEntry{},
+		Networks:  []networkEntry{},
+	}
+
+	out.PortBindings = make(map[string][]portBinding, len(detail.HostConfig.PortBindings))
+	for proto, bindings := range detail.HostConfig.PortBindings {
+		for _, b := range bindings {
+			out.PortBindings[proto] = append(out.PortBindings[proto], portBinding{b.HostIP, b.HostPort})
+		}
+	}
+
+	for netName, n := range detail.NetworkSettings.Networks {
+		out.Networks = append(out.Networks, networkEntry{
+			Name:       netName,
+			IPAddress:  n.IPAddress,
+			Gateway:    n.Gateway,
+			MacAddress: n.MacAddress,
+		})
+	}
+
+	for _, m := range detail.Mounts {
+		out.Mounts = append(out.Mounts, mountEntry{
+			Type:        m.Type,
+			Name:        m.Name,
+			Source:      m.Source,
+			Destination: m.Destination,
+			Mode:        m.Mode,
+			RW:          m.RW,
+		})
+	}
+
+	writeJSON(w, out)
+}
+
+func (s *Server) handleRestartContainer(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := s.agent.RestartContainer(r.Context(), name); err != nil {
+		writeError(w, http.StatusBadGateway, "restart container: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
 func newRegistryID() string {
 	b := make([]byte, 8)
 	_, _ = crand.Read(b)
@@ -1798,6 +2134,12 @@ func (s *Server) handleListTemplates(w http.ResponseWriter, _ *http.Request) {
 	for _, t := range templates {
 		out = append(out, templateToJSON(t))
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ID < out[j].ID
+	})
 	writeJSON(w, out)
 }
 
@@ -1868,6 +2210,23 @@ func (s *Server) handleDeployTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "template not found")
 		return
 	}
+
+	// Redeploy semantics: a deployed template's workload carries the template
+	// name, so tear down any existing workload(s) with the same name before
+	// submitting the new one. RemoveWorkload is synchronous (stops + removes on
+	// the node, then deletes from Raft), so the new workload starts clean — no
+	// lingering container or port allocation from the previous deploy.
+	for _, wl := range state.Workloads {
+		if workloadName(wl) != t.Name {
+			continue
+		}
+		if _, err := s.ctrl.RemoveWorkload(r.Context(), &gen.RemoveWorkloadRequest{WorkloadId: wl.ID}); err != nil {
+			st, _ := status.FromError(err)
+			writeError(w, grpcHTTPStatus(st.Code()), "stop previous workload: "+st.Message())
+			return
+		}
+	}
+
 	var resp *gen.SubmitResponse
 	var err error
 	switch t.Kind {
@@ -2081,6 +2440,12 @@ func (s *Server) handleListSecrets(w http.ResponseWriter, _ *http.Request) {
 	for _, sec := range state.Secrets {
 		out = append(out, secretJSON{ID: sec.ID, Name: sec.Name, CreatedAt: sec.CreatedAt.Unix()})
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ID < out[j].ID
+	})
 	writeJSON(w, out)
 }
 

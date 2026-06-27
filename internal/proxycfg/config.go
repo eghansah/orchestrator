@@ -2,6 +2,7 @@ package proxycfg
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,18 +49,38 @@ func Write(dataDir, localNodeID, dataIP, dnsAddr string, state internraft.Cluste
 	}
 
 	for _, svc := range state.Services {
-		wl, ok := findWorkload(state, parseFQDN(svc.ContainerFQDN))
-		if !ok || wl.NodeID == "" {
+		wlName := parseFQDN(svc.ContainerFQDN)
+		wl, ok := findWorkload(state, wlName)
+		if !ok {
+			slog.Warn("proxycfg: skipping service — workload not found",
+				"service", svc.Name, "fqdn", svc.ContainerFQDN, "resolved_name", wlName)
+			continue
+		}
+		if wl.NodeID == "" {
+			slog.Warn("proxycfg: skipping service — workload not scheduled",
+				"service", svc.Name, "workload", wlName)
 			continue
 		}
 		node, ok := state.Nodes[wl.NodeID]
 		if !ok {
+			slog.Warn("proxycfg: skipping service — node not found",
+				"service", svc.Name, "node_id", wl.NodeID)
 			continue
 		}
+		allocPort := allocatedPortFor(wl.PortAllocations, svc.ContainerPort)
+		if allocPort == 0 {
+			slog.Warn("proxycfg: skipping service — no allocated port for container port",
+				"service", svc.Name, "container_port", svc.ContainerPort)
+			continue
+		}
+		slog.Info("proxycfg: writing service entry",
+			"service", svc.Name, "system_port", svc.SystemPort,
+			"container_port", svc.ContainerPort, "allocated_port", allocPort,
+			"node", wl.NodeID, "node_ip", node.DataIP)
 		cfg.Entries = append(cfg.Entries, Entry{
 			ServiceName:   svc.Name,
 			SystemPort:    svc.SystemPort,
-			AllocatedPort: allocatedPortFor(wl.PortAllocations, svc.ContainerPort),
+			AllocatedPort: allocPort,
 			NodeID:        wl.NodeID,
 			NodeDataIP:    node.DataIP,
 		})
@@ -67,20 +88,41 @@ func Write(dataDir, localNodeID, dataIP, dnsAddr string, state internraft.Cluste
 
 	for _, rule := range state.IngressRules {
 		if rule.SystemPort == 0 {
+			slog.Warn("proxycfg: skipping ingress rule — no system port assigned", "rule_id", rule.ID)
 			continue
 		}
-		wl, ok := findWorkload(state, parseFQDN(rule.ContainerFQDN))
-		if !ok || wl.NodeID == "" {
+		wlName := parseFQDN(rule.ContainerFQDN)
+		wl, ok := findWorkload(state, wlName)
+		if !ok {
+			slog.Warn("proxycfg: skipping ingress rule — workload not found",
+				"rule_id", rule.ID, "fqdn", rule.ContainerFQDN, "resolved_name", wlName)
+			continue
+		}
+		if wl.NodeID == "" {
+			slog.Warn("proxycfg: skipping ingress rule — workload not scheduled",
+				"rule_id", rule.ID, "workload", wlName)
 			continue
 		}
 		node, ok := state.Nodes[wl.NodeID]
 		if !ok {
+			slog.Warn("proxycfg: skipping ingress rule — node not found",
+				"rule_id", rule.ID, "node_id", wl.NodeID)
 			continue
 		}
+		allocPort := allocatedPortFor(wl.PortAllocations, rule.ContainerPort)
+		if allocPort == 0 {
+			slog.Warn("proxycfg: skipping ingress rule — no allocated port for container port",
+				"rule_id", rule.ID, "container_port", rule.ContainerPort)
+			continue
+		}
+		slog.Info("proxycfg: writing ingress entry",
+			"rule_id", rule.ID, "system_port", rule.SystemPort,
+			"container_port", rule.ContainerPort, "allocated_port", allocPort,
+			"node", wl.NodeID, "node_ip", node.DataIP)
 		cfg.Entries = append(cfg.Entries, Entry{
 			ServiceName:   rule.ID,
 			SystemPort:    rule.SystemPort,
-			AllocatedPort: allocatedPortFor(wl.PortAllocations, rule.ContainerPort),
+			AllocatedPort: allocPort,
 			NodeID:        wl.NodeID,
 			NodeDataIP:    node.DataIP,
 		})

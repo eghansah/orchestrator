@@ -18,7 +18,11 @@ import {
 import { api, IngressRule, Domain } from "../api";
 import { formatAge } from "../api";
 
-export default function Ingress() {
+interface Props {
+  onNavigate: (page: string) => void;
+}
+
+export default function Ingress({ onNavigate }: Props) {
   const [rules, setRules] = useState<IngressRule[]>([]);
   const [domains, setDomains] = useState<Domain[]>([]);
   const [loading, setLoading] = useState(true);
@@ -159,7 +163,15 @@ export default function Ingress() {
         trackBy="id"
         columnDefinitions={[
           { id: "id", header: "ID", cell: (r) => r.id },
-          { id: "domain", header: "Domain", cell: (r) => domainNameById(r.domain_id) || r.host || "—" },
+          {
+            id: "domain",
+            header: "Domain",
+            cell: (r) => (
+              <Button variant="inline-link" onClick={() => onNavigate("ingress-" + r.id)}>
+                {domainNameById(r.domain_id) || r.host || r.id}
+              </Button>
+            ),
+          },
           { id: "path", header: "Path", cell: (r) => r.path_prefix || "/" },
           { id: "container_fqdn", header: "Container FQDN", cell: (r) => r.container_fqdn },
           { id: "container_port", header: "Container port", cell: (r) => r.container_port },

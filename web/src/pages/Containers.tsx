@@ -16,6 +16,7 @@ interface Props {
   loading: boolean;
   error: string | null;
   refetch: () => void;
+  onNavigate: (page: string) => void;
 }
 
 function containerStatus(status: string) {
@@ -27,7 +28,7 @@ function containerStatus(status: string) {
   );
 }
 
-export default function Containers({ state, loading, error, refetch }: Props) {
+export default function Containers({ state, loading, error, refetch, onNavigate }: Props) {
   const containers: ActualContainer[] = state?.actual_containers ?? [];
 
   const [selected, setSelected] = useState<ActualContainer | null>(null);
@@ -81,7 +82,11 @@ export default function Containers({ state, loading, error, refetch }: Props) {
             {
               id: "name",
               header: "Name",
-              cell: (c) => c.name,
+              cell: (c) => (
+                <Button variant="inline-link" onClick={() => onNavigate(`container-${c.name}`)}>
+                  {c.name}
+                </Button>
+              ),
               sortingField: "name",
             },
             {

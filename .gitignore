@@ -5,3 +5,5 @@ bin/
 dist/
 /orchestrator
 /ctl
+/ingressd
+/build-image

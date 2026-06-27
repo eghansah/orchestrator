@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -307,22 +308,29 @@ func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types
 		return err
 	}
 
-	// Build containerPort → allocatedPort lookup from auto-assigned allocations.
-	allocMap := make(map[uint32]uint32, len(portAllocations))
-	for _, pa := range portAllocations {
-		allocMap[pa.ContainerPort] = pa.AllocatedPort
-	}
+	// Replace any existing container so that port-binding changes (e.g. a loopback
+	// port auto-allocated after initial deployment) take effect. Errors here are
+	// expected when no prior container exists and are intentionally ignored.
+	_, _ = c.run(ctx, "stop", "--", spec.Name)
+	_, _ = c.run(ctx, "rm", "--", spec.Name)
 
 	args := []string{"run", "-d", "--name", spec.Name}
 	for _, env := range spec.Env {
 		args = append(args, "-e", env)
 	}
-	for _, p := range spec.Ports {
-		if alloc, ok := allocMap[p.ContainerPort]; ok && alloc > 0 {
-			// Bind on loopback only — containers are not reachable from the network.
-			args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d/%s", alloc, p.ContainerPort, p.Protocol))
+	// Use portAllocations as the authoritative source for -p flags. This covers
+	// both ports declared in spec.Ports (assigned by the FSM on workload submit)
+	// and ports auto-allocated later by ensurePortAllocated when a Service or
+	// IngressRule references a port not originally declared in the workload spec.
+	for _, pa := range portAllocations {
+		if pa.AllocatedPort == 0 {
+			continue
 		}
-		// Ports without an allocation are intentionally not bound.
+		proto := pa.Protocol
+		if proto == "" {
+			proto = "tcp"
+		}
+		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d/%s", pa.AllocatedPort, pa.ContainerPort, proto))
 	}
 	for _, v := range spec.Volumes {
 		mount := fmt.Sprintf("%s:%s", v.Source, v.Target)
@@ -344,7 +352,11 @@ func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types
 	args = append(args, spec.Image)
 	args = append(args, spec.Command...)
 
+	slog.Info("nerdctl: running container", "cmd", append([]string{c.binary}, args...))
 	_, err := c.run(ctx, args...)
+	if err != nil {
+		slog.Error("nerdctl: run container failed", "name", spec.Name, "err", err)
+	}
 	return err
 }
 
@@ -434,7 +446,7 @@ func (c *Client) composeDir(stackName string) (string, error) {
 // If spec.ResolvedEnv is non-empty (secrets resolved at placement time), a
 // .env file is written alongside the compose file so nerdctl compose picks
 // them up automatically.
-func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStackSpec) error {
+func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStackSpec, portAllocations []types.PortAllocation) error {
 	if err := validateName(spec.Name); err != nil {
 		return err
 	}
@@ -451,8 +463,9 @@ func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStac
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create compose dir: %w", err)
 	}
+	composeYAML := rewriteComposePorts(spec.ComposeYAML, portAllocations)
 	composeFile := filepath.Join(dir, "docker-compose.yml")
-	if err := os.WriteFile(composeFile, []byte(spec.ComposeYAML), 0o600); err != nil {
+	if err := os.WriteFile(composeFile, []byte(composeYAML), 0o600); err != nil {
 		return fmt.Errorf("write compose file: %w", err)
 	}
 	if len(spec.ResolvedEnv) > 0 {
@@ -522,6 +535,200 @@ type serviceInfo struct {
 	Name    string `json:"Name"`
 	Service string `json:"Service"`
 	Status  string `json:"Status"`
+}
+
+// ContainerInspectResult holds the fields we surface from `nerdctl inspect`.
+type ContainerInspectResult struct {
+	ID    string `json:"Id"`
+	Name  string `json:"Name"`
+	State struct {
+		Status    string `json:"Status"`
+		Running   bool   `json:"Running"`
+		Pid       int    `json:"Pid"`
+		StartedAt string `json:"StartedAt"`
+	} `json:"State"`
+	Config struct {
+		Image string   `json:"Image"`
+		Env   []string `json:"Env"`
+	} `json:"Config"`
+	HostConfig struct {
+		PortBindings map[string][]struct {
+			HostIP   string `json:"HostIp"`
+			HostPort string `json:"HostPort"`
+		} `json:"PortBindings"`
+	} `json:"HostConfig"`
+	NetworkSettings struct {
+		Networks map[string]struct {
+			IPAddress  string `json:"IPAddress"`
+			Gateway    string `json:"Gateway"`
+			MacAddress string `json:"MacAddress"`
+		} `json:"Networks"`
+	} `json:"NetworkSettings"`
+	Mounts []struct {
+		Type        string `json:"Type"`
+		Name        string `json:"Name"`
+		Source      string `json:"Source"`
+		Destination string `json:"Destination"`
+		Mode        string `json:"Mode"`
+		RW          bool   `json:"RW"`
+	} `json:"Mounts"`
+}
+
+// InspectContainer returns full runtime details for the named container.
+func (c *Client) InspectContainer(ctx context.Context, name string) (*ContainerInspectResult, error) {
+	if err := validateName(name); err != nil {
+		return nil, err
+	}
+	out, err := c.runStdout(ctx, "inspect", "--type=container", "--", name)
+	if err != nil {
+		return nil, err
+	}
+	var results []ContainerInspectResult
+	if err := json.Unmarshal(bytes.TrimSpace(out), &results); err != nil {
+		return nil, fmt.Errorf("parse container inspect: %w", err)
+	}
+	if len(results) == 0 {
+		return nil, fmt.Errorf("container %q not found", name)
+	}
+	return &results[0], nil
+}
+
+// RestartContainer restarts the named container.
+func (c *Client) RestartContainer(ctx context.Context, name string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
+	_, err := c.run(ctx, "restart", "--", name)
+	return err
+}
+
+// NetworkInfo is the per-entry data from `nerdctl network ls --format '{{json .}}'`.
+type NetworkInfo struct {
+	NetworkID string `json:"NetworkID"`
+	Name      string `json:"Name"`
+	Driver    string `json:"Driver"`
+	IPv4      string `json:"IPv4"`
+	Labels    string `json:"Labels"`
+}
+
+// NetworkContainer is a container attached to a network.
+type NetworkContainer struct {
+	Name        string `json:"Name"`
+	IPv4Address string `json:"IPv4Address"`
+}
+
+// NetworkDetail is the full inspect result from `nerdctl network inspect`.
+type NetworkDetail struct {
+	Name   string `json:"Name"`
+	ID     string `json:"Id"`
+	Driver string `json:"Driver"`
+	IPAM   struct {
+		Config []struct {
+			Subnet  string `json:"Subnet"`
+			Gateway string `json:"Gateway"`
+		} `json:"Config"`
+	} `json:"IPAM"`
+	Containers map[string]NetworkContainer `json:"Containers"`
+	Labels     map[string]string           `json:"Labels"`
+}
+
+// VolumeInfo is the per-entry data from `nerdctl volume ls --format '{{json .}}'`.
+type VolumeInfo struct {
+	Name       string `json:"Name"`
+	Driver     string `json:"Driver"`
+	Mountpoint string `json:"Mountpoint"`
+	Labels     string `json:"Labels"`
+}
+
+// VolumeDetail is the full inspect result from `nerdctl volume inspect`.
+type VolumeDetail struct {
+	Name       string            `json:"Name"`
+	Driver     string            `json:"Driver"`
+	Mountpoint string            `json:"Mountpoint"`
+	Labels     map[string]string `json:"Labels"`
+	Scope      string            `json:"Scope"`
+}
+
+// ListNetworks returns all networks in the orchestrator namespace.
+func (c *Client) ListNetworks(ctx context.Context) ([]NetworkInfo, error) {
+	out, err := c.runStdout(ctx, "network", "ls", "--format", "{{json .}}")
+	if err != nil {
+		return nil, err
+	}
+	var result []NetworkInfo
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var ni NetworkInfo
+		if err := json.Unmarshal([]byte(line), &ni); err != nil {
+			continue
+		}
+		result = append(result, ni)
+	}
+	return result, scanner.Err()
+}
+
+// InspectNetwork returns full details for a single network by name.
+func (c *Client) InspectNetwork(ctx context.Context, name string) (*NetworkDetail, error) {
+	if err := validateName(name); err != nil {
+		return nil, err
+	}
+	out, err := c.runStdout(ctx, "network", "inspect", "--", name)
+	if err != nil {
+		return nil, err
+	}
+	var results []NetworkDetail
+	if err := json.Unmarshal(bytes.TrimSpace(out), &results); err != nil {
+		return nil, fmt.Errorf("parse network inspect: %w", err)
+	}
+	if len(results) == 0 {
+		return nil, fmt.Errorf("network %q not found", name)
+	}
+	return &results[0], nil
+}
+
+// ListVolumes returns all named volumes in the orchestrator namespace.
+func (c *Client) ListVolumes(ctx context.Context) ([]VolumeInfo, error) {
+	out, err := c.runStdout(ctx, "volume", "ls", "--format", "{{json .}}")
+	if err != nil {
+		return nil, err
+	}
+	var result []VolumeInfo
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var vi VolumeInfo
+		if err := json.Unmarshal([]byte(line), &vi); err != nil {
+			continue
+		}
+		result = append(result, vi)
+	}
+	return result, scanner.Err()
+}
+
+// InspectVolume returns full details for a single volume by name.
+func (c *Client) InspectVolume(ctx context.Context, name string) (*VolumeDetail, error) {
+	if err := validateName(name); err != nil {
+		return nil, err
+	}
+	out, err := c.runStdout(ctx, "volume", "inspect", "--", name)
+	if err != nil {
+		return nil, err
+	}
+	var results []VolumeDetail
+	if err := json.Unmarshal(bytes.TrimSpace(out), &results); err != nil {
+		return nil, fmt.Errorf("parse volume inspect: %w", err)
+	}
+	if len(results) == 0 {
+		return nil, fmt.Errorf("volume %q not found", name)
+	}
+	return &results[0], nil
 }
 
 // ComposePS returns the services of a running compose stack.

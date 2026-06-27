@@ -158,7 +158,9 @@ func (d *daemon) apply(cfg proxycfg.Config) {
 		var backendAddr string
 		if e.NodeID == d.nodeID {
 			if e.AllocatedPort == 0 {
-				continue // workload not yet started locally
+				slog.Warn("skipping service: no allocated port — ensure the workload declares this container port",
+					"service", e.ServiceName, "system_port", e.SystemPort)
+				continue
 			}
 			backendAddr = fmt.Sprintf("127.0.0.1:%d", e.AllocatedPort)
 		} else {
@@ -185,11 +187,17 @@ func (d *daemon) apply(cfg proxycfg.Config) {
 		if _, running := d.listeners[addr]; running {
 			continue
 		}
+		// Bind before spawning the goroutine: if net.Listen fails the entry is
+		// never added to d.listeners, so the next config reload will retry.
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			slog.Error("proxy listen failed", "addr", addr, "err", err)
+			continue
+		}
 		stop := make(chan struct{})
 		backendAddr := de.backendAddr
-		listenAddr := addr
 		go func() {
-			listenAndProxy(listenAddr, backendAddr, stop)
+			proxyAccept(ln, backendAddr, stop)
 		}()
 		d.listeners[addr] = listenerEntry{
 			cancel:      func() { close(stop) },
@@ -216,13 +224,9 @@ func (d *daemon) apply(cfg proxycfg.Config) {
 	slog.Info("config applied", "services", len(desired), "dns", cfg.DNSAddr)
 }
 
-// listenAndProxy accepts connections on addr and forwards each to backendAddr.
-func listenAndProxy(addr string, backendAddr string, stop <-chan struct{}) {
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		slog.Error("proxy listen failed", "addr", addr, "err", err)
-		return
-	}
+// proxyAccept accepts connections on an already-bound listener and forwards
+// each to backendAddr. Closes ln when stop is closed.
+func proxyAccept(ln net.Listener, backendAddr string, stop <-chan struct{}) {
 	go func() {
 		<-stop
 		_ = ln.Close()

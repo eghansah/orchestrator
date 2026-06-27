@@ -16,8 +16,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
-
 	"github.com/eghansah/orchestrator/internal/ingresscfg"
 )
 
@@ -98,60 +96,36 @@ type daemon struct {
 	lastCfgSum [32]byte  // SHA-256 of the last written haproxy.cfg
 }
 
-// watchConfig uses fsnotify to detect config file changes and reloads on each write.
-// Falls back to polling every 5 seconds if fsnotify setup fails.
+// watchConfig polls the config file's mtime/size and reloads when it changes.
+//
+// We deliberately poll rather than use inotify/fsnotify: ingressd runs in a
+// container with the host's ingress directory bind-mounted in, and inotify
+// events do not cross that rootless bind-mount boundary, so a watch here never
+// fires for orchestrator-side writes. os.Stat, by contrast, reads the real file
+// metadata through the mount and reliably observes host writes — including the
+// tmp + rename the orchestrator uses, which replaces the inode but updates mtime.
 func (d *daemon) watchConfig() {
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		slog.Warn("fsnotify unavailable, falling back to polling", "err", err)
-		d.pollConfig()
-		return
-	}
-	defer watcher.Close()
-
-	// Watch the parent directory, not the file: the config is rewritten via
-	// tmp + rename, which replaces the inode and would kill a file-level watch.
-	dir := filepath.Dir(d.configPath)
-	if err := watcher.Add(dir); err != nil {
-		slog.Warn("cannot watch config dir, falling back to polling", "dir", dir, "err", err)
-		d.pollConfig()
-		return
-	}
-
-	for {
-		select {
-		case event, ok := <-watcher.Events:
-			if !ok {
-				return
-			}
-			if event.Name != d.configPath {
-				continue
-			}
-			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
-				d.reload()
-			}
-		case err, ok := <-watcher.Errors:
-			if !ok {
-				return
-			}
-			slog.Warn("fsnotify error", "err", err)
-		}
-	}
-}
-
-func (d *daemon) pollConfig() {
-	var lastMod time.Time
-	ticker := time.NewTicker(5 * time.Second)
+	const interval = 2 * time.Second
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	var lastMod time.Time
+	var lastSize int64 = -1
 	for range ticker.C {
 		info, err := os.Stat(d.configPath)
 		if err != nil {
 			continue
 		}
-		if info.ModTime().After(lastMod) {
-			lastMod = info.ModTime()
-			d.reload()
+		// Reload on any mtime or size change. apply() dedupes by hashing the
+		// generated haproxy.cfg, so a redundant reload here is a cheap no-op;
+		// tracking size as well guards against filesystems with coarse mtime
+		// granularity where two distinct writes could share a timestamp.
+		if info.ModTime().Equal(lastMod) && info.Size() == lastSize {
+			continue
 		}
+		lastMod = info.ModTime()
+		lastSize = info.Size()
+		d.reload()
 	}
 }
 

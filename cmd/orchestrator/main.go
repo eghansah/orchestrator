@@ -44,6 +44,10 @@ import (
 	"github.com/eghansah/orchestrator/pkg/types"
 )
 
+// version is stamped at build time via -ldflags "-X main.version=...".
+// It is used as the ingressd image tag so each release is human-identifiable.
+var version = "dev"
+
 // ── Config ────────────────────────────────────────────────────────────────────
 
 type config struct {
@@ -79,6 +83,10 @@ type config struct {
 	registryAddr  string // local container registry listen address; empty = disabled
 	ingressdHTTP  string // host:port binding for ingressd HTTP  (e.g. 127.0.0.1:8080)
 	ingressdHTTPS string // host:port binding for ingressd HTTPS (e.g. 127.0.0.1:8443)
+
+	// Derived at runtime from the embedded ingressd image, not from flags.
+	ingressdImageTag    string // repo:tag the local registry serves, e.g. "ingressd:v1.4.0"
+	ingressdImageDigest string // manifest digest of the embedded image, e.g. "sha256:…"
 }
 
 func parseFlags() config {
@@ -168,11 +176,16 @@ func main() {
 
 	// 2b. Built-in local registry (optional) ----------------------------------
 	if cfg.registryAddr != "" {
-		reg, err := localregistry.New(localregistry.IngressdTar)
+		imageTag := "ingressd:" + sanitizeImageTag(version)
+		reg, err := localregistry.New(localregistry.IngressdTar, imageTag)
 		if err != nil {
 			slog.Warn("local registry: failed to load image tarball", "err", err)
-			reg, _ = localregistry.New(nil) // start empty
+			reg, _ = localregistry.New(nil, imageTag) // start empty
 		}
+		// Record what the registry actually serves so reconcileIngressd can pull
+		// it by its readable tag and detect content changes by digest.
+		cfg.ingressdImageTag = reg.ImageTag()
+		cfg.ingressdImageDigest = reg.Digest()
 		regSrv := &http.Server{Addr: cfg.registryAddr, Handler: reg.Handler()}
 		go func() {
 			slog.Info("local registry listening", "addr", cfg.registryAddr, "images", reg.ImageCount())
@@ -972,6 +985,9 @@ func stateHash(state internraft.ClusterState) uint64 {
 	for _, svc := range state.Services {
 		h ^= uint64(svc.SystemPort)*2654435761 ^ fnvStr(svc.Name) ^ fnvStr(svc.ContainerFQDN)
 	}
+	for _, rule := range state.IngressRules {
+		h ^= uint64(rule.SystemPort)*2654435761 ^ fnvStr(rule.ID) ^ fnvStr(rule.ContainerFQDN)
+	}
 	for _, wl := range state.Workloads {
 		h ^= fnvStr(wl.NodeID) ^ fnvStr(wl.Name())
 		for _, pa := range wl.PortAllocations {
@@ -991,6 +1007,7 @@ type ingressdState struct {
 	RegistryAddr string `json:"registry_addr"`
 	HTTPBind     string `json:"http_bind"`
 	HTTPSBind    string `json:"https_bind"`
+	ImageDigest  string `json:"image_digest"` // manifest digest of the image this container runs
 }
 
 func ingressdStatePath(dataDir string) string {
@@ -1041,13 +1058,22 @@ func nerdctlCmd(ctx context.Context, bin, namespace, sockAddr string, args ...st
 // and restarted. Called once on startup after the local registry is up.
 func reconcileIngressd(ctx context.Context, cfg config) {
 	const name = "ingressd"
-	image := cfg.registryAddr + "/" + name + ":latest"
+	tag := cfg.ingressdImageTag
+	if tag == "" {
+		tag = "ingressd:latest"
+	}
+	image := cfg.registryAddr + "/" + tag
 
 	prev, hasPrev := readIngressdState(cfg.dataDir)
+	// Replace the container when its bind settings change or when the embedded
+	// image content changes. The version tag is for human readability; the
+	// digest is the source of truth, so a rebuilt image (even one reusing the
+	// same version string, e.g. a dirty dev build) is still detected here.
 	stale := !hasPrev ||
 		prev.RegistryAddr != cfg.registryAddr ||
 		prev.HTTPBind != cfg.ingressdHTTP ||
-		prev.HTTPSBind != cfg.ingressdHTTPS
+		prev.HTTPSBind != cfg.ingressdHTTPS ||
+		prev.ImageDigest != cfg.ingressdImageDigest
 
 	// Check whether the container is currently running.
 	inspectOut, err := nerdctlCmd(ctx, cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr,
@@ -1055,9 +1081,14 @@ func reconcileIngressd(ctx context.Context, cfg config) {
 	running := err == nil && strings.TrimSpace(string(inspectOut)) == "running"
 
 	if stale && running {
-		slog.Info("ingressd config changed, replacing container")
+		slog.Info("ingressd settings or image changed, replacing container",
+			"old_digest", prev.ImageDigest, "new_digest", cfg.ingressdImageDigest)
 		_ = nerdctlCmd(ctx, cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr, "stop", name).Run()
 		_ = nerdctlCmd(ctx, cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr, "rm", "-f", name).Run()
+		// Drop the cached image so the re-pull below fetches the new content even
+		// when the tag string is unchanged; a mutable tag would otherwise resolve
+		// to the stale local copy.
+		_ = nerdctlCmd(ctx, cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr, "rmi", "-f", image).Run()
 		running = false
 	}
 
@@ -1103,7 +1134,31 @@ func reconcileIngressd(ctx context.Context, cfg config) {
 		RegistryAddr: cfg.registryAddr,
 		HTTPBind:     cfg.ingressdHTTP,
 		HTTPSBind:    cfg.ingressdHTTPS,
+		ImageDigest:  cfg.ingressdImageDigest,
 	})
+}
+
+// sanitizeImageTag coerces an arbitrary version string into a valid OCI tag:
+// up to 128 chars from [A-Za-z0-9_.-], with anything else replaced by '-'.
+// git-describe output (e.g. "v1.4.0-5-gabc123-dirty") already qualifies.
+func sanitizeImageTag(v string) string {
+	if v == "" {
+		return "latest"
+	}
+	var sb strings.Builder
+	for i, c := range v {
+		if i >= 128 {
+			break
+		}
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == '_', c == '.', c == '-':
+			sb.WriteRune(c)
+		default:
+			sb.WriteRune('-')
+		}
+	}
+	return sb.String()
 }
 
 // ingresscfgWriteLoop polls Raft state every 2 seconds and rewrites the ingressd config file
@@ -1122,6 +1177,9 @@ func ingresscfgWriteLoop(ctx context.Context, peer *internraft.Peer, dataDir str
 			if h == lastHash {
 				continue
 			}
+			// ingressd polls this file by mtime and reloads HAProxy in place, so
+			// publishing a new HTTP service takes effect without restarting the
+			// container — no dropped connections.
 			if err := ingresscfg.Write(dataDir, state); err != nil {
 				slog.Warn("ingresscfg write failed", "err", err)
 				continue

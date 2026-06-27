@@ -142,6 +142,36 @@ func (a *Agent) ContainerLogs(ctx context.Context, name string, tail int) (strin
 	return a.nc.ContainerLogs(ctx, name, tail)
 }
 
+// InspectContainer returns full runtime details for the named container.
+func (a *Agent) InspectContainer(ctx context.Context, name string) (*nerdctl.ContainerInspectResult, error) {
+	return a.nc.InspectContainer(ctx, name)
+}
+
+// RestartContainer restarts the named container.
+func (a *Agent) RestartContainer(ctx context.Context, name string) error {
+	return a.nc.RestartContainer(ctx, name)
+}
+
+// ListNetworks returns all networks visible to nerdctl on this node.
+func (a *Agent) ListNetworks(ctx context.Context) ([]nerdctl.NetworkInfo, error) {
+	return a.nc.ListNetworks(ctx)
+}
+
+// InspectNetwork returns full details for a single network by name.
+func (a *Agent) InspectNetwork(ctx context.Context, name string) (*nerdctl.NetworkDetail, error) {
+	return a.nc.InspectNetwork(ctx, name)
+}
+
+// ListVolumes returns all named volumes visible to nerdctl on this node.
+func (a *Agent) ListVolumes(ctx context.Context) ([]nerdctl.VolumeInfo, error) {
+	return a.nc.ListVolumes(ctx)
+}
+
+// InspectVolume returns full details for a single volume by name.
+func (a *Agent) InspectVolume(ctx context.Context, name string) (*nerdctl.VolumeDetail, error) {
+	return a.nc.InspectVolume(ctx, name)
+}
+
 // State returns this node's last observed actual state.
 func (a *Agent) State() types.ActualWorkloadState {
 	a.mu.RLock()
@@ -193,7 +223,7 @@ func (a *Agent) PlaceWorkload(ctx context.Context, req *gen.PlaceWorkloadRequest
 		if wl.Stack == nil {
 			return nil, status.Error(codes.InvalidArgument, "stack spec is required")
 		}
-		runErr = a.nc.ComposeUp(ctx, wl.ID, *wl.Stack)
+		runErr = a.nc.ComposeUp(ctx, wl.ID, *wl.Stack, wl.PortAllocations)
 	default:
 		return nil, status.Error(codes.InvalidArgument, "unknown workload kind")
 	}

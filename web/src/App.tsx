@@ -29,6 +29,12 @@ import Containers from "./pages/Containers";
 import Templates from "./pages/Templates";
 import ServiceDetail from "./pages/ServiceDetail";
 import Docs from "./pages/Docs";
+import Networks from "./pages/Networks";
+import NetworkDetail from "./pages/NetworkDetail";
+import Volumes from "./pages/Volumes";
+import VolumeDetail from "./pages/VolumeDetail";
+import ContainerDetail from "./pages/ContainerDetail";
+import IngressDetail from "./pages/IngressDetail";
 
 type Page = "overview" | "workloads" | "containers" | "templates" | "nodes" | "web-services" | "tcp-services" | "domains" | "users" | "docs" | string;
 
@@ -54,6 +60,15 @@ const NAV_ITEMS: SideNavigationProps.Item[] = [
       { type: "link", text: "Domains", href: "#domains" },
       { type: "link", text: "Web Services", href: "#web-services" },
       { type: "link", text: "TCP Services", href: "#tcp-services" },
+      { type: "link", text: "Networks", href: "#networks" },
+    ],
+  },
+  {
+    type: "section",
+    text: "Storage",
+    defaultExpanded: true,
+    items: [
+      { type: "link", text: "Volumes", href: "#volumes" },
     ],
   },
   {
@@ -248,13 +263,21 @@ export default function App() {
     <DomainDetail domainId={activePage.slice("domain-".length)} onNavigate={setActivePage} />
   ) : activePage.startsWith("service-") ? (
     <ServiceDetail serviceId={activePage.slice("service-".length)} onNavigate={setActivePage} />
+  ) : activePage.startsWith("container-") ? (
+    <ContainerDetail containerName={activePage.slice("container-".length)} onNavigate={setActivePage} />
+  ) : activePage.startsWith("ingress-") ? (
+    <IngressDetail ruleId={activePage.slice("ingress-".length)} onNavigate={setActivePage} />
+  ) : activePage.startsWith("network-") ? (
+    <NetworkDetail networkName={activePage.slice("network-".length)} onNavigate={setActivePage} />
+  ) : activePage.startsWith("volume-") ? (
+    <VolumeDetail volumeName={activePage.slice("volume-".length)} onNavigate={setActivePage} />
   ) : ({
     overview: <Overview {...sharedProps} />,
     workloads: <Workloads {...navProps} />,
-    containers: <Containers state={state} loading={loading} error={error} refetch={refetch} />,
+    containers: <Containers state={state} loading={loading} error={error} refetch={refetch} onNavigate={setActivePage} />,
     templates: <Templates {...navProps} />,
     nodes: <Nodes {...navProps} />,
-    "web-services": <Ingress />,
+    "web-services": <Ingress onNavigate={setActivePage} />,
     "tcp-services": <Services onNavigate={setActivePage} />,
     domains: <Domains onNavigate={setActivePage} />,
     users: <Users />,
@@ -262,6 +285,8 @@ export default function App() {
     secrets: <Secrets state={state} loading={loading} refetch={refetch} />,
     "workflow-builder": <WorkflowBuilder onNavigate={setActivePage} />,
     docs: <Docs />,
+    networks: <Networks onNavigate={setActivePage} />,
+    volumes: <Volumes onNavigate={setActivePage} />,
   } as Record<string, React.ReactNode>)[activePage];
 
   return (

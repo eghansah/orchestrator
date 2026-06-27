@@ -12,25 +12,33 @@ import {
   Header,
   Input,
   Modal,
+  Select,
+  SelectProps,
   SpaceBetween,
   Spinner,
 } from "@cloudscape-design/components";
-import { api, Service } from "../api";
+import { api, IngressRule, Domain } from "../api";
 import { formatAge } from "../api";
 
 interface Props {
-  serviceId: string;
+  ruleId: string;
   onNavigate: (page: string) => void;
 }
 
 type ModalMode = "edit" | "delete-confirm" | null;
 
-export default function ServiceDetail({ serviceId, onNavigate }: Props) {
-  const [service, setService] = useState<Service | null>(null);
+export default function IngressDetail({ ruleId, onNavigate }: Props) {
+  const [rule, setRule] = useState<IngressRule | null>(null);
+  const [domains, setDomains] = useState<Domain[]>([]);
   const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [mode, setMode] = useState<ModalMode>(null);
-  const [editForm, setEditForm] = useState({ name: "", container_fqdn: "", container_port: "" });
+  const [editForm, setEditForm] = useState({
+    domain_id: "",
+    path_prefix: "/",
+    container_fqdn: "",
+    container_port: "",
+  });
 
   function addFlash(type: FlashbarProps.Type, msg: string) {
     const id = String(Date.now());
@@ -42,42 +50,44 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
 
   const load = useCallback(async () => {
     try {
-      const allServices = await api.listServices();
-      const svc = (allServices ?? []).find((s) => s.id === serviceId) ?? null;
-      setService(svc);
+      const [rules, domainsData] = await Promise.all([api.listIngress(), api.listDomains()]);
+      setDomains(domainsData ?? []);
+      setRule((rules ?? []).find((r) => r.id === ruleId) ?? null);
     } catch (e) {
       addFlash("error", String(e));
     } finally {
       setLoading(false);
     }
-  }, [serviceId]);
+  }, [ruleId]);
 
   useEffect(() => { load(); }, [load]);
 
   function openEdit() {
-    if (!service) return;
+    if (!rule) return;
     setEditForm({
-      name: service.name,
-      container_fqdn: service.container_fqdn,
-      container_port: String(service.container_port),
+      domain_id: rule.domain_id,
+      path_prefix: rule.path_prefix || "/",
+      container_fqdn: rule.container_fqdn,
+      container_port: String(rule.container_port),
     });
     setMode("edit");
   }
 
   async function handleUpdate() {
-    if (!service) return;
+    if (!rule) return;
     const port = parseInt(editForm.container_port, 10);
-    if (!editForm.name || !editForm.container_fqdn || isNaN(port) || port <= 0) {
-      addFlash("error", "Name, container FQDN, and a valid container port are required");
+    if (!editForm.domain_id || !editForm.container_fqdn || isNaN(port) || port <= 0) {
+      addFlash("error", "Domain, container FQDN, and a valid container port are required");
       return;
     }
     try {
-      const resp = await api.updateService(service.id, {
-        name: editForm.name,
+      await api.updateIngress(rule.id, {
+        domain_id: editForm.domain_id,
+        path_prefix: editForm.path_prefix || "/",
         container_fqdn: editForm.container_fqdn,
         container_port: port,
       });
-      addFlash("success", "TCP service updated");
+      addFlash("success", "Web service updated");
       setMode(null);
       load();
     } catch (e) {
@@ -86,22 +96,34 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
   }
 
   async function handleDelete() {
-    if (!service) return;
+    if (!rule) return;
     try {
-      await api.deleteService(service.id);
-      onNavigate("tcp-services");
+      await api.deleteIngress(rule.id);
+      onNavigate("web-services");
     } catch (e) {
       addFlash("error", String(e));
       setMode(null);
     }
   }
 
+  const domainNameById = (id: string) => domains.find((d) => d.id === id)?.name ?? id;
+
+  const domainOptions: SelectProps.Option[] = domains.map((d) => ({
+    value: d.id,
+    label: d.name,
+    disabled: !d.enabled,
+    description: d.enabled ? undefined : "disabled",
+  }));
+
+  const selectedDomainOption =
+    domainOptions.find((o) => o.value === editForm.domain_id) ?? null;
+
   if (loading) return <Spinner />;
-  if (!service) {
+  if (!rule) {
     return (
-      <ContentLayout header={<Header variant="h1">TCP service not found</Header>}>
-        <Button variant="inline-link" onClick={() => onNavigate("tcp-services")}>
-          ← Back to TCP Services
+      <ContentLayout header={<Header variant="h1">Web service not found</Header>}>
+        <Button variant="inline-link" onClick={() => onNavigate("web-services")}>
+          ← Back to Web Services
         </Button>
       </ContentLayout>
     );
@@ -122,52 +144,44 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
             </SpaceBetween>
           }
         >
-          {service.name}
+          {domainNameById(rule.domain_id)}{rule.path_prefix && rule.path_prefix !== "/" ? rule.path_prefix : ""}
         </Header>
       }
     >
       <SpaceBetween size="l">
-        <Button variant="inline-link" onClick={() => onNavigate("tcp-services")}>
-          ← Back to TCP Services
+        <Button variant="inline-link" onClick={() => onNavigate("web-services")}>
+          ← Back to Web Services
         </Button>
 
-        <Container header={<Header variant="h2">TCP service details</Header>}>
+        <Container header={<Header variant="h2">Web service details</Header>}>
           <ColumnLayout columns={3} variant="text-grid">
             <div>
-              <Box variant="awsui-key-label">Name</Box>
-              <Box>{service.name}</Box>
+              <Box variant="awsui-key-label">Domain</Box>
+              <Box>{domainNameById(rule.domain_id)}</Box>
+            </div>
+            <div>
+              <Box variant="awsui-key-label">Path prefix</Box>
+              <Box>{rule.path_prefix || "/"}</Box>
             </div>
             <div>
               <Box variant="awsui-key-label">ID</Box>
-              <Box>{service.id}</Box>
-            </div>
-            <div>
-              <Box variant="awsui-key-label">Age</Box>
-              <Box>{formatAge(service.created_at)}</Box>
+              <Box>{rule.id}</Box>
             </div>
             <div>
               <Box variant="awsui-key-label">Container FQDN</Box>
-              <Box>{service.container_fqdn}</Box>
+              <Box>{rule.container_fqdn}</Box>
             </div>
             <div>
               <Box variant="awsui-key-label">Container port</Box>
-              <Box>{service.container_port}</Box>
+              <Box>{rule.container_port}</Box>
             </div>
             <div>
               <Box variant="awsui-key-label">System port</Box>
-              <Box>{service.system_port}</Box>
+              <Box>{rule.system_port}</Box>
             </div>
             <div>
-              <Box variant="awsui-key-label">DNS name</Box>
-              <Box>
-                <code>{service.name}.svc.local</code>
-              </Box>
-            </div>
-            <div>
-              <Box variant="awsui-key-label">Connect</Box>
-              <Box>
-                <code>{service.name}.svc.local:{service.system_port}</code>
-              </Box>
+              <Box variant="awsui-key-label">Age</Box>
+              <Box>{formatAge(rule.created_at)}</Box>
             </div>
           </ColumnLayout>
         </Container>
@@ -177,7 +191,7 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
       <Modal
         visible={mode === "edit"}
         onDismiss={() => setMode(null)}
-        header="Edit TCP service"
+        header="Edit web service"
         footer={
           <SpaceBetween direction="horizontal" size="xs">
             <Button variant="link" onClick={() => setMode(null)}>Cancel</Button>
@@ -187,14 +201,25 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
       >
         <Form>
           <SpaceBetween size="m">
-            <FormField label="Name" description="Short DNS label (e.g. api, db)" constraintText="Required">
-              <Input
-                value={editForm.name}
-                onChange={(e) => setEditForm((f) => ({ ...f, name: e.detail.value }))}
-                placeholder="api"
+            <FormField label="Domain" constraintText="Required">
+              <Select
+                filteringType="auto"
+                options={domainOptions}
+                selectedOption={selectedDomainOption}
+                onChange={(e) =>
+                  setEditForm((f) => ({ ...f, domain_id: e.detail.selectedOption.value ?? "" }))
+                }
+                placeholder="Select a domain"
               />
             </FormField>
-            <FormField label="Container FQDN" description='e.g. "ecouniversal" or "backend.myapp"' constraintText="Required">
+            <FormField label="Path prefix" description="URL path prefix to match">
+              <Input
+                value={editForm.path_prefix}
+                onChange={(e) => setEditForm((f) => ({ ...f, path_prefix: e.detail.value }))}
+                placeholder="/"
+              />
+            </FormField>
+            <FormField label="Container FQDN" constraintText="Required">
               <Input
                 value={editForm.container_fqdn}
                 onChange={(e) => setEditForm((f) => ({ ...f, container_fqdn: e.detail.value }))}
@@ -210,7 +235,7 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
                 type="number"
                 value={editForm.container_port}
                 onChange={(e) => setEditForm((f) => ({ ...f, container_port: e.detail.value }))}
-                placeholder="3000"
+                placeholder="8080"
               />
             </FormField>
           </SpaceBetween>
@@ -221,7 +246,7 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
       <Modal
         visible={mode === "delete-confirm"}
         onDismiss={() => setMode(null)}
-        header="Delete TCP service"
+        header="Delete web service"
         footer={
           <SpaceBetween direction="horizontal" size="xs">
             <Button variant="link" onClick={() => setMode(null)}>Cancel</Button>
@@ -229,7 +254,7 @@ export default function ServiceDetail({ serviceId, onNavigate }: Props) {
           </SpaceBetween>
         }
       >
-        Are you sure you want to delete TCP service <strong>{service.name}</strong>? This cannot be undone.
+        Are you sure you want to delete the web service for <strong>{domainNameById(rule.domain_id)}{rule.path_prefix}</strong>? This cannot be undone.
       </Modal>
     </ContentLayout>
   );

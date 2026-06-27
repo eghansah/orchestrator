@@ -29,7 +29,18 @@ const KIND_OPTIONS = [
 
 const emptyForm = (): CreateTemplateRequest => ({ name: "", description: "", kind: "stack", compose_yaml: "", image: "" });
 
-export default function Templates({ state: _state, loading, error, refetch, onNavigate: _nav }: Props) {
+// Phases that mean a deployed workload is still live; in any of these the
+// template's Deploy button becomes Redeploy (which replaces the workload).
+const ACTIVE_PHASES = new Set(["pending", "scheduled", "running"]);
+
+export default function Templates({ state, loading, error, refetch, onNavigate: _nav }: Props) {
+  // A template's deployed workload carries the template's name. Map name →
+  // whether a live workload exists, so each row can pick Deploy vs Redeploy.
+  const deployedNames = new Set(
+    (state?.workloads ?? [])
+      .filter((wl) => ACTIVE_PHASES.has(wl.phase))
+      .map((wl) => wl.name),
+  );
   const [templates, setTemplates] = useState<WorkloadTemplate[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
@@ -116,13 +127,14 @@ export default function Templates({ state: _state, loading, error, refetch, onNa
   }
 
   async function handleDeploy(t: WorkloadTemplate) {
+    const redeploy = deployedNames.has(t.name);
     setDeploying(t.id);
     try {
       const res = await api.deployTemplate(t.id);
       if (!res.accepted) {
-        addFlash("error", `Deploy rejected: ${res.reason ?? "unknown"}`);
+        addFlash("error", `${redeploy ? "Redeploy" : "Deploy"} rejected: ${res.reason ?? "unknown"}`);
       } else {
-        addFlash("success", `Deployed as workload ${res.workload_id}`);
+        addFlash("success", `${redeploy ? "Redeployed" : "Deployed"} as workload ${res.workload_id}`);
         refetch();
       }
     } catch (e) {
@@ -173,7 +185,7 @@ export default function Templates({ state: _state, loading, error, refetch, onNa
                     loading={deploying === t.id}
                     onClick={() => handleDeploy(t)}
                   >
-                    Deploy
+                    {deployedNames.has(t.name) ? "Redeploy" : "Deploy"}
                   </Button>
                   <Button variant="inline-link" onClick={() => openEdit(t)}>Edit</Button>
                   <Button variant="inline-link" onClick={() => setDeleteTarget(t)}>Delete</Button>

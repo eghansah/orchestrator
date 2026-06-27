@@ -18,15 +18,22 @@ import (
 
 // Registry wraps the go-containerregistry in-memory OCI registry.
 type Registry struct {
-	handler http.Handler
-	count   int
+	handler  http.Handler
+	count    int
+	imageTag string // repo:tag the image is served under, e.g. "ingressd:v1.4.0"
+	digest   string // manifest digest of the loaded image, e.g. "sha256:…"
 }
 
-// New creates an in-memory OCI registry. If tarData is non-nil, the first
-// image in the Docker-save tarball is pushed into the registry before returning.
-func New(tarData []byte) (*Registry, error) {
+// New creates an in-memory OCI registry. If tarData is non-nil, the first image
+// in the Docker-save tarball is pushed into the registry under imageTag (a
+// "repo:tag" reference; defaults to "ingressd:latest" when empty) before
+// returning. The image's manifest digest is recorded and exposed via Digest.
+func New(tarData []byte, imageTag string) (*Registry, error) {
+	if imageTag == "" {
+		imageTag = "ingressd:latest"
+	}
 	h := gcrregistry.New(gcrregistry.WithBlobHandler(gcrregistry.NewInMemoryBlobHandler()))
-	r := &Registry{handler: h}
+	r := &Registry{handler: h, imageTag: imageTag}
 	if len(tarData) > 0 {
 		if err := r.loadTar(tarData); err != nil {
 			return nil, err
@@ -42,6 +49,14 @@ func (r *Registry) Handler() http.Handler { return r.handler }
 // ImageCount returns the number of images loaded into the registry.
 func (r *Registry) ImageCount() int { return r.count }
 
+// ImageTag returns the "repo:tag" the loaded image is served under.
+func (r *Registry) ImageTag() string { return r.imageTag }
+
+// Digest returns the manifest digest of the loaded image ("sha256:…"), or ""
+// if no image was loaded. It is content-addressed: identical image bytes yield
+// the same digest, so callers can detect content changes across builds.
+func (r *Registry) Digest() string { return r.digest }
+
 // loadTar starts a temporary server on a random loopback port, pushes the first
 // image from tarData into the in-memory registry over HTTP, then shuts the
 // temporary server down. The blobs and manifest remain in the in-memory store.
@@ -54,7 +69,7 @@ func (r *Registry) loadTar(tarData []byte) error {
 	go srv.Serve(ln) //nolint:errcheck
 	defer srv.Close()
 
-	ref, err := name.NewTag(ln.Addr().String()+"/ingressd:latest", name.Insecure)
+	ref, err := name.NewTag(ln.Addr().String()+"/"+r.imageTag, name.Insecure)
 	if err != nil {
 		return fmt.Errorf("parse ref: %w", err)
 	}
@@ -65,6 +80,12 @@ func (r *Registry) loadTar(tarData []byte) error {
 	if err != nil {
 		return fmt.Errorf("load tarball: %w", err)
 	}
+
+	dig, err := img.Digest()
+	if err != nil {
+		return fmt.Errorf("compute digest: %w", err)
+	}
+	r.digest = dig.String()
 
 	if err := remote.Write(ref, img, remote.WithTransport(http.DefaultTransport)); err != nil {
 		return fmt.Errorf("push image: %w", err)

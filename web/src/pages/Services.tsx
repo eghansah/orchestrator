@@ -72,7 +72,6 @@ export default function Services({ onNavigate }: Props) {
         addFlash("error", resp.reason ?? "rejected");
       } else {
         addFlash("success", `TCP service ${resp.service_id} created (system port ${resp.system_port})`);
-        if (resp.warning) addFlash("warning", resp.warning);
         setCreating(false);
         setCreateForm({ name: "", container_fqdn: "", container_port: "" });
         load();
