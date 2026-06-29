@@ -210,15 +210,19 @@ func (x *ForwardHTTPResponse) GetBody() []byte {
 }
 
 type HeartbeatRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	Address       string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"` // self gRPC address (host:port)
-	Resources     *NodeResources         `protobuf:"bytes,3,opt,name=resources,proto3" json:"resources,omitempty"`
-	RaftLeaderId  string                 `protobuf:"bytes,4,opt,name=raft_leader_id,json=raftLeaderId,proto3" json:"raft_leader_id,omitempty"` // who this node thinks the leader is; empty = unknown
-	RaftAddress   string                 `protobuf:"bytes,5,opt,name=raft_address,json=raftAddress,proto3" json:"raft_address,omitempty"`      // self Raft TCP address (host:port) — needed for AddVoter
-	JoinToken     string                 `protobuf:"bytes,6,opt,name=join_token,json=joinToken,proto3" json:"join_token,omitempty"`            // cluster join secret; must match leader's --join-token
-	TlsCert       []byte                 `protobuf:"bytes,7,opt,name=tls_cert,json=tlsCert,proto3" json:"tls_cert,omitempty"`                  // DER-encoded self-signed cert; stored for mTLS key pinning
-	DataIp        string                 `protobuf:"bytes,8,opt,name=data_ip,json=dataIp,proto3" json:"data_ip,omitempty"`                     // routable IP for container traffic (ingress backend)
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	NodeId       string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Address      string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"` // self gRPC address (host:port)
+	Resources    *NodeResources         `protobuf:"bytes,3,opt,name=resources,proto3" json:"resources,omitempty"`
+	RaftLeaderId string                 `protobuf:"bytes,4,opt,name=raft_leader_id,json=raftLeaderId,proto3" json:"raft_leader_id,omitempty"` // who this node thinks the leader is; empty = unknown
+	RaftAddress  string                 `protobuf:"bytes,5,opt,name=raft_address,json=raftAddress,proto3" json:"raft_address,omitempty"`      // self Raft TCP address (host:port) — needed for AddVoter
+	JoinToken    string                 `protobuf:"bytes,6,opt,name=join_token,json=joinToken,proto3" json:"join_token,omitempty"`            // cluster join secret; must match leader's --join-token
+	TlsCert      []byte                 `protobuf:"bytes,7,opt,name=tls_cert,json=tlsCert,proto3" json:"tls_cert,omitempty"`                  // DER-encoded self-signed cert; stored for mTLS key pinning
+	DataIp       string                 `protobuf:"bytes,8,opt,name=data_ip,json=dataIp,proto3" json:"data_ip,omitempty"`                     // routable IP for container traffic (ingress backend)
+	// Mesh overlay self-published facts (see docs/mesh-network.md). The leader
+	// assigns the subnet/addr in cluster state; the node only publishes these two.
+	MeshPubKey    string `protobuf:"bytes,9,opt,name=mesh_pub_key,json=meshPubKey,proto3" json:"mesh_pub_key,omitempty"`      // WireGuard public key (base64)
+	MeshEndpoint  string `protobuf:"bytes,10,opt,name=mesh_endpoint,json=meshEndpoint,proto3" json:"mesh_endpoint,omitempty"` // reachable WireGuard UDP endpoint (host:port)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -305,6 +309,20 @@ func (x *HeartbeatRequest) GetTlsCert() []byte {
 func (x *HeartbeatRequest) GetDataIp() string {
 	if x != nil {
 		return x.DataIp
+	}
+	return ""
+}
+
+func (x *HeartbeatRequest) GetMeshPubKey() string {
+	if x != nil {
+		return x.MeshPubKey
+	}
+	return ""
+}
+
+func (x *HeartbeatRequest) GetMeshEndpoint() string {
+	if x != nil {
+		return x.MeshEndpoint
 	}
 	return ""
 }
@@ -691,7 +709,7 @@ const file_node_proto_rawDesc = "" +
 	"\vstatus_code\x18\x01 \x01(\x05R\n" +
 	"statusCode\x122\n" +
 	"\aheaders\x18\x02 \x03(\v2\x18.orchestrator.HttpHeaderR\aheaders\x12\x12\n" +
-	"\x04body\x18\x03 \x01(\fR\x04body\"\x9c\x02\n" +
+	"\x04body\x18\x03 \x01(\fR\x04body\"\xe3\x02\n" +
 	"\x10HeartbeatRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x129\n" +
@@ -701,7 +719,11 @@ const file_node_proto_rawDesc = "" +
 	"\n" +
 	"join_token\x18\x06 \x01(\tR\tjoinToken\x12\x19\n" +
 	"\btls_cert\x18\a \x01(\fR\atlsCert\x12\x17\n" +
-	"\adata_ip\x18\b \x01(\tR\x06dataIp\"r\n" +
+	"\adata_ip\x18\b \x01(\tR\x06dataIp\x12 \n" +
+	"\fmesh_pub_key\x18\t \x01(\tR\n" +
+	"meshPubKey\x12#\n" +
+	"\rmesh_endpoint\x18\n" +
+	" \x01(\tR\fmeshEndpoint\"r\n" +
 	"\x11HeartbeatResponse\x12\x1b\n" +
 	"\tleader_id\x18\x01 \x01(\tR\bleaderId\x12%\n" +
 	"\x0eleader_address\x18\x02 \x01(\tR\rleaderAddress\x12\x19\n" +

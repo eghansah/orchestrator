@@ -136,20 +136,28 @@ func NodeToProto(n Node) *gen.Node {
 			MemoryBytes: n.Resources.MemoryBytes,
 			DiskBytes:   n.Resources.DiskBytes,
 		},
-		LastSeenAt: n.LastSeenAt.Unix(),
-		TlsCert:    n.TLSCert,
-		DataIp:     n.DataIP,
+		LastSeenAt:   n.LastSeenAt.Unix(),
+		TlsCert:      n.TLSCert,
+		DataIp:       n.DataIP,
+		MeshPubKey:   n.MeshPubKey,
+		MeshEndpoint: n.MeshEndpoint,
+		MeshSubnet:   n.MeshSubnet,
+		MeshAddr:     n.MeshAddr,
 	}
 }
 
 func NodeFromProto(pn *gen.Node) Node {
 	n := Node{
-		ID:         pn.NodeId,
-		Address:    pn.Address,
-		Status:     NodeStatus(pn.Status),
-		LastSeenAt: time.Unix(pn.LastSeenAt, 0),
-		TLSCert:    pn.TlsCert,
-		DataIP:     pn.DataIp,
+		ID:           pn.NodeId,
+		Address:      pn.Address,
+		Status:       NodeStatus(pn.Status),
+		LastSeenAt:   time.Unix(pn.LastSeenAt, 0),
+		TLSCert:      pn.TlsCert,
+		DataIP:       pn.DataIp,
+		MeshPubKey:   pn.MeshPubKey,
+		MeshEndpoint: pn.MeshEndpoint,
+		MeshSubnet:   pn.MeshSubnet,
+		MeshAddr:     pn.MeshAddr,
 	}
 	if pn.Resources != nil {
 		n.Resources = NodeResources{

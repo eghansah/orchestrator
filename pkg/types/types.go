@@ -119,6 +119,16 @@ type Node struct {
 	LastSeenAt time.Time
 	TLSCert    []byte // DER-encoded self-signed cert for mTLS key pinning
 	DataIP     string // routable IP for container traffic (ingress backend)
+
+	// Mesh overlay fields. The node publishes its own MeshPubKey/MeshEndpoint
+	// (its WireGuard public key and reachable UDP endpoint); the leader assigns
+	// MeshSubnet/MeshAddr from the cluster mesh CIDR and keeps them stable across
+	// re-registration. The private key never leaves the node and is never stored
+	// here. See docs/mesh-network.md.
+	MeshPubKey   string // WireGuard public key (base64)
+	MeshEndpoint string // host:port for WireGuard (UDP, port >= 1024)
+	MeshSubnet   string // leader-assigned /24 for this node's containers, e.g. "100.64.3.0/24"
+	MeshAddr     string // this node's own address on the mesh (first host of MeshSubnet)
 }
 
 // IngressRule is an HTTP/HTTPS routing rule. ContainerFQDN identifies the target

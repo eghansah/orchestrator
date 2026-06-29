@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	crand "crypto/rand"
-	"io"
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -35,6 +35,7 @@ import (
 	"github.com/eghansah/orchestrator/internal/ingress"
 	"github.com/eghansah/orchestrator/internal/ingresscfg"
 	"github.com/eghansah/orchestrator/internal/localregistry"
+	"github.com/eghansah/orchestrator/internal/meshd"
 	"github.com/eghansah/orchestrator/internal/nerdctl"
 	"github.com/eghansah/orchestrator/internal/proxycfg"
 	internraft "github.com/eghansah/orchestrator/internal/raft"
@@ -51,20 +52,20 @@ var version = "dev"
 // ── Config ────────────────────────────────────────────────────────────────────
 
 type config struct {
-	nodeID      string
-	grpcAddr    string
-	raftAddr    string
-	webAddr     string
-	webPrefix   string // URL prefix for the web console, e.g. "/console" (empty = root)
+	nodeID         string
+	grpcAddr       string
+	raftAddr       string
+	webAddr        string
+	webPrefix      string // URL prefix for the web console, e.g. "/console" (empty = root)
 	ingressAddr    string // HTTP ingress proxy listen address; empty = disabled
 	ingressTLSAddr string // HTTPS ingress proxy listen address; empty = disabled
-	dnsAddr     string // DNS listen address; empty = disabled
-	dataAddr    string // routable IP for container traffic; auto-detected if empty
-	dataDir     string
-	bootstrap   bool
-	joinAddr    string // gRPC address of an existing node to join through
-	joinToken   string // shared secret required to join the cluster
-	adminToken  string // bearer token required for all ControlService RPCs
+	dnsAddr        string // DNS listen address; empty = disabled
+	dataAddr       string // routable IP for container traffic; auto-detected if empty
+	dataDir        string
+	bootstrap      bool
+	joinAddr       string // gRPC address of an existing node to join through
+	joinToken      string // shared secret required to join the cluster
+	adminToken     string // bearer token required for all ControlService RPCs
 	webPassword    string // password for the web console login form
 	webDisableMFA  bool   // skip TOTP MFA for all logins when true
 	// LDAP/AD auth
@@ -83,6 +84,10 @@ type config struct {
 	registryAddr  string // local container registry listen address; empty = disabled
 	ingressdHTTP  string // host:port binding for ingressd HTTP  (e.g. 127.0.0.1:8080)
 	ingressdHTTPS string // host:port binding for ingressd HTTPS (e.g. 127.0.0.1:8443)
+
+	mesh           bool   // enable the WireGuard mesh overlay
+	meshListenPort int    // local UDP port for WireGuard (>= 1024)
+	meshEndpoint   string // externally reachable WireGuard endpoint (host:port); default dataAddr:meshListenPort
 
 	// Derived at runtime from the embedded ingressd image, not from flags.
 	ingressdImageTag    string // repo:tag the local registry serves, e.g. "ingressd:v1.4.0"
@@ -113,6 +118,9 @@ func parseFlags() config {
 	flag.StringVar(&cfg.registryAddr, "registry-addr", "127.0.0.1:5000", "built-in local container registry listen address (empty to disable)")
 	flag.StringVar(&cfg.ingressdHTTP, "ingressd-http", "127.0.0.1:8080", "host:port for ingressd HTTP bind (empty to disable ingressd auto-deploy)")
 	flag.StringVar(&cfg.ingressdHTTPS, "ingressd-https", "127.0.0.1:8443", "host:port for ingressd HTTPS bind")
+	flag.BoolVar(&cfg.mesh, "mesh", false, "enable the userland WireGuard mesh overlay (see docs/mesh-network.md)")
+	flag.IntVar(&cfg.meshListenPort, "mesh-listen-port", 51820, "local UDP port for the mesh WireGuard device (must be ≥1024)")
+	flag.StringVar(&cfg.meshEndpoint, "mesh-endpoint", "", "externally reachable WireGuard endpoint host:port (default: data-addr:mesh-listen-port)")
 	flag.StringVar(&cfg.ldapAddr, "ldap-addr", "", "LDAP/AD server address host:port (empty = use local password auth)")
 	flag.BoolVar(&cfg.ldapTLS, "ldap-tls", false, "use implicit TLS when connecting to LDAP (LDAPS, typically port 636)")
 	flag.BoolVar(&cfg.ldapInsecure, "ldap-insecure", false, "skip TLS certificate verification for LDAP (for self-signed certs)")
@@ -308,6 +316,31 @@ func main() {
 	_ = ingresscfg.Write(cfg.dataDir, peer.State())
 	go ingresscfgWriteLoop(ctx, peer, cfg.dataDir)
 
+	// 5f. Mesh overlay (optional) ---------------------------------------------
+	// The node owns its WireGuard identity and publishes its public key + endpoint
+	// into cluster state; the leader assigns it a /24. meshd then keeps the local
+	// WireGuard peer set in sync with the cluster. See docs/mesh-network.md.
+	var meshMgr *meshd.Manager
+	var meshPubKey, meshEndpoint string
+	if cfg.mesh {
+		if cfg.meshListenPort < 1024 {
+			dieOnErr(fmt.Errorf("mesh-listen-port %d is below 1024 (rootless cannot bind privileged ports)", cfg.meshListenPort), "mesh config")
+		}
+		meshEndpoint = cfg.meshEndpoint
+		if meshEndpoint == "" {
+			meshEndpoint = fmt.Sprintf("%s:%d", cfg.dataAddr, cfg.meshListenPort)
+		}
+		mgr, err := meshd.NewManager(cfg.dataDir, meshEndpoint, cfg.meshListenPort,
+			func(meshAddr string) (meshd.Device, error) {
+				return meshd.NewNetstackDevice(meshAddr, meshd.DefaultMTU)
+			})
+		dieOnErr(err, "create mesh manager")
+		meshMgr = mgr
+		meshPubKey = mgr.PublicKey()
+		defer meshMgr.Close() //nolint:errcheck
+		slog.Info("mesh overlay enabled", "endpoint", meshEndpoint, "pubkey", meshPubKey, "listen-port", cfg.meshListenPort)
+	}
+
 	serverTLS := tlsutil.ServerTLSConfig(tlsCert, isPinned)
 	grpcSrv := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(serverTLS)),
@@ -340,7 +373,12 @@ func main() {
 	go control.NewReconciler(ctrl, ag).Run(ctx)
 
 	// Once we are leader, register this node in the cluster state.
-	go selfRegisterLoop(ctx, peer, cfg.nodeID, cfg.grpcAddr, cfg.dataAddr, ownCertDER)
+	go selfRegisterLoop(ctx, peer, cfg.nodeID, cfg.grpcAddr, cfg.dataAddr, ownCertDER, meshPubKey, meshEndpoint)
+
+	// Keep the local WireGuard peer set in sync with cluster state.
+	if meshMgr != nil {
+		go meshMgr.Run(ctx, cfg.nodeID, func() map[string]types.Node { return peer.State().Nodes })
+	}
 
 	// Once we are leader, register the built-in local registry so the web UI
 	// and other cluster components can discover it.
@@ -354,7 +392,7 @@ func main() {
 	// If joining an existing cluster, heartbeat the given node so the leader
 	// can add us as a Raft voter and register us in the cluster state.
 	if cfg.joinAddr != "" {
-		go heartbeatLoop(ctx, peer, tlsCert, ownCertDER, cfg.nodeID, cfg.grpcAddr, cfg.raftAddr, cfg.dataAddr, cfg.joinAddr, cfg.joinToken)
+		go heartbeatLoop(ctx, peer, tlsCert, ownCertDER, cfg.nodeID, cfg.grpcAddr, cfg.raftAddr, cfg.dataAddr, cfg.joinAddr, cfg.joinToken, meshPubKey, meshEndpoint)
 	}
 
 	slog.Info("orchestrator running", "node-id", cfg.nodeID)
@@ -408,12 +446,14 @@ func (ns *nodeServer) Heartbeat(_ context.Context, req *gen.HeartbeatRequest) (*
 			}
 		} else {
 			n := types.Node{
-				ID:         req.NodeId,
-				Address:    req.Address,
-				Status:     types.NodeHealthy,
-				TLSCert:    req.TlsCert,
-				DataIP:     req.DataIp,
-				LastSeenAt: time.Now(),
+				ID:           req.NodeId,
+				Address:      req.Address,
+				Status:       types.NodeHealthy,
+				TLSCert:      req.TlsCert,
+				DataIP:       req.DataIp,
+				MeshPubKey:   req.MeshPubKey,
+				MeshEndpoint: req.MeshEndpoint,
+				LastSeenAt:   time.Now(),
 			}
 			if req.Resources != nil {
 				n.Resources = types.NodeResources{
@@ -557,7 +597,7 @@ func (ns *nodeServer) ForwardTCP(stream gen.NodeService_ForwardTCPServer) error 
 
 // selfRegisterLoop polls until this node becomes leader, then writes its own
 // Node record into the Raft state so the cluster knows its gRPC address and cert.
-func selfRegisterLoop(ctx context.Context, peer *internraft.Peer, nodeID, grpcAddr, dataIP string, ownCertDER []byte) {
+func selfRegisterLoop(ctx context.Context, peer *internraft.Peer, nodeID, grpcAddr, dataIP string, ownCertDER []byte, meshPubKey, meshEndpoint string) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -572,11 +612,13 @@ func selfRegisterLoop(ctx context.Context, peer *internraft.Peer, nodeID, grpcAd
 				return // already registered
 			}
 			n := types.Node{
-				ID:      nodeID,
-				Address: grpcAddr,
-				Status:  types.NodeHealthy,
-				TLSCert: ownCertDER,
-				DataIP:  dataIP,
+				ID:           nodeID,
+				Address:      grpcAddr,
+				Status:       types.NodeHealthy,
+				TLSCert:      ownCertDER,
+				DataIP:       dataIP,
+				MeshPubKey:   meshPubKey,
+				MeshEndpoint: meshEndpoint,
 				Resources: types.NodeResources{
 					CPUCores: uint32(runtime.NumCPU()),
 				},
@@ -637,7 +679,7 @@ func heartbeatLoop(
 	peer *internraft.Peer,
 	ownCert tls.Certificate,
 	ownCertDER []byte,
-	nodeID, grpcAddr, raftAddr, dataIP, seedAddr, token string,
+	nodeID, grpcAddr, raftAddr, dataIP, seedAddr, token, meshPubKey, meshEndpoint string,
 ) {
 	knownLeaderAddr := seedAddr
 	var knownLeaderCert []byte // nil = TOFU until first successful heartbeat
@@ -646,7 +688,7 @@ func heartbeatLoop(
 	defer ticker.Stop()
 
 	// Send an immediate first heartbeat without waiting for the ticker.
-	addr, cert := doHeartbeat(ctx, knownLeaderAddr, knownLeaderCert, ownCert, ownCertDER, nodeID, grpcAddr, raftAddr, dataIP, token)
+	addr, cert := doHeartbeat(ctx, knownLeaderAddr, knownLeaderCert, ownCert, ownCertDER, nodeID, grpcAddr, raftAddr, dataIP, token, meshPubKey, meshEndpoint)
 	if addr != "" {
 		knownLeaderAddr = addr
 	}
@@ -662,7 +704,7 @@ func heartbeatLoop(
 			if peer.IsLeader() {
 				return // we became leader; no need to heartbeat outward
 			}
-			addr, cert := doHeartbeat(ctx, knownLeaderAddr, knownLeaderCert, ownCert, ownCertDER, nodeID, grpcAddr, raftAddr, dataIP, token)
+			addr, cert := doHeartbeat(ctx, knownLeaderAddr, knownLeaderCert, ownCert, ownCertDER, nodeID, grpcAddr, raftAddr, dataIP, token, meshPubKey, meshEndpoint)
 			if addr != "" {
 				knownLeaderAddr = addr
 				knownLeaderCert = nil // reset pin when following a redirect to a new leader
@@ -683,7 +725,7 @@ func doHeartbeat(
 	targetCertDER []byte,
 	ownCert tls.Certificate,
 	ownCertDER []byte,
-	nodeID, grpcAddr, raftAddr, dataIP, token string,
+	nodeID, grpcAddr, raftAddr, dataIP, token, meshPubKey, meshEndpoint string,
 ) (newLeaderAddr string, leaderCert []byte) {
 	tlsCfg := tlsutil.ClientTLSConfig(ownCert, targetCertDER)
 	conn, err := grpc.NewClient(targetAddr, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
@@ -694,12 +736,14 @@ func doHeartbeat(
 	defer conn.Close()
 
 	resp, err := gen.NewNodeServiceClient(conn).Heartbeat(ctx, &gen.HeartbeatRequest{
-		NodeId:      nodeID,
-		Address:     grpcAddr,
-		RaftAddress: raftAddr,
-		JoinToken:   token,
-		TlsCert:     ownCertDER,
-		DataIp:      dataIP,
+		NodeId:       nodeID,
+		Address:      grpcAddr,
+		RaftAddress:  raftAddr,
+		JoinToken:    token,
+		TlsCert:      ownCertDER,
+		DataIp:       dataIP,
+		MeshPubKey:   meshPubKey,
+		MeshEndpoint: meshEndpoint,
 	})
 	if err != nil {
 		slog.Warn("heartbeat RPC failed", "target", targetAddr, "err", err)
@@ -936,6 +980,9 @@ func logConfig(cfg config) {
 		"registry-addr", cfg.registryAddr,
 		"ingressd-http", cfg.ingressdHTTP,
 		"ingressd-https", cfg.ingressdHTTPS,
+		"mesh", cfg.mesh,
+		"mesh-listen-port", cfg.meshListenPort,
+		"mesh-endpoint", cfg.meshEndpoint,
 		"ldap-addr", cfg.ldapAddr,
 		"ldap-tls", cfg.ldapTLS,
 		"ldap-insecure", cfg.ldapInsecure,

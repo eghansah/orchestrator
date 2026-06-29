@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"sync"
 
 	"github.com/hashicorp/raft"
@@ -49,6 +50,12 @@ const (
 	ingressPortPoolEnd   uint32 = 45767
 )
 
+// defaultMeshCIDR is the cluster-wide mesh address range from which the leader
+// carves a /24 per node. 100.64.0.0/10 (RFC 6598, carrier-grade NAT) is chosen
+// because it almost never collides with real LANs. Configurable per cluster via
+// ClusterState.MeshCIDR. See docs/mesh-network.md.
+const defaultMeshCIDR = "100.64.0.0/10"
+
 // ClusterState is the desired-state view maintained by the FSM.
 type ClusterState struct {
 	Workloads       map[string]types.Workload    `json:"workloads"`
@@ -62,6 +69,7 @@ type ClusterState struct {
 	Secrets         map[string]types.Secret           `json:"secrets"`
 	NextPort        uint32                            `json:"next_port"`         // container port pool
 	NextServicePort uint32                            `json:"next_service_port"` // service port pool
+	MeshCIDR        string                            `json:"mesh_cidr"`         // cluster mesh range; leader carves a /24 per node
 }
 
 func newClusterState() ClusterState {
@@ -77,6 +85,7 @@ func newClusterState() ClusterState {
 		NextServicePort: svcPortPoolStart,
 		Templates:       make(map[string]types.WorkloadTemplate),
 		Secrets:         make(map[string]types.Secret),
+		MeshCIDR:        defaultMeshCIDR,
 	}
 }
 
@@ -89,6 +98,43 @@ func scanFreePort(inUse map[uint32]bool, start, end uint32) uint32 {
 		}
 	}
 	return 0
+}
+
+// allocMeshSubnet returns the lowest /24 within cidr that is not present in
+// inUse (keyed by canonical "a.b.c.0/24" string), together with that subnet's
+// first host address (".1") to use as the node's mesh address. cidr must be an
+// IPv4 prefix of /24 or larger. Returns an error if cidr is invalid or every
+// /24 is taken.
+func allocMeshSubnet(cidr string, inUse map[string]bool) (subnet, addr string, err error) {
+	p, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		return "", "", fmt.Errorf("parse mesh CIDR %q: %w", cidr, err)
+	}
+	p = p.Masked()
+	if !p.Addr().Is4() {
+		return "", "", fmt.Errorf("mesh CIDR %q must be IPv4", cidr)
+	}
+	if p.Bits() > 24 {
+		return "", "", fmt.Errorf("mesh CIDR %q must be /24 or larger", cidr)
+	}
+	blocks := 1 << (24 - p.Bits())
+	cur := p.Addr() // network address, already aligned to <=/24
+	for range blocks {
+		sn := netip.PrefixFrom(cur, 24).String()
+		if !inUse[sn] {
+			return sn, cur.Next().String(), nil
+		}
+		cur = nextSlash24(cur)
+	}
+	return "", "", fmt.Errorf("mesh CIDR %q exhausted: no free /24", cidr)
+}
+
+// nextSlash24 returns the address 256 higher than a (the base of the next /24).
+func nextSlash24(a netip.Addr) netip.Addr {
+	b := a.As4()
+	v := uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+	v += 256
+	return netip.AddrFrom4([4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
 }
 
 
@@ -203,6 +249,31 @@ func (f *fsm) Apply(l *raft.Log) any {
 		var n types.Node
 		if err := json.Unmarshal(cmd.Data, &n); err != nil {
 			return err
+		}
+		// Assign (or preserve) the leader-controlled mesh subnet. The subnet must
+		// stay stable across re-registration, so an existing assignment always wins
+		// over whatever the (re-)registering node sent. Node-provided fields
+		// (MeshPubKey/MeshEndpoint) come from n and are kept as-is.
+		if existing, ok := f.state.Nodes[n.ID]; ok && existing.MeshSubnet != "" {
+			n.MeshSubnet = existing.MeshSubnet
+			n.MeshAddr = existing.MeshAddr
+		} else if n.MeshSubnet == "" {
+			inUse := make(map[string]bool)
+			for id, other := range f.state.Nodes {
+				if id != n.ID && other.MeshSubnet != "" {
+					inUse[other.MeshSubnet] = true
+				}
+			}
+			cidr := f.state.MeshCIDR
+			if cidr == "" {
+				cidr = defaultMeshCIDR
+			}
+			subnet, addr, err := allocMeshSubnet(cidr, inUse)
+			if err != nil {
+				return fmt.Errorf("allocate mesh subnet for node %s: %w", n.ID, err)
+			}
+			n.MeshSubnet = subnet
+			n.MeshAddr = addr
 		}
 		f.state.Nodes[n.ID] = n
 

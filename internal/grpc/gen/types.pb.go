@@ -665,14 +665,20 @@ func (*Workload_Container) isWorkload_Spec() {}
 func (*Workload_Stack) isWorkload_Spec() {}
 
 type Node struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	Address       string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"` // host:port for gRPC
-	Status        NodeStatus             `protobuf:"varint,3,opt,name=status,proto3,enum=orchestrator.NodeStatus" json:"status,omitempty"`
-	Resources     *NodeResources         `protobuf:"bytes,4,opt,name=resources,proto3" json:"resources,omitempty"`
-	LastSeenAt    int64                  `protobuf:"varint,5,opt,name=last_seen_at,json=lastSeenAt,proto3" json:"last_seen_at,omitempty"` // unix seconds
-	TlsCert       []byte                 `protobuf:"bytes,6,opt,name=tls_cert,json=tlsCert,proto3" json:"tls_cert,omitempty"`             // DER-encoded self-signed cert for mTLS key pinning
-	DataIp        string                 `protobuf:"bytes,7,opt,name=data_ip,json=dataIp,proto3" json:"data_ip,omitempty"`                // routable IP for container traffic (ingress backend)
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	NodeId     string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Address    string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"` // host:port for gRPC
+	Status     NodeStatus             `protobuf:"varint,3,opt,name=status,proto3,enum=orchestrator.NodeStatus" json:"status,omitempty"`
+	Resources  *NodeResources         `protobuf:"bytes,4,opt,name=resources,proto3" json:"resources,omitempty"`
+	LastSeenAt int64                  `protobuf:"varint,5,opt,name=last_seen_at,json=lastSeenAt,proto3" json:"last_seen_at,omitempty"` // unix seconds
+	TlsCert    []byte                 `protobuf:"bytes,6,opt,name=tls_cert,json=tlsCert,proto3" json:"tls_cert,omitempty"`             // DER-encoded self-signed cert for mTLS key pinning
+	DataIp     string                 `protobuf:"bytes,7,opt,name=data_ip,json=dataIp,proto3" json:"data_ip,omitempty"`                // routable IP for container traffic (ingress backend)
+	// Mesh overlay (see docs/mesh-network.md). pub_key/endpoint are node-published;
+	// subnet/addr are leader-assigned from the cluster mesh CIDR.
+	MeshPubKey    string `protobuf:"bytes,8,opt,name=mesh_pub_key,json=meshPubKey,proto3" json:"mesh_pub_key,omitempty"`     // WireGuard public key (base64)
+	MeshEndpoint  string `protobuf:"bytes,9,opt,name=mesh_endpoint,json=meshEndpoint,proto3" json:"mesh_endpoint,omitempty"` // reachable WireGuard UDP endpoint (host:port)
+	MeshSubnet    string `protobuf:"bytes,10,opt,name=mesh_subnet,json=meshSubnet,proto3" json:"mesh_subnet,omitempty"`      // leader-assigned /24, e.g. 100.64.3.0/24
+	MeshAddr      string `protobuf:"bytes,11,opt,name=mesh_addr,json=meshAddr,proto3" json:"mesh_addr,omitempty"`            // this node's own mesh address (first host of subnet)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -756,15 +762,43 @@ func (x *Node) GetDataIp() string {
 	return ""
 }
 
+func (x *Node) GetMeshPubKey() string {
+	if x != nil {
+		return x.MeshPubKey
+	}
+	return ""
+}
+
+func (x *Node) GetMeshEndpoint() string {
+	if x != nil {
+		return x.MeshEndpoint
+	}
+	return ""
+}
+
+func (x *Node) GetMeshSubnet() string {
+	if x != nil {
+		return x.MeshSubnet
+	}
+	return ""
+}
+
+func (x *Node) GetMeshAddr() string {
+	if x != nil {
+		return x.MeshAddr
+	}
+	return ""
+}
+
 type IngressRule struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Host          string                 `protobuf:"bytes,2,opt,name=host,proto3" json:"host,omitempty"`                                              // Host header to match; empty = match all
-	PathPrefix    string                 `protobuf:"bytes,3,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`                // URL path prefix to match; empty = "/"
-	ContainerFqdn string                 `protobuf:"bytes,4,opt,name=container_fqdn,json=containerFqdn,proto3" json:"container_fqdn,omitempty"`       // target container: "workload" or "service.workload"
-	ContainerPort uint32                 `protobuf:"varint,5,opt,name=container_port,json=containerPort,proto3" json:"container_port,omitempty"`      // port the container listens on
-	SystemPort    uint32                 `protobuf:"varint,6,opt,name=system_port,json=systemPort,proto3" json:"system_port,omitempty"`               // auto-assigned from ingress pool (43000–45767)
-	CreatedAt     int64                  `protobuf:"varint,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`                  // unix seconds
+	Host          string                 `protobuf:"bytes,2,opt,name=host,proto3" json:"host,omitempty"`                                         // Host header to match; empty = match all
+	PathPrefix    string                 `protobuf:"bytes,3,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`           // URL path prefix to match; empty = "/"
+	ContainerFqdn string                 `protobuf:"bytes,4,opt,name=container_fqdn,json=containerFqdn,proto3" json:"container_fqdn,omitempty"`  // target container: "workload" or "service.workload"
+	ContainerPort uint32                 `protobuf:"varint,5,opt,name=container_port,json=containerPort,proto3" json:"container_port,omitempty"` // port the container listens on
+	SystemPort    uint32                 `protobuf:"varint,6,opt,name=system_port,json=systemPort,proto3" json:"system_port,omitempty"`          // auto-assigned from ingress pool (43000–45767)
+	CreatedAt     int64                  `protobuf:"varint,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`             // unix seconds
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -849,16 +883,16 @@ func (x *IngressRule) GetCreatedAt() int64 {
 }
 
 // Service exposes a named TCP endpoint for a container. The system auto-assigns
-// a port from the service pool (40000–42767); proxyd listens on that port and
-// forwards to the container.
+// a port from the service pool (40000–42767). Clients reach it via
+// nodeDataIP:SystemPort; proxyd forwards to the container.
 type Service struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`                                              // short DNS label, e.g. "api"
-	ContainerFqdn string                 `protobuf:"bytes,3,opt,name=container_fqdn,json=containerFqdn,proto3" json:"container_fqdn,omitempty"`       // target container: "workload" or "service.workload"
-	ContainerPort uint32                 `protobuf:"varint,4,opt,name=container_port,json=containerPort,proto3" json:"container_port,omitempty"`      // port the container listens on
-	SystemPort    uint32                 `protobuf:"varint,5,opt,name=system_port,json=systemPort,proto3" json:"system_port,omitempty"`               // auto-assigned host port (40000–42767)
-	CreatedAt     int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`                  // unix seconds
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`                                         // short DNS label, e.g. "api"
+	ContainerFqdn string                 `protobuf:"bytes,3,opt,name=container_fqdn,json=containerFqdn,proto3" json:"container_fqdn,omitempty"`  // target container: "workload" or "service.workload"
+	ContainerPort uint32                 `protobuf:"varint,4,opt,name=container_port,json=containerPort,proto3" json:"container_port,omitempty"` // port the container listens on
+	SystemPort    uint32                 `protobuf:"varint,5,opt,name=system_port,json=systemPort,proto3" json:"system_port,omitempty"`          // auto-assigned host port (40000–42767)
+	CreatedAt     int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`             // unix seconds
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1351,7 +1385,7 @@ const file_types_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x06 \x01(\x03R\tcreatedAt\x12G\n" +
 	"\x10port_allocations\x18\a \x03(\v2\x1c.orchestrator.PortAllocationR\x0fportAllocationsB\x06\n" +
-	"\x04spec\"\xfc\x01\n" +
+	"\x04spec\"\x81\x03\n" +
 	"\x04Node\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x120\n" +
@@ -1360,21 +1394,30 @@ const file_types_proto_rawDesc = "" +
 	"\flast_seen_at\x18\x05 \x01(\x03R\n" +
 	"lastSeenAt\x12\x19\n" +
 	"\btls_cert\x18\x06 \x01(\fR\atlsCert\x12\x17\n" +
-	"\adata_ip\x18\a \x01(\tR\x06dataIp\"\x94\x01\n" +
+	"\adata_ip\x18\a \x01(\tR\x06dataIp\x12 \n" +
+	"\fmesh_pub_key\x18\b \x01(\tR\n" +
+	"meshPubKey\x12#\n" +
+	"\rmesh_endpoint\x18\t \x01(\tR\fmeshEndpoint\x12\x1f\n" +
+	"\vmesh_subnet\x18\n" +
+	" \x01(\tR\n" +
+	"meshSubnet\x12\x1b\n" +
+	"\tmesh_addr\x18\v \x01(\tR\bmeshAddr\"\xe0\x01\n" +
 	"\vIngressRule\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04host\x18\x02 \x01(\tR\x04host\x12\x1f\n" +
 	"\vpath_prefix\x18\x03 \x01(\tR\n" +
-	"pathPrefix\x12!\n" +
-	"\fservice_name\x18\x04 \x01(\tR\vserviceName\x12\x1d\n" +
+	"pathPrefix\x12%\n" +
+	"\x0econtainer_fqdn\x18\x04 \x01(\tR\rcontainerFqdn\x12%\n" +
+	"\x0econtainer_port\x18\x05 \x01(\rR\rcontainerPort\x12\x1f\n" +
+	"\vsystem_port\x18\x06 \x01(\rR\n" +
+	"systemPort\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x05 \x01(\x03R\tcreatedAt\"\xb3\x01\n" +
+	"created_at\x18\a \x01(\x03R\tcreatedAt\"\xbb\x01\n" +
 	"\aService\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\x12#\n" +
-	"\rworkload_name\x18\x03 \x01(\tR\fworkloadName\x12\x1f\n" +
-	"\vtarget_port\x18\x04 \x01(\rR\n" +
-	"targetPort\x12\x1f\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12%\n" +
+	"\x0econtainer_fqdn\x18\x03 \x01(\tR\rcontainerFqdn\x12%\n" +
+	"\x0econtainer_port\x18\x04 \x01(\rR\rcontainerPort\x12\x1f\n" +
 	"\vsystem_port\x18\x05 \x01(\rR\n" +
 	"systemPort\x12\x1d\n" +
 	"\n" +

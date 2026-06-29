@@ -86,6 +86,12 @@ message Node {
   int64  last_seen_at  = 5; // unix seconds
   bytes  tls_cert      = 6; // DER-encoded self-signed cert for mTLS key pinning
   string data_ip       = 7; // routable IP for container traffic (ingress backend)
+  // Mesh overlay (see docs/mesh-network.md). pub_key/endpoint are node-published;
+  // subnet/addr are leader-assigned from the cluster mesh CIDR.
+  string mesh_pub_key  = 8;  // WireGuard public key (base64)
+  string mesh_endpoint = 9;  // reachable WireGuard UDP endpoint (host:port)
+  string mesh_subnet   = 10; // leader-assigned /24, e.g. 100.64.3.0/24
+  string mesh_addr     = 11; // this node's own mesh address (first host of subnet)
 }
 
 // ── Ingress ───────────────────────────────────────────────────────────────────
