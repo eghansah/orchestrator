@@ -129,6 +129,11 @@ export default function Docs() {
             label: "Production Reference",
             content: <DocContent name="production" />,
           },
+          {
+            id: "changelog",
+            label: "Changelog",
+            content: <DocContent name="changelog" />,
+          },
         ]}
       />
     </ContentLayout>

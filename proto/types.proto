@@ -16,20 +16,32 @@ message ContainerSpec {
   map<string, string> labels = 7;
   string namespace   = 8; // nerdctl namespace; defaults to "orchestrator"
   map<string, string> secret_refs = 9; // env_var_name → secret_name; resolved at placement
+  int32  replicas    = 10; // desired replica count; 0/1 = single instance
 }
 
 message ComposeStackSpec {
   string name         = 1;
   string compose_yaml = 2; // inline compose file content
   map<string, string> secret_refs = 3; // env_var_name → secret_name; resolved at placement
+  int32  replicas    = 4; // desired replica count; 0/1 = single instance
 }
 
-// Secret holds metadata for a named cluster secret. The encrypted value is
-// stored server-side only; it is never returned in list or get responses.
+// Secret holds metadata for a named cluster secret. Values live in OpenBao;
+// only the path reference is stored in Raft state.
 message Secret {
   string id         = 1;
   string name       = 2;
   int64  created_at = 3; // unix seconds
+  string bao_path   = 4; // KV v2 path within the configured mount, e.g. "orchestrator/db-password"
+}
+
+// OpenBaoConfig holds connection parameters for the cluster's OpenBao instance.
+// Stored in Raft so all nodes can resolve secrets at placement time.
+// The token is a service token scoped to KV read/write on <mount>/data/orchestrator/*.
+message OpenBaoConfig {
+  string address = 1; // e.g. "https://bao.example.com:8200"
+  string token   = 2; // service token
+  string mount   = 3; // KV v2 mount path (default "secret")
 }
 
 message PortMapping {
@@ -65,6 +77,7 @@ message Workload {
   string        node_id     = 5; // assigned node; empty = unscheduled
   int64         created_at  = 6; // unix seconds
   repeated PortAllocation port_allocations = 7; // auto-assigned host ports
+  string        group_name  = 8; // set on replica instances; links them to the parent workload name
 }
 
 enum WorkloadPhase {
@@ -152,6 +165,7 @@ message ActualContainer {
   string name         = 3;
   string status       = 4; // nerdctl status string (running, exited, etc.)
   int64  started_at   = 5; // unix seconds; 0 if not running
+  string mesh_ip      = 6; // container's IP on the mesh0 bridge; empty if not on mesh
 }
 
 message ActualStack {

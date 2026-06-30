@@ -34,6 +34,7 @@ const (
 	cmdRemoveTemplate                // remove a workload template
 	cmdApplySecret                   // add or update a secret
 	cmdRemoveSecret                  // remove a secret
+	cmdSetOpenBaoConfig              // store OpenBao connection config
 )
 
 type command struct {
@@ -67,6 +68,7 @@ type ClusterState struct {
 	Registries      map[string]types.Registry         `json:"registries"`
 	Templates       map[string]types.WorkloadTemplate `json:"templates"`
 	Secrets         map[string]types.Secret           `json:"secrets"`
+	OpenBaoConfig   *types.OpenBaoConfig              `json:"openbao_config,omitempty"`
 	NextPort        uint32                            `json:"next_port"`         // container port pool
 	NextServicePort uint32                            `json:"next_service_port"` // service port pool
 	MeshCIDR        string                            `json:"mesh_cidr"`         // cluster mesh range; leader carves a /24 per node
@@ -468,6 +470,13 @@ func (f *fsm) Apply(l *raft.Log) any {
 			return err
 		}
 		delete(f.state.Secrets, id)
+
+	case cmdSetOpenBaoConfig:
+		var cfg types.OpenBaoConfig
+		if err := json.Unmarshal(cmd.Data, &cfg); err != nil {
+			return err
+		}
+		f.state.OpenBaoConfig = &cfg
 	}
 	return nil
 }

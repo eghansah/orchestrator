@@ -1,6 +1,8 @@
 package meshd
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -198,3 +200,153 @@ func mustPub(t *testing.T) string {
 	}
 	return k.PublicKey().String()
 }
+
+// ── Container device tests ────────────────────────────────────────────────────
+
+func TestExtractPeersSection_WithPeers(t *testing.T) {
+	priv, _ := GenerateKey()
+	peer, _ := GenerateKey()
+	uapi := RenderUAPI(priv, 51820, []Peer{
+		{PublicKey: peer.PublicKey(), Endpoint: "10.0.0.2:51820", AllowedIPs: "100.64.1.0/24"},
+	})
+
+	section := extractPeersSection(uapi)
+
+	if strings.HasPrefix(section, "private_key=") {
+		t.Error("peer section must not contain private_key")
+	}
+	if strings.HasPrefix(section, "listen_port=") {
+		t.Error("peer section must not contain listen_port")
+	}
+	if !strings.HasPrefix(section, "replace_peers=true\n") {
+		t.Errorf("peer section must start with replace_peers=true, got: %q", section[:min(len(section), 40)])
+	}
+	if !strings.Contains(section, "public_key=") {
+		t.Error("peer section missing public_key")
+	}
+}
+
+func TestExtractPeersSection_NoPeers(t *testing.T) {
+	priv, _ := GenerateKey()
+	uapi := RenderUAPI(priv, 51820, nil)
+
+	section := extractPeersSection(uapi)
+
+	if section != "replace_peers=true\n" {
+		t.Errorf("empty peer section should be exactly replace_peers=true, got %q", section)
+	}
+}
+
+func TestContainerDevice_WritesPeersConf(t *testing.T) {
+	dir := t.TempDir()
+	// Create the mesh sub-dir as LoadOrCreateKey would.
+	if err := os.MkdirAll(filepath.Join(dir, "mesh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	factory := NewContainerDeviceFactory(dir)
+	dev, err := factory("100.64.0.1") // meshAddr ignored by this backend
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	defer dev.Close()
+
+	priv, _ := GenerateKey()
+	peer, _ := GenerateKey()
+	uapi := RenderUAPI(priv, 51820, []Peer{
+		{PublicKey: peer.PublicKey(), Endpoint: "10.0.0.2:51820", AllowedIPs: "100.64.1.0/24"},
+	})
+
+	if err := dev.Configure(uapi); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	peersFile := filepath.Join(dir, "mesh", "peers.conf")
+	got, err := os.ReadFile(peersFile)
+	if err != nil {
+		t.Fatalf("read peers.conf: %v", err)
+	}
+	content := string(got)
+
+	if strings.Contains(content, "private_key=") {
+		t.Error("peers.conf must not contain private_key")
+	}
+	if !strings.HasPrefix(content, "replace_peers=true\n") {
+		t.Errorf("peers.conf must start with replace_peers=true, got: %q", content[:min(len(content), 40)])
+	}
+	if !strings.Contains(content, "public_key="+peer.PublicKey().Hex()) {
+		t.Error("peers.conf missing peer public_key")
+	}
+
+	// File must be 0600.
+	info, _ := os.Stat(peersFile)
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("peers.conf perm = %o, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestContainerDevice_AtomicOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "mesh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	factory := NewContainerDeviceFactory(dir)
+	dev, _ := factory("")
+
+	priv, _ := GenerateKey()
+	peerA, _ := GenerateKey()
+	peerB, _ := GenerateKey()
+
+	// First write.
+	uapi1 := RenderUAPI(priv, 51820, []Peer{
+		{PublicKey: peerA.PublicKey(), Endpoint: "10.0.0.2:51820", AllowedIPs: "100.64.1.0/24"},
+	})
+	if err := dev.Configure(uapi1); err != nil {
+		t.Fatalf("first Configure: %v", err)
+	}
+
+	// Second write with different peer — should replace cleanly.
+	uapi2 := RenderUAPI(priv, 51820, []Peer{
+		{PublicKey: peerB.PublicKey(), Endpoint: "10.0.0.3:51820", AllowedIPs: "100.64.2.0/24"},
+	})
+	if err := dev.Configure(uapi2); err != nil {
+		t.Fatalf("second Configure: %v", err)
+	}
+
+	got, _ := os.ReadFile(filepath.Join(dir, "mesh", "peers.conf"))
+	content := string(got)
+	if strings.Contains(content, peerA.PublicKey().Hex()) {
+		t.Error("old peer key still present after overwrite")
+	}
+	if !strings.Contains(content, peerB.PublicKey().Hex()) {
+		t.Error("new peer key missing after overwrite")
+	}
+}
+
+func TestContainerDevice_NoPeers_ClearsConf(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "mesh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	factory := NewContainerDeviceFactory(dir)
+	dev, _ := factory("")
+
+	priv, _ := GenerateKey()
+	peer, _ := GenerateKey()
+
+	// Write a peer, then configure with no peers.
+	dev.Configure(RenderUAPI(priv, 51820, []Peer{ //nolint:errcheck
+		{PublicKey: peer.PublicKey(), Endpoint: "10.0.0.2:51820", AllowedIPs: "100.64.1.0/24"},
+	}))
+	if err := dev.Configure(RenderUAPI(priv, 51820, nil)); err != nil {
+		t.Fatalf("Configure (no peers): %v", err)
+	}
+
+	got, _ := os.ReadFile(filepath.Join(dir, "mesh", "peers.conf"))
+	if string(got) != "replace_peers=true\n" {
+		t.Errorf("expected only replace_peers=true after clearing, got %q", string(got))
+	}
+}
+

@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
@@ -57,5 +60,66 @@ func (d *netstackDevice) Configure(uapi string) error {
 
 func (d *netstackDevice) Close() error {
 	d.dev.Close()
+	return nil
+}
+
+// ── Container device (file-writing backend for meshrouterd) ──────────────────
+
+// containerDevice implements Device by writing the WireGuard peer section to a
+// file that the meshrouterd container mtime-polls and feeds to its own
+// device.IpcSet. It owns no actual WireGuard device in this process — the
+// container is the data plane. Configure is the only meaningful method; Close
+// is a no-op.
+type containerDevice struct {
+	peersFile string // <dataDir>/mesh/peers.conf
+}
+
+// NewContainerDeviceFactory returns a DeviceFactory that writes peer
+// configuration to <dataDir>/mesh/peers.conf for the meshrouterd container.
+// The factory ignores the meshAddr argument (the container receives it as a
+// CLI flag); the caller is responsible for ensuring the mesh dir exists (it is
+// created by LoadOrCreateKey which is called earlier).
+func NewContainerDeviceFactory(dataDir string) DeviceFactory {
+	return func(_ string) (Device, error) {
+		return &containerDevice{
+			peersFile: filepath.Join(dataDir, "mesh", "peers.conf"),
+		}, nil
+	}
+}
+
+// Configure extracts the peer section from uapi (everything from
+// "replace_peers=true" onward) and writes it atomically to peers.conf.
+// meshrouterd reloads on mtime change and applies it with device.IpcSet.
+func (d *containerDevice) Configure(uapi string) error {
+	peers := extractPeersSection(uapi)
+	return atomicWriteFile(d.peersFile, []byte(peers), 0o600)
+}
+
+func (d *containerDevice) Close() error { return nil }
+
+// extractPeersSection returns the portion of a UAPI string beginning at
+// "replace_peers=true\n". This is the declaration meshrouterd feeds to
+// device.IpcSet to replace its peer set wholesale. If the marker is absent
+// (no peers yet), the result is just "replace_peers=true\n" so the container
+// still clears any stale peers.
+func extractPeersSection(uapi string) string {
+	const marker = "replace_peers=true\n"
+	if idx := strings.Index(uapi, marker); idx >= 0 {
+		return uapi[idx:]
+	}
+	return marker
+}
+
+// atomicWriteFile writes data to path by writing a sibling .tmp file and then
+// renaming it into place, so readers never see a partial write.
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, perm); err != nil {
+		return fmt.Errorf("write %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("rename to %s: %w", path, err)
+	}
 	return nil
 }

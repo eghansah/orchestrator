@@ -284,8 +284,15 @@ func startDNS(cfg proxycfg.Config) func() {
 		table[key] = e
 	}
 
+	// Build mesh lookup table: workload name → []mesh IPs
+	meshTable := make(map[string][]string, len(cfg.MeshEntries))
+	for _, e := range cfg.MeshEntries {
+		meshTable[strings.ToLower(e.Name)] = e.MeshIPs
+	}
+
 	mux := dns.NewServeMux()
 	mux.HandleFunc("svc.local.", makeSvcLocalHandler(table))
+	mux.HandleFunc("mesh.", makeMeshHandler(meshTable))
 	mux.HandleFunc(".", handleForward)
 
 	udpSrv := &dns.Server{Addr: cfg.DNSAddr, Net: "udp", Handler: mux}
@@ -362,6 +369,44 @@ func makeSvcLocalHandler(table map[string]proxycfg.Entry) dns.HandlerFunc {
 
 		if len(m.Answer) == 0 {
 			m.Rcode = dns.RcodeNameError
+		}
+		_ = w.WriteMsg(m)
+	}
+}
+
+// makeMeshHandler returns a dns.HandlerFunc for the "mesh." zone. It answers
+// A queries for "<workload>.mesh." with all live mesh IPs of that workload,
+// implementing simple multi-A round-robin across replica instances.
+func makeMeshHandler(table map[string][]string) dns.HandlerFunc {
+	return func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		m.Authoritative = true
+
+		if len(r.Question) == 0 {
+			_ = w.WriteMsg(m)
+			return
+		}
+
+		q := r.Question[0]
+		qname := strings.ToLower(q.Name) // e.g. "web.mesh."
+		label := strings.TrimSuffix(qname, ".mesh.")
+
+		if q.Qtype == dns.TypeA {
+			if ips, ok := table[label]; ok {
+				for _, ipStr := range ips {
+					if ip := net.ParseIP(ipStr).To4(); ip != nil {
+						m.Answer = append(m.Answer, &dns.A{
+							Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 5},
+							A:   ip,
+						})
+					}
+				}
+			}
+		}
+
+		if len(m.Answer) == 0 {
+			m.Rcode = dns.RcodeNameError // NXDOMAIN
 		}
 		_ = w.WriteMsg(m)
 	}

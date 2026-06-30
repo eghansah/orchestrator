@@ -1,8 +1,21 @@
-// build-image assembles the ingressd container image without requiring Docker
-// or nerdctl on the build machine. It pulls the haproxy base image from a
-// registry, appends a layer containing the ingressd binary, updates the image
-// config, and saves a Docker-compatible tarball suitable for embedding via
-// //go:embed.
+// build-image assembles a container image without requiring Docker or nerdctl
+// on the build machine. It can pull a base image from a registry or start from
+// scratch (empty base), appends a layer containing the target binary, and saves
+// a Docker-compatible tarball suitable for embedding via //go:embed.
+//
+// Usage examples:
+//
+//	# ingressd (haproxy base)
+//	build-image --binary dist/ingressd --base haproxy:3.0-alpine \
+//	  --binary-dest /usr/local/bin/ingressd --entrypoint /usr/local/bin/ingressd \
+//	  --dirs data/ingress/certs --tag ingressd:v1.0.0 \
+//	  --output internal/localregistry/images/ingressd.tar
+//
+//	# meshrouterd (scratch base)
+//	build-image --binary dist/meshrouterd --base scratch \
+//	  --binary-dest /meshrouterd --entrypoint /meshrouterd \
+//	  --dirs data/mesh --tag meshrouterd:v1.0.0 \
+//	  --output internal/localregistry/images/meshrouterd.tar
 package main
 
 import (
@@ -20,6 +33,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
@@ -27,13 +41,30 @@ import (
 
 func main() {
 	var (
-		binaryPath = flag.String("binary", "bin/ingressd", "path to the pre-built ingressd binary")
-		baseImage  = flag.String("base", "haproxy:3.0-alpine", "base image reference")
-		outputPath = flag.String("output", "internal/localregistry/images/ingressd.tar", "output tarball path")
-		platform   = flag.String("platform", "linux/amd64", "target platform (os/arch)")
-		imageTag   = flag.String("tag", "ingressd:latest", "image tag written into manifest.json")
+		binaryPath  = flag.String("binary", "", "path to the pre-built binary (required)")
+		binaryDest  = flag.String("binary-dest", "", "destination path inside the image (default: /usr/local/bin/<basename>)")
+		baseImage   = flag.String("base", "scratch", `base image reference, or "scratch" for an empty image`)
+		extraDirs   = flag.String("dirs", "", "comma-separated directories to pre-create in the layer (e.g. data/mesh,data/ingress/certs)")
+		outputPath  = flag.String("output", "", "output tarball path (required)")
+		platform    = flag.String("platform", "linux/amd64", "target platform (os/arch)")
+		imageTag    = flag.String("tag", "", "image tag written into manifest.json (required)")
+		entrypoint  = flag.String("entrypoint", "", "container entrypoint binary (default: --binary-dest value)")
+		extraEnv    = flag.String("env", "", "comma-separated ENV=VALUE pairs to set in the image config")
 	)
 	flag.Parse()
+
+	if *binaryPath == "" || *outputPath == "" || *imageTag == "" {
+		log.Fatal("--binary, --output, and --tag are required")
+	}
+
+	dest := *binaryDest
+	if dest == "" {
+		dest = "/usr/local/bin/" + filepath.Base(*binaryPath)
+	}
+	ep := *entrypoint
+	if ep == "" {
+		ep = dest
+	}
 
 	parts := strings.SplitN(*platform, "/", 2)
 	if len(parts) != 2 {
@@ -41,26 +72,41 @@ func main() {
 	}
 	plat := v1.Platform{OS: parts[0], Architecture: parts[1]}
 
-	// ── Pull base image ───────────────────────────────────────────────────────
+	// ── Base image ────────────────────────────────────────────────────────────
 
-	log.Printf("pulling %s (%s)...", *baseImage, *platform)
-	ref, err := name.ParseReference(*baseImage)
-	if err != nil {
-		log.Fatalf("parse base image ref: %v", err)
+	var base v1.Image
+	if *baseImage == "" || *baseImage == "scratch" {
+		log.Printf("using empty (scratch) base image")
+		base = empty.Image
+	} else {
+		log.Printf("pulling %s (%s)...", *baseImage, *platform)
+		ref, err := name.ParseReference(*baseImage)
+		if err != nil {
+			log.Fatalf("parse base image ref: %v", err)
+		}
+		base, err = remote.Image(ref,
+			remote.WithPlatform(plat),
+			remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		)
+		if err != nil {
+			log.Fatalf("pull base image: %v", err)
+		}
+		logImageInfo(base)
 	}
-	base, err := remote.Image(ref,
-		remote.WithPlatform(plat),
-		remote.WithAuthFromKeychain(authn.DefaultKeychain),
-	)
-	if err != nil {
-		log.Fatalf("pull base image: %v", err)
-	}
-	logImageInfo(base)
 
-	// ── Build ingressd layer ──────────────────────────────────────────────────
+	// ── Binary layer ──────────────────────────────────────────────────────────
 
 	log.Printf("reading binary %s...", *binaryPath)
-	layer, err := binaryLayer(*binaryPath)
+	var dirs []string
+	if *extraDirs != "" {
+		for _, d := range strings.Split(*extraDirs, ",") {
+			d = strings.TrimSpace(d)
+			if d != "" {
+				dirs = append(dirs, d)
+			}
+		}
+	}
+	layer, err := binaryLayer(*binaryPath, dest, dirs)
 	if err != nil {
 		log.Fatalf("create layer: %v", err)
 	}
@@ -72,20 +118,21 @@ func main() {
 		log.Fatalf("append layer: %v", err)
 	}
 
-	// Override entrypoint, cmd, and user from the haproxy base.
 	cf, err := img.ConfigFile()
 	if err != nil {
 		log.Fatalf("get config: %v", err)
 	}
 	cf = cf.DeepCopy()
-	cf.Config.Entrypoint = []string{"/usr/local/bin/ingressd"}
-	cf.Config.Cmd = []string{
-		"--config", "/data/ingress/config.json",
-		"--haproxy-cfg", "/data/ingress/haproxy.cfg",
-		"--certs-dir", "/data/ingress/certs",
-	}
+	cf.Config.Entrypoint = []string{ep}
+	cf.Config.Cmd = nil
 	cf.Config.User = "root"
 	cf.Config.WorkingDir = "/"
+	if *extraEnv != "" {
+		cf.Config.Env = append(cf.Config.Env, strings.Split(*extraEnv, ",")...)
+	}
+	cf.OS = plat.OS
+	cf.Architecture = plat.Architecture
+
 	img, err = mutate.ConfigFile(img, cf)
 	if err != nil {
 		log.Fatalf("set config: %v", err)
@@ -102,11 +149,7 @@ func main() {
 		log.Fatalf("parse tag: %v", err)
 	}
 
-	// Buffer the entire tarball in memory before touching the output file.
-	// tarball.Write streams layer downloads on-the-fly; if the process is
-	// interrupted mid-stream the output file would be left truncated. Buffering
-	// ensures we only write a complete tarball to disk.
-	log.Printf("fetching layers and assembling tarball...")
+	log.Printf("assembling tarball...")
 	var buf bytes.Buffer
 	if err := tarball.Write(tag, img, &buf); err != nil {
 		log.Fatalf("assemble tarball: %v", err)
@@ -119,9 +162,9 @@ func main() {
 	log.Printf("done")
 }
 
-// binaryLayer returns a v1.Layer containing the ingressd binary at
-// /usr/local/bin/ingressd and pre-created /data/ingress/certs directories.
-func binaryLayer(binaryPath string) (v1.Layer, error) {
+// binaryLayer returns a v1.Layer containing the binary at destPath and any
+// parent dirs needed, plus the extra pre-created directories from extraDirs.
+func binaryLayer(binaryPath, destPath string, extraDirs []string) (v1.Layer, error) {
 	data, err := os.ReadFile(binaryPath)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", binaryPath, err)
@@ -135,11 +178,25 @@ func binaryLayer(binaryPath string) (v1.Layer, error) {
 		}
 		tw := tar.NewWriter(gz)
 
-		dirs := []string{
-			"usr/", "usr/local/", "usr/local/bin/",
-			"data/", "data/ingress/", "data/ingress/certs/",
+		// Collect all directories we must pre-create: parents of destPath plus
+		// any caller-specified extra directories.
+		seen := map[string]bool{}
+		var allDirs []string
+		for _, seg := range parentDirs(destPath) {
+			if !seen[seg] {
+				seen[seg] = true
+				allDirs = append(allDirs, seg)
+			}
 		}
-		for _, d := range dirs {
+		for _, d := range extraDirs {
+			for _, seg := range parentDirs("/" + strings.TrimPrefix(d, "/") + "/x") {
+				if !seen[seg] {
+					seen[seg] = true
+					allDirs = append(allDirs, seg)
+				}
+			}
+		}
+		for _, d := range allDirs {
 			if err := tw.WriteHeader(&tar.Header{
 				Typeflag: tar.TypeDir,
 				Name:     d,
@@ -149,9 +206,10 @@ func binaryLayer(binaryPath string) (v1.Layer, error) {
 			}
 		}
 
+		name := strings.TrimPrefix(destPath, "/")
 		if err := tw.WriteHeader(&tar.Header{
 			Typeflag: tar.TypeReg,
-			Name:     "usr/local/bin/ingressd",
+			Name:     name,
 			Size:     int64(len(data)),
 			Mode:     0o755,
 		}); err != nil {
@@ -171,6 +229,21 @@ func binaryLayer(binaryPath string) (v1.Layer, error) {
 	}
 
 	return tarball.LayerFromOpener(opener)
+}
+
+// parentDirs returns the dir-only path segments for path in tar-header form
+// (e.g. "usr/local/bin/" for "/usr/local/bin/foo").
+func parentDirs(path string) []string {
+	path = strings.TrimPrefix(path, "/")
+	parts := strings.Split(filepath.Dir(path), "/")
+	var dirs []string
+	for i := range parts {
+		if parts[i] == "" || parts[i] == "." {
+			continue
+		}
+		dirs = append(dirs, strings.Join(parts[:i+1], "/")+"/")
+	}
+	return dirs
 }
 
 func logImageInfo(img v1.Image) {

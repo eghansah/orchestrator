@@ -228,6 +228,30 @@ export interface CreateSecretRequest {
   value: string;
 }
 
+export interface VersionInfo {
+  version: string;
+}
+
+export interface ImportReport {
+  imported: Record<string, number>;
+  skipped?: string[];
+  errors?: string[];
+}
+
+export interface OpenBaoStatus {
+  configured: boolean;
+  address?: string;
+  mount?: string;
+  connected: boolean;
+  error?: string;
+}
+
+export interface SetOpenBaoConfigRequest {
+  address: string;
+  token: string;
+  mount: string;
+}
+
 export interface ContainerInspectResult {
   id: string;
   name: string;
@@ -275,6 +299,26 @@ export interface VolumeInspectResult {
   scope: string;
 }
 
+export interface ChangelogSection {
+  title: string;
+  items: string[];
+}
+
+export interface ChangelogRelease {
+  version: string;
+  date: string;
+  summary: string;
+  sections: ChangelogSection[];
+}
+
+export interface SystemServiceInfo {
+  name: string;
+  role: string;
+  kind: "container" | "process";
+  status: "running" | "stopped" | "not found" | "unknown";
+  controllable: boolean;
+}
+
 // ── Auth token ────────────────────────────────────────────────────────────────
 
 const TOKEN_KEY = "orchestrator_token";
@@ -307,15 +351,28 @@ function getBasePath(): string {
 
 // ── REST client ───────────────────────────────────────────────────────────────
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+interface RequestOptions {
+  body?: string;
+  contentType?: string;
+}
+
+async function request<T>(method: string, path: string, jsonBody?: unknown, opts?: RequestOptions): Promise<T> {
   const headers: Record<string, string> = {};
-  if (body) headers["Content-Type"] = "application/json";
   if (_token) headers["Authorization"] = `Bearer ${_token}`;
+
+  let rawBody: string | undefined;
+  if (opts?.body !== undefined) {
+    rawBody = opts.body;
+    headers["Content-Type"] = opts.contentType ?? "text/plain";
+  } else if (jsonBody !== undefined) {
+    rawBody = JSON.stringify(jsonBody);
+    headers["Content-Type"] = "application/json";
+  }
 
   const res = await fetch(getBasePath() + path, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: rawBody,
   });
 
   if (res.status === 401) {
@@ -353,6 +410,7 @@ export const api = {
     return data as { token: string };
   },
   logout: () => request<{ ok: boolean }>("POST", "/api/auth/logout"),
+  getVersion: () => request<VersionInfo>("GET", "/api/version"),
   getState: () => request<ClusterState>("GET", "/api/state"),
   getWorkload: (id: string) => request<WorkloadSpec>("GET", `/api/workloads/${id}`),
   submitContainer: (req: RunRequest) =>
@@ -447,12 +505,37 @@ export const api = {
     request<Secret>("POST", "/api/secrets", req),
   deleteSecret: (id: string) =>
     request<{ accepted: boolean }>("POST", `/api/secrets/${id}/delete`),
+  getOpenBaoStatus: () => request<OpenBaoStatus>("GET", "/api/openbao/status"),
+  setOpenBaoConfig: (req: SetOpenBaoConfigRequest) =>
+    request<{ accepted: boolean }>("POST", "/api/openbao/config", req),
+  adminCompact: () => request<{ accepted: boolean }>("POST", "/api/admin/compact"),
   listNetworks: () => request<NetworkListEntry[]>("GET", "/api/networks"),
   inspectNetwork: (name: string) =>
     request<NetworkInspectResult>("GET", `/api/networks/${encodeURIComponent(name)}/inspect`),
   listVolumes: () => request<VolumeListEntry[]>("GET", "/api/volumes"),
   inspectVolume: (name: string) =>
     request<VolumeInspectResult>("GET", `/api/volumes/${encodeURIComponent(name)}/inspect`),
+  getChangelog: () => request<ChangelogRelease[]>("GET", "/api/system/changelog"),
+  listSystemServices: () => request<SystemServiceInfo[]>("GET", "/api/system/services"),
+  startSystemService: (name: string) =>
+    request<{ ok: boolean }>("POST", `/api/system/services/${encodeURIComponent(name)}/start`),
+  stopSystemService: (name: string) =>
+    request<{ ok: boolean }>("POST", `/api/system/services/${encodeURIComponent(name)}/stop`),
+  exportCluster: async (): Promise<Blob> => {
+    const resp = await fetch(getBasePath() + "/api/export", {
+      headers: { Authorization: `Bearer ${_token}` },
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`HTTP ${resp.status}: ${text}`);
+    }
+    return resp.blob();
+  },
+  importCluster: (yamlText: string, overwrite: boolean) =>
+    request<ImportReport>("POST", `/api/import${overwrite ? "?overwrite=true" : ""}`, undefined, {
+      body: yamlText,
+      contentType: "application/yaml",
+    }),
 };
 
 // ── useClusterState hook ──────────────────────────────────────────────────────

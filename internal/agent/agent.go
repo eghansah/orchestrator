@@ -152,6 +152,16 @@ func (a *Agent) RestartContainer(ctx context.Context, name string) error {
 	return a.nc.RestartContainer(ctx, name)
 }
 
+// StartContainer starts a stopped container.
+func (a *Agent) StartContainer(ctx context.Context, name string) error {
+	return a.nc.StartContainer(ctx, name)
+}
+
+// StopContainer stops a running container.
+func (a *Agent) StopContainer(ctx context.Context, name string) error {
+	return a.nc.StopContainer(ctx, name)
+}
+
 // ListNetworks returns all networks visible to nerdctl on this node.
 func (a *Agent) ListNetworks(ctx context.Context) ([]nerdctl.NetworkInfo, error) {
 	return a.nc.ListNetworks(ctx)

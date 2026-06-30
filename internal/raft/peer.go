@@ -197,7 +197,7 @@ func (p *Peer) RemoveTemplate(id string) error {
 	return p.apply(cmdRemoveTemplate, id)
 }
 
-// ApplySecret writes an encrypted secret into the Raft log.
+// ApplySecret writes a secret reference (OpenBao path) into the Raft log.
 func (p *Peer) ApplySecret(s types.Secret) error {
 	return p.apply(cmdApplySecret, s)
 }
@@ -205,6 +205,17 @@ func (p *Peer) ApplySecret(s types.Secret) error {
 // RemoveSecret removes a secret from the Raft log.
 func (p *Peer) RemoveSecret(id string) error {
 	return p.apply(cmdRemoveSecret, id)
+}
+
+// SetOpenBaoConfig stores the OpenBao connection config in the Raft log.
+func (p *Peer) SetOpenBaoConfig(cfg types.OpenBaoConfig) error {
+	return p.apply(cmdSetOpenBaoConfig, cfg)
+}
+
+// ForceSnapshot takes an immediate Raft snapshot and compacts the log up to
+// the snapshot index, removing historical log entries that contained ciphertext.
+func (p *Peer) ForceSnapshot() error {
+	return p.raft.Snapshot().Error()
 }
 
 // Shutdown gracefully stops the Raft instance, closing the TCP transport and

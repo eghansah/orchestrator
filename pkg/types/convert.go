@@ -12,6 +12,7 @@ func WorkloadToProto(w Workload) *gen.Workload {
 		Phase:     gen.WorkloadPhase(w.Phase),
 		NodeId:    w.NodeID,
 		CreatedAt: w.CreatedAt.Unix(),
+		GroupName: w.GroupName,
 	}
 	if w.Container != nil {
 		pw.Spec = &gen.Workload_Container{Container: ContainerSpecToProto(*w.Container)}
@@ -34,6 +35,7 @@ func WorkloadFromProto(pw *gen.Workload) Workload {
 		Phase:     WorkloadPhase(pw.Phase),
 		NodeID:    pw.NodeId,
 		CreatedAt: time.Unix(pw.CreatedAt, 0),
+		GroupName: pw.GroupName,
 	}
 	switch s := pw.Spec.(type) {
 	case *gen.Workload_Container:
@@ -77,6 +79,7 @@ func ContainerSpecToProto(s ContainerSpec) *gen.ContainerSpec {
 		Labels:     s.Labels,
 		Namespace:  s.Namespace,
 		SecretRefs: s.SecretRefs,
+		Replicas:   int32(s.Replicas),
 	}
 }
 
@@ -99,21 +102,23 @@ func ContainerSpecFromProto(ps *gen.ContainerSpec) ContainerSpec {
 		Labels:     ps.Labels,
 		Namespace:  ps.Namespace,
 		SecretRefs: ps.SecretRefs,
+		Replicas:   int(ps.Replicas),
 	}
 }
 
 func ComposeStackSpecToProto(s ComposeStackSpec) *gen.ComposeStackSpec {
-	return &gen.ComposeStackSpec{Name: s.Name, ComposeYaml: s.ComposeYAML, SecretRefs: s.SecretRefs}
+	return &gen.ComposeStackSpec{Name: s.Name, ComposeYaml: s.ComposeYAML, SecretRefs: s.SecretRefs, Replicas: int32(s.Replicas)}
 }
 
 func ComposeStackSpecFromProto(ps *gen.ComposeStackSpec) ComposeStackSpec {
-	return ComposeStackSpec{Name: ps.Name, ComposeYAML: ps.ComposeYaml, SecretRefs: ps.SecretRefs}
+	return ComposeStackSpec{Name: ps.Name, ComposeYAML: ps.ComposeYaml, SecretRefs: ps.SecretRefs, Replicas: int(ps.Replicas)}
 }
 
 func SecretToProto(s Secret) *gen.Secret {
 	return &gen.Secret{
 		Id:        s.ID,
 		Name:      s.Name,
+		BaoPath:   s.BaoPath,
 		CreatedAt: s.CreatedAt.Unix(),
 	}
 }
@@ -122,7 +127,27 @@ func SecretFromProto(ps *gen.Secret) Secret {
 	return Secret{
 		ID:        ps.Id,
 		Name:      ps.Name,
+		BaoPath:   ps.BaoPath,
 		CreatedAt: time.Unix(ps.CreatedAt, 0),
+	}
+}
+
+func OpenBaoConfigToProto(c OpenBaoConfig) *gen.OpenBaoConfig {
+	return &gen.OpenBaoConfig{
+		Address: c.Address,
+		Token:   c.Token,
+		Mount:   c.Mount,
+	}
+}
+
+func OpenBaoConfigFromProto(p *gen.OpenBaoConfig) OpenBaoConfig {
+	if p == nil {
+		return OpenBaoConfig{}
+	}
+	return OpenBaoConfig{
+		Address: p.Address,
+		Token:   p.Token,
+		Mount:   p.Mount,
 	}
 }
 
@@ -224,6 +249,7 @@ func ActualWorkloadStateToProto(s ActualWorkloadState) *gen.ActualWorkloadState 
 			Name:        c.Name,
 			Status:      c.Status,
 			StartedAt:   c.StartedAt.Unix(),
+			MeshIp:      c.MeshIP,
 		}
 	}
 	stacks := make([]*gen.ActualStack, len(s.Stacks))
@@ -236,6 +262,7 @@ func ActualWorkloadStateToProto(s ActualWorkloadState) *gen.ActualWorkloadState 
 				Name:        svc.Name,
 				Status:      svc.Status,
 				StartedAt:   svc.StartedAt.Unix(),
+				MeshIp:      svc.MeshIP,
 			}
 		}
 		stacks[i] = &gen.ActualStack{WorkloadId: st.WorkloadID, Name: st.Name, Services: svcs}
@@ -257,6 +284,7 @@ func ActualWorkloadStateFromProto(ps *gen.ActualWorkloadState) ActualWorkloadSta
 			Name:        c.Name,
 			Status:      c.Status,
 			StartedAt:   time.Unix(c.StartedAt, 0),
+			MeshIP:      c.MeshIp,
 		}
 	}
 	stacks := make([]ActualStack, len(ps.Stacks))
@@ -269,6 +297,7 @@ func ActualWorkloadStateFromProto(ps *gen.ActualWorkloadState) ActualWorkloadSta
 				Name:        svc.Name,
 				Status:      svc.Status,
 				StartedAt:   time.Unix(svc.StartedAt, 0),
+				MeshIP:      svc.MeshIp,
 			}
 		}
 		stacks[i] = ActualStack{WorkloadID: st.WorkloadId, Name: st.Name, Services: svcs}

@@ -21,12 +21,20 @@ type Entry struct {
 	NodeDataIP    string `json:"node_data_ip"`
 }
 
+// MeshEntry maps a workload name (or replica group name) to the mesh IPs of
+// all its live container instances across all nodes.
+type MeshEntry struct {
+	Name    string   `json:"name"`     // workload name, e.g. "web"
+	MeshIPs []string `json:"mesh_ips"` // one IP per live container instance
+}
+
 // Config is the full contents of <dataDir>/proxy/config.json.
 type Config struct {
-	LocalNodeID string  `json:"local_node_id"`
-	DataIP      string  `json:"data_ip"`
-	DNSAddr     string  `json:"dns_addr"`
-	Entries     []Entry `json:"entries"`
+	LocalNodeID  string       `json:"local_node_id"`
+	DataIP       string       `json:"data_ip"`
+	DNSAddr      string       `json:"dns_addr"`
+	Entries      []Entry      `json:"entries"`
+	MeshEntries  []MeshEntry  `json:"mesh_entries,omitempty"`
 }
 
 // parseFQDN extracts the workload name from a container FQDN.
@@ -38,14 +46,58 @@ func parseFQDN(fqdn string) string {
 	return fqdn
 }
 
+// BuildMeshEntries aggregates mesh IPs for each workload (or replica group) from
+// all nodes' actual state. The returned slice is ready to write into Config.MeshEntries.
+func BuildMeshEntries(allStates map[string]types.ActualWorkloadState, raftState internraft.ClusterState) []MeshEntry {
+	// Map group-name (or workload name for non-replicated) → []mesh IPs.
+	byName := map[string][]string{}
+	for _, nodeState := range allStates {
+		for _, c := range nodeState.Containers {
+			if c.MeshIP == "" {
+				continue
+			}
+			name := groupNameFor(c.WorkloadID, raftState)
+			if name == "" {
+				continue
+			}
+			byName[name] = append(byName[name], c.MeshIP)
+		}
+	}
+	entries := make([]MeshEntry, 0, len(byName))
+	for name, ips := range byName {
+		entries = append(entries, MeshEntry{Name: name, MeshIPs: ips})
+	}
+	return entries
+}
+
+// groupNameFor returns the DNS name to use for a workload in mesh DNS. Replicas
+// use their GroupName (which equals the parent workload name); singletons use
+// their own workload name.
+func groupNameFor(workloadID string, state internraft.ClusterState) string {
+	wl, ok := state.Workloads[workloadID]
+	if !ok {
+		return ""
+	}
+	if wl.GroupName != "" {
+		return wl.GroupName
+	}
+	return wl.Name()
+}
+
 // Write atomically rewrites <dataDir>/proxy/config.json from current cluster state.
 // Entries are generated for both TCP Services and IngressRules (which have their own SystemPort).
 // Entries whose workload is unscheduled (NodeID == "") are omitted.
 func Write(dataDir, localNodeID, dataIP, dnsAddr string, state internraft.ClusterState) error {
+	return WriteWithMesh(dataDir, localNodeID, dataIP, dnsAddr, state, nil)
+}
+
+// WriteWithMesh is like Write but also includes mesh DNS entries.
+func WriteWithMesh(dataDir, localNodeID, dataIP, dnsAddr string, state internraft.ClusterState, meshEntries []MeshEntry) error {
 	cfg := Config{
 		LocalNodeID: localNodeID,
 		DataIP:      dataIP,
 		DNSAddr:     dnsAddr,
+		MeshEntries: meshEntries,
 	}
 
 	for _, svc := range state.Services {

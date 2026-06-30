@@ -19,22 +19,24 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ControlService_SubmitContainer_FullMethodName = "/orchestrator.ControlService/SubmitContainer"
-	ControlService_SubmitStack_FullMethodName     = "/orchestrator.ControlService/SubmitStack"
-	ControlService_RemoveWorkload_FullMethodName  = "/orchestrator.ControlService/RemoveWorkload"
-	ControlService_ListWorkloads_FullMethodName   = "/orchestrator.ControlService/ListWorkloads"
-	ControlService_ListNodes_FullMethodName       = "/orchestrator.ControlService/ListNodes"
-	ControlService_DrainNode_FullMethodName       = "/orchestrator.ControlService/DrainNode"
-	ControlService_GetClusterState_FullMethodName = "/orchestrator.ControlService/GetClusterState"
-	ControlService_CreateIngress_FullMethodName   = "/orchestrator.ControlService/CreateIngress"
-	ControlService_DeleteIngress_FullMethodName   = "/orchestrator.ControlService/DeleteIngress"
-	ControlService_ListIngress_FullMethodName     = "/orchestrator.ControlService/ListIngress"
-	ControlService_CreateService_FullMethodName   = "/orchestrator.ControlService/CreateService"
-	ControlService_DeleteService_FullMethodName   = "/orchestrator.ControlService/DeleteService"
-	ControlService_ListService_FullMethodName     = "/orchestrator.ControlService/ListService"
-	ControlService_CreateSecret_FullMethodName    = "/orchestrator.ControlService/CreateSecret"
-	ControlService_DeleteSecret_FullMethodName    = "/orchestrator.ControlService/DeleteSecret"
-	ControlService_ListSecrets_FullMethodName     = "/orchestrator.ControlService/ListSecrets"
+	ControlService_SubmitContainer_FullMethodName  = "/orchestrator.ControlService/SubmitContainer"
+	ControlService_SubmitStack_FullMethodName      = "/orchestrator.ControlService/SubmitStack"
+	ControlService_RemoveWorkload_FullMethodName   = "/orchestrator.ControlService/RemoveWorkload"
+	ControlService_ListWorkloads_FullMethodName    = "/orchestrator.ControlService/ListWorkloads"
+	ControlService_ListNodes_FullMethodName        = "/orchestrator.ControlService/ListNodes"
+	ControlService_DrainNode_FullMethodName        = "/orchestrator.ControlService/DrainNode"
+	ControlService_GetClusterState_FullMethodName  = "/orchestrator.ControlService/GetClusterState"
+	ControlService_CreateIngress_FullMethodName    = "/orchestrator.ControlService/CreateIngress"
+	ControlService_DeleteIngress_FullMethodName    = "/orchestrator.ControlService/DeleteIngress"
+	ControlService_ListIngress_FullMethodName      = "/orchestrator.ControlService/ListIngress"
+	ControlService_CreateService_FullMethodName    = "/orchestrator.ControlService/CreateService"
+	ControlService_DeleteService_FullMethodName    = "/orchestrator.ControlService/DeleteService"
+	ControlService_ListService_FullMethodName      = "/orchestrator.ControlService/ListService"
+	ControlService_CreateSecret_FullMethodName     = "/orchestrator.ControlService/CreateSecret"
+	ControlService_DeleteSecret_FullMethodName     = "/orchestrator.ControlService/DeleteSecret"
+	ControlService_ListSecrets_FullMethodName      = "/orchestrator.ControlService/ListSecrets"
+	ControlService_SetOpenBaoConfig_FullMethodName = "/orchestrator.ControlService/SetOpenBaoConfig"
+	ControlService_GetOpenBaoStatus_FullMethodName = "/orchestrator.ControlService/GetOpenBaoStatus"
 )
 
 // ControlServiceClient is the client API for ControlService service.
@@ -71,12 +73,16 @@ type ControlServiceClient interface {
 	DeleteService(ctx context.Context, in *DeleteServiceRequest, opts ...grpc.CallOption) (*DeleteServiceResponse, error)
 	// ListService returns all services.
 	ListService(ctx context.Context, in *ListServiceRequest, opts ...grpc.CallOption) (*ListServiceResponse, error)
-	// CreateSecret stores a new named secret (value encrypted before Raft).
+	// CreateSecret stores a new named secret in OpenBao and records its path in Raft.
 	CreateSecret(ctx context.Context, in *CreateSecretRequest, opts ...grpc.CallOption) (*CreateSecretResponse, error)
-	// DeleteSecret removes a named secret.
+	// DeleteSecret removes a secret from OpenBao and from Raft.
 	DeleteSecret(ctx context.Context, in *DeleteSecretRequest, opts ...grpc.CallOption) (*DeleteSecretResponse, error)
-	// ListSecrets returns all secret metadata (never the encrypted or plaintext values).
+	// ListSecrets returns all secret metadata (never plaintext values).
 	ListSecrets(ctx context.Context, in *ListSecretsRequest, opts ...grpc.CallOption) (*ListSecretsResponse, error)
+	// SetOpenBaoConfig stores the OpenBao connection configuration in cluster state.
+	SetOpenBaoConfig(ctx context.Context, in *SetOpenBaoConfigRequest, opts ...grpc.CallOption) (*SetOpenBaoConfigResponse, error)
+	// GetOpenBaoStatus returns the current configuration and a live connection health check.
+	GetOpenBaoStatus(ctx context.Context, in *GetOpenBaoStatusRequest, opts ...grpc.CallOption) (*GetOpenBaoStatusResponse, error)
 }
 
 type controlServiceClient struct {
@@ -247,6 +253,26 @@ func (c *controlServiceClient) ListSecrets(ctx context.Context, in *ListSecretsR
 	return out, nil
 }
 
+func (c *controlServiceClient) SetOpenBaoConfig(ctx context.Context, in *SetOpenBaoConfigRequest, opts ...grpc.CallOption) (*SetOpenBaoConfigResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetOpenBaoConfigResponse)
+	err := c.cc.Invoke(ctx, ControlService_SetOpenBaoConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlServiceClient) GetOpenBaoStatus(ctx context.Context, in *GetOpenBaoStatusRequest, opts ...grpc.CallOption) (*GetOpenBaoStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetOpenBaoStatusResponse)
+	err := c.cc.Invoke(ctx, ControlService_GetOpenBaoStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ControlServiceServer is the server API for ControlService service.
 // All implementations must embed UnimplementedControlServiceServer
 // for forward compatibility.
@@ -281,12 +307,16 @@ type ControlServiceServer interface {
 	DeleteService(context.Context, *DeleteServiceRequest) (*DeleteServiceResponse, error)
 	// ListService returns all services.
 	ListService(context.Context, *ListServiceRequest) (*ListServiceResponse, error)
-	// CreateSecret stores a new named secret (value encrypted before Raft).
+	// CreateSecret stores a new named secret in OpenBao and records its path in Raft.
 	CreateSecret(context.Context, *CreateSecretRequest) (*CreateSecretResponse, error)
-	// DeleteSecret removes a named secret.
+	// DeleteSecret removes a secret from OpenBao and from Raft.
 	DeleteSecret(context.Context, *DeleteSecretRequest) (*DeleteSecretResponse, error)
-	// ListSecrets returns all secret metadata (never the encrypted or plaintext values).
+	// ListSecrets returns all secret metadata (never plaintext values).
 	ListSecrets(context.Context, *ListSecretsRequest) (*ListSecretsResponse, error)
+	// SetOpenBaoConfig stores the OpenBao connection configuration in cluster state.
+	SetOpenBaoConfig(context.Context, *SetOpenBaoConfigRequest) (*SetOpenBaoConfigResponse, error)
+	// GetOpenBaoStatus returns the current configuration and a live connection health check.
+	GetOpenBaoStatus(context.Context, *GetOpenBaoStatusRequest) (*GetOpenBaoStatusResponse, error)
 	mustEmbedUnimplementedControlServiceServer()
 }
 
@@ -344,6 +374,12 @@ func (UnimplementedControlServiceServer) DeleteSecret(context.Context, *DeleteSe
 }
 func (UnimplementedControlServiceServer) ListSecrets(context.Context, *ListSecretsRequest) (*ListSecretsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListSecrets not implemented")
+}
+func (UnimplementedControlServiceServer) SetOpenBaoConfig(context.Context, *SetOpenBaoConfigRequest) (*SetOpenBaoConfigResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetOpenBaoConfig not implemented")
+}
+func (UnimplementedControlServiceServer) GetOpenBaoStatus(context.Context, *GetOpenBaoStatusRequest) (*GetOpenBaoStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetOpenBaoStatus not implemented")
 }
 func (UnimplementedControlServiceServer) mustEmbedUnimplementedControlServiceServer() {}
 func (UnimplementedControlServiceServer) testEmbeddedByValue()                        {}
@@ -654,6 +690,42 @@ func _ControlService_ListSecrets_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlService_SetOpenBaoConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetOpenBaoConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).SetOpenBaoConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_SetOpenBaoConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).SetOpenBaoConfig(ctx, req.(*SetOpenBaoConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlService_GetOpenBaoStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetOpenBaoStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).GetOpenBaoStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_GetOpenBaoStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).GetOpenBaoStatus(ctx, req.(*GetOpenBaoStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ControlService_ServiceDesc is the grpc.ServiceDesc for ControlService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -724,6 +796,14 @@ var ControlService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListSecrets",
 			Handler:    _ControlService_ListSecrets_Handler,
+		},
+		{
+			MethodName: "SetOpenBaoConfig",
+			Handler:    _ControlService_SetOpenBaoConfig_Handler,
+		},
+		{
+			MethodName: "GetOpenBaoStatus",
+			Handler:    _ControlService_GetOpenBaoStatus_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

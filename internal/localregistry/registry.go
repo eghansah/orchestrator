@@ -35,9 +35,11 @@ func New(tarData []byte, imageTag string) (*Registry, error) {
 	h := gcrregistry.New(gcrregistry.WithBlobHandler(gcrregistry.NewInMemoryBlobHandler()))
 	r := &Registry{handler: h, imageTag: imageTag}
 	if len(tarData) > 0 {
-		if err := r.loadTar(tarData); err != nil {
+		dig, err := r.loadTar(tarData, imageTag)
+		if err != nil {
 			return nil, err
 		}
+		r.digest = dig
 		r.count = 1
 	}
 	return r, nil
@@ -57,38 +59,54 @@ func (r *Registry) ImageTag() string { return r.imageTag }
 // the same digest, so callers can detect content changes across builds.
 func (r *Registry) Digest() string { return r.digest }
 
+// Load pushes an additional image tarball into the registry under imageTag and
+// returns its manifest digest. Unlike New, it does not update the registry's
+// primary imageTag/Digest fields; the caller is responsible for recording the
+// returned digest. Returns immediately if tarData is nil.
+func (r *Registry) Load(tarData []byte, imageTag string) (digest string, err error) {
+	if len(tarData) == 0 {
+		return "", nil
+	}
+	d, err := r.loadTar(tarData, imageTag)
+	if err != nil {
+		return "", err
+	}
+	r.count++
+	return d, nil
+}
+
 // loadTar starts a temporary server on a random loopback port, pushes the first
 // image from tarData into the in-memory registry over HTTP, then shuts the
 // temporary server down. The blobs and manifest remain in the in-memory store.
-func (r *Registry) loadTar(tarData []byte) error {
+// It returns the manifest digest of the loaded image.
+func (r *Registry) loadTar(tarData []byte, imageTag string) (string, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return fmt.Errorf("temp listen: %w", err)
+		return "", fmt.Errorf("temp listen: %w", err)
 	}
 	srv := &http.Server{Handler: r.handler}
 	go srv.Serve(ln) //nolint:errcheck
 	defer srv.Close()
 
-	ref, err := name.NewTag(ln.Addr().String()+"/"+r.imageTag, name.Insecure)
+	ref, err := name.NewTag(ln.Addr().String()+"/"+imageTag, name.Insecure)
 	if err != nil {
-		return fmt.Errorf("parse ref: %w", err)
+		return "", fmt.Errorf("parse ref: %w", err)
 	}
 
 	img, err := tarball.Image(func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(tarData)), nil
 	}, nil)
 	if err != nil {
-		return fmt.Errorf("load tarball: %w", err)
+		return "", fmt.Errorf("load tarball: %w", err)
 	}
 
 	dig, err := img.Digest()
 	if err != nil {
-		return fmt.Errorf("compute digest: %w", err)
+		return "", fmt.Errorf("compute digest: %w", err)
 	}
-	r.digest = dig.String()
 
 	if err := remote.Write(ref, img, remote.WithTransport(http.DefaultTransport)); err != nil {
-		return fmt.Errorf("push image: %w", err)
+		return "", fmt.Errorf("push image: %w", err)
 	}
-	return nil
+	return dig.String(), nil
 }

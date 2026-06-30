@@ -12,10 +12,10 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
+	"github.com/eghansah/orchestrator/internal/baoclient"
 	gen "github.com/eghansah/orchestrator/internal/grpc/gen"
 	internraft "github.com/eghansah/orchestrator/internal/raft"
 	"github.com/eghansah/orchestrator/internal/tlsutil"
-	"github.com/eghansah/orchestrator/pkg/crypto"
 	"github.com/eghansah/orchestrator/pkg/types"
 )
 
@@ -23,15 +23,24 @@ import (
 // to be the current Raft leader; reads are served from local FSM state.
 type Server struct {
 	gen.UnimplementedControlServiceServer
-	peer        *internraft.Peer
-	nodeID      string
-	grpcAddr    string // this node's own gRPC address
-	ownCert     tls.Certificate
-	secretsKey  []byte // AES-256 key derived from cluster join-token
+	peer     *internraft.Peer
+	nodeID   string
+	grpcAddr string // this node's own gRPC address
+	ownCert  tls.Certificate
 }
 
-func New(peer *internraft.Peer, nodeID, grpcAddr string, ownCert tls.Certificate, secretsKey []byte) *Server {
-	return &Server{peer: peer, nodeID: nodeID, grpcAddr: grpcAddr, ownCert: ownCert, secretsKey: secretsKey}
+func New(peer *internraft.Peer, nodeID, grpcAddr string, ownCert tls.Certificate) *Server {
+	return &Server{peer: peer, nodeID: nodeID, grpcAddr: grpcAddr, ownCert: ownCert}
+}
+
+// baoClient returns a baoclient.Client configured from the current Raft state,
+// or an error when OpenBao has not been configured yet.
+func (s *Server) baoClient() (*baoclient.Client, error) {
+	cfg := s.peer.State().OpenBaoConfig
+	if cfg == nil || cfg.Address == "" {
+		return nil, fmt.Errorf("OpenBao is not configured — set an address via the Secrets page or ctl")
+	}
+	return baoclient.New(cfg.Address, cfg.Token, cfg.Mount), nil
 }
 
 func newID() string {
@@ -110,7 +119,7 @@ func (s *Server) scheduleAndPlace(ctx context.Context, wl types.Workload) (*gen.
 
 	// Build a placement copy with secret refs resolved into env vars. The
 	// original workload in Raft retains only the refs, never the values.
-	placed, err := s.resolveSecrets(wl)
+	placed, err := s.resolveSecrets(ctx, wl)
 	if err != nil {
 		wl.Phase = types.PhaseFailed
 		_ = s.peer.ApplyWorkload(wl)
@@ -130,9 +139,21 @@ func (s *Server) scheduleAndPlace(ctx context.Context, wl types.Workload) (*gen.
 }
 
 // resolveSecrets returns a shallow copy of wl with SecretRefs resolved into
-// Env entries. The encrypted values are decrypted using s.secretsKey.
-func (s *Server) resolveSecrets(wl types.Workload) (types.Workload, error) {
+// Env entries by fetching plaintext values from OpenBao.
+func (s *Server) resolveSecrets(ctx context.Context, wl types.Workload) (types.Workload, error) {
 	state := s.peer.State()
+
+	bao, err := s.baoClient()
+	if err != nil {
+		// No secret refs = no problem; the error only matters if refs exist.
+		if wl.Container != nil && len(wl.Container.SecretRefs) > 0 {
+			return wl, err
+		}
+		if wl.Stack != nil && len(wl.Stack.SecretRefs) > 0 {
+			return wl, err
+		}
+		return wl, nil
+	}
 
 	resolveRefs := func(refs map[string]string, env []string) ([]string, error) {
 		if len(refs) == 0 {
@@ -151,11 +172,11 @@ func (s *Server) resolveSecrets(wl types.Workload) (types.Workload, error) {
 			if found == nil {
 				return nil, fmt.Errorf("secret %q not found", secretName)
 			}
-			plaintext, err := crypto.Decrypt(s.secretsKey, found.EncryptedValue)
+			plaintext, err := bao.Read(ctx, found.BaoPath)
 			if err != nil {
-				return nil, fmt.Errorf("decrypt secret %q: %w", secretName, err)
+				return nil, fmt.Errorf("fetch secret %q from OpenBao: %w", secretName, err)
 			}
-			out = append(out, envVar+"="+string(plaintext))
+			out = append(out, envVar+"="+plaintext)
 		}
 		return out, nil
 	}
@@ -274,8 +295,14 @@ func (s *Server) GetClusterState(_ context.Context, _ *gen.GetClusterStateReques
 
 // pickNode selects the first healthy node from cluster state.
 func (s *Server) pickNode() (nodeID, addr string, certDER []byte, err error) {
+	return s.pickNodeExcluding(nil)
+}
+
+// pickNodeExcluding selects the first healthy node that is not in the excluded
+// set. Used by the replica fan-out to avoid placing two replicas on the same node.
+func (s *Server) pickNodeExcluding(excluded map[string]bool) (nodeID, addr string, certDER []byte, err error) {
 	for _, n := range s.peer.State().Nodes {
-		if n.Status == types.NodeHealthy {
+		if n.Status == types.NodeHealthy && !excluded[n.ID] {
 			return n.ID, n.Address, n.TLSCert, nil
 		}
 	}
@@ -425,7 +452,7 @@ func (s *Server) ListService(_ context.Context, _ *gen.ListServiceRequest) (*gen
 
 // ── Secrets ───────────────────────────────────────────────────────────────────
 
-func (s *Server) CreateSecret(_ context.Context, req *gen.CreateSecretRequest) (*gen.CreateSecretResponse, error) {
+func (s *Server) CreateSecret(ctx context.Context, req *gen.CreateSecretRequest) (*gen.CreateSecretResponse, error) {
 	if req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
@@ -435,28 +462,44 @@ func (s *Server) CreateSecret(_ context.Context, req *gen.CreateSecretRequest) (
 	if err := s.requireLeader(); err != nil {
 		return nil, err
 	}
-	encrypted, err := crypto.Encrypt(s.secretsKey, []byte(req.Value))
+	bao, err := s.baoClient()
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "encrypt secret: %v", err)
+		return nil, status.Errorf(codes.FailedPrecondition, "openbao not configured: %v", err)
+	}
+	if err := bao.Health(ctx); err != nil {
+		return nil, status.Errorf(codes.Unavailable, "openbao unreachable: %v", err)
 	}
 	sec := types.Secret{
-		ID:             newID(),
-		Name:           req.Name,
-		EncryptedValue: encrypted,
-		CreatedAt:      time.Now(),
+		ID:        newID(),
+		Name:      req.Name,
+		BaoPath:   "orchestrator/" + req.Name,
+		CreatedAt: time.Now(),
+	}
+	if err := bao.Write(ctx, sec.BaoPath, req.Value); err != nil {
+		return nil, status.Errorf(codes.Internal, "write to openbao: %v", err)
 	}
 	if err := s.peer.ApplySecret(sec); err != nil {
-		return nil, status.Errorf(codes.Internal, "apply secret: %v", err)
+		// Best-effort: try to delete the value we just wrote so we don't leave orphans.
+		_ = bao.Delete(ctx, sec.BaoPath)
+		return nil, status.Errorf(codes.Internal, "apply secret to raft: %v", err)
 	}
 	return &gen.CreateSecretResponse{SecretId: sec.ID, Accepted: true}, nil
 }
 
-func (s *Server) DeleteSecret(_ context.Context, req *gen.DeleteSecretRequest) (*gen.DeleteSecretResponse, error) {
+func (s *Server) DeleteSecret(ctx context.Context, req *gen.DeleteSecretRequest) (*gen.DeleteSecretResponse, error) {
 	if req.SecretId == "" {
 		return nil, status.Error(codes.InvalidArgument, "secret_id is required")
 	}
 	if err := s.requireLeader(); err != nil {
 		return nil, err
+	}
+	state := s.peer.State()
+	sec, ok := state.Secrets[req.SecretId]
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "secret %q not found", req.SecretId)
+	}
+	if bao, err := s.baoClient(); err == nil {
+		_ = bao.Delete(ctx, sec.BaoPath) // best-effort; don't block Raft removal on OpenBao errors
 	}
 	if err := s.peer.RemoveSecret(req.SecretId); err != nil {
 		return nil, status.Errorf(codes.Internal, "remove secret: %v", err)
@@ -471,6 +514,50 @@ func (s *Server) ListSecrets(_ context.Context, _ *gen.ListSecretsRequest) (*gen
 		secrets = append(secrets, types.SecretToProto(sec))
 	}
 	return &gen.ListSecretsResponse{Secrets: secrets}, nil
+}
+
+// ── OpenBao configuration ─────────────────────────────────────────────────────
+
+func (s *Server) SetOpenBaoConfig(ctx context.Context, req *gen.SetOpenBaoConfigRequest) (*gen.SetOpenBaoConfigResponse, error) {
+	if req.Address == "" {
+		return nil, status.Error(codes.InvalidArgument, "address is required")
+	}
+	if err := s.requireLeader(); err != nil {
+		return nil, err
+	}
+	cfg := types.OpenBaoConfig{
+		Address: req.Address,
+		Token:   req.Token,
+		Mount:   req.Mount,
+	}
+	// Validate the connection before persisting.
+	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount)
+	if err := bao.Health(ctx); err != nil {
+		return &gen.SetOpenBaoConfigResponse{Accepted: false, Reason: "health check failed: " + err.Error()}, nil
+	}
+	if err := s.peer.SetOpenBaoConfig(cfg); err != nil {
+		return nil, status.Errorf(codes.Internal, "store openbao config: %v", err)
+	}
+	return &gen.SetOpenBaoConfigResponse{Accepted: true}, nil
+}
+
+func (s *Server) GetOpenBaoStatus(ctx context.Context, _ *gen.GetOpenBaoStatusRequest) (*gen.GetOpenBaoStatusResponse, error) {
+	cfg := s.peer.State().OpenBaoConfig
+	if cfg == nil || cfg.Address == "" {
+		return &gen.GetOpenBaoStatusResponse{Configured: false}, nil
+	}
+	resp := &gen.GetOpenBaoStatusResponse{
+		Configured: true,
+		Address:    cfg.Address,
+		Mount:      cfg.Mount,
+	}
+	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount)
+	if err := bao.Health(ctx); err != nil {
+		resp.Error = err.Error()
+	} else {
+		resp.Connected = true
+	}
+	return resp, nil
 }
 
 func phaseIn(phase types.WorkloadPhase, phases []gen.WorkloadPhase) bool {

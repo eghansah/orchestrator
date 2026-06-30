@@ -38,33 +38,35 @@ const (
 )
 
 type ContainerSpec struct {
-	Name       string
-	Image      string
-	Command    []string
-	Env        []string          // KEY=VALUE pairs
-	Ports      []PortMapping
-	Volumes    []VolumeMount
-	Labels     map[string]string
-	Namespace  string            // nerdctl namespace; defaults to "orchestrator"
-	SecretRefs map[string]string // env_var_name → secret_name; resolved at placement
+	Name       string            `yaml:"name"`
+	Image      string            `yaml:"image"`
+	Command    []string          `yaml:"command,omitempty"`
+	Env        []string          `yaml:"env,omitempty"`        // KEY=VALUE pairs
+	Ports      []PortMapping     `yaml:"ports,omitempty"`
+	Volumes    []VolumeMount     `yaml:"volumes,omitempty"`
+	Labels     map[string]string `yaml:"labels,omitempty"`
+	Namespace  string            `yaml:"namespace,omitempty"`  // nerdctl namespace; defaults to "orchestrator"
+	SecretRefs map[string]string `yaml:"secret_refs,omitempty"` // env_var_name → secret_name; resolved at placement
+	Replicas   int               `yaml:"replicas,omitempty"`   // desired replica count; 0 or 1 = single instance
 }
 
 type ComposeStackSpec struct {
-	Name        string
-	ComposeYAML string            // inline compose file content
-	SecretRefs  map[string]string // env_var_name → secret_name; resolved at placement
-	ResolvedEnv []string          // KEY=VALUE pairs injected from secrets at placement; not persisted in Raft
+	Name        string            `yaml:"name"`
+	ComposeYAML string            `yaml:"compose_yaml"`          // inline compose file content
+	SecretRefs  map[string]string `yaml:"secret_refs,omitempty"` // env_var_name → secret_name; resolved at placement
+	ResolvedEnv []string          `yaml:"-"`                     // runtime only; never exported
+	Replicas    int               `yaml:"replicas,omitempty"`    // desired replica count; 0 or 1 = single instance
 }
 
 type PortMapping struct {
-	ContainerPort uint32
-	Protocol      string // "tcp" | "udp"
+	ContainerPort uint32 `yaml:"container_port"`
+	Protocol      string `yaml:"protocol"` // "tcp" | "udp"
 }
 
 type VolumeMount struct {
-	Source   string
-	Target   string
-	ReadOnly bool
+	Source   string `yaml:"source"`
+	Target   string `yaml:"target"`
+	ReadOnly bool   `yaml:"read_only,omitempty"`
 }
 
 // PortAllocation records the host port auto-assigned for one container port.
@@ -83,6 +85,7 @@ type Workload struct {
 	NodeID          string // empty = unscheduled
 	CreatedAt       time.Time
 	PortAllocations []PortAllocation // auto-assigned host ports (containers only)
+	GroupName       string // non-empty on replica instances; equals the parent workload name
 }
 
 // Name returns the stable workload name from its spec.
@@ -181,14 +184,22 @@ type Registry struct {
 	CreatedAt time.Time
 }
 
-// Secret is a named encrypted value stored in cluster state. The EncryptedValue
-// field holds AES-256-GCM ciphertext; the plaintext is only materialised on the
-// leader at placement time and injected into the container's environment.
+// Secret is a named secret stored in the cluster's OpenBao instance.
+// BaoPath is the KV v2 path within the configured mount (e.g. "orchestrator/db-pass").
+// The plaintext value is fetched from OpenBao at placement time and injected as an env var.
 type Secret struct {
-	ID             string
-	Name           string    // unique cluster-wide label
-	EncryptedValue []byte    // AES-256-GCM ciphertext produced by pkg/crypto
-	CreatedAt      time.Time
+	ID        string
+	Name      string    // unique cluster-wide label
+	BaoPath   string    // KV v2 path within OpenBaoConfig.Mount
+	CreatedAt time.Time
+}
+
+// OpenBaoConfig holds the connection parameters for the cluster's OpenBao instance.
+// All nodes read this from Raft state to resolve secrets at placement time.
+type OpenBaoConfig struct {
+	Address string // e.g. "https://bao.example.com:8200"
+	Token   string // service token scoped to KV read/write on <mount>/data/orchestrator/*
+	Mount   string // KV v2 mount path; defaults to "secret" when empty
 }
 
 // WorkloadTemplate is a saved workload definition that can be redeployed.
@@ -219,6 +230,7 @@ type ActualContainer struct {
 	Name        string
 	Status      string    // nerdctl status string (e.g. "Up 5 minutes", "Exited (1)")
 	StartedAt   time.Time // zero if not running
+	MeshIP      string    // container's IP on mesh0; empty if not on mesh or not yet assigned
 }
 
 type ActualStack struct {

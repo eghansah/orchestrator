@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/eghansah/orchestrator/pkg/types"
@@ -48,10 +49,29 @@ const (
 type Client struct {
 	binary    string
 	namespace string
-	address   string   // containerd socket path, passed as --address to nerdctl
-	dataDir   string   // root for compose file storage
-	dnsIP     string   // injected into containers for svc.local resolution
-	dnsPort   uint32   // DNS port; if != 53, adds resolv.conf "options port:N"
+	address   string // containerd socket path, passed as --address to nerdctl
+	dataDir   string // root for compose file storage
+	dnsIP     string // injected into containers for svc.local resolution
+	dnsPort   uint32 // DNS port; if != 53, adds resolv.conf "options port:N"
+
+	mu          sync.Mutex
+	meshNetwork string // when set, managed containers attach to this nerdctl network for a mesh IP
+}
+
+// SetMeshNetwork enables (or, with "", disables) attaching managed containers to
+// the named mesh network. Called once the leader has assigned this node a mesh
+// subnet and the network has been created. Safe for concurrent use.
+func (c *Client) SetMeshNetwork(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.meshNetwork = name
+}
+
+// meshNet returns the currently configured mesh network name (or "").
+func (c *Client) meshNet() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.meshNetwork
 }
 
 // detectContainerdSocket returns the first containerd socket that exists,
@@ -314,7 +334,26 @@ func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types
 	_, _ = c.run(ctx, "stop", "--", spec.Name)
 	_, _ = c.run(ctx, "rm", "--", spec.Name)
 
+	args := buildRunArgs(workloadID, spec, portAllocations, c.dnsIP, c.dnsPort, c.meshNet())
+
+	slog.Info("nerdctl: running container", "cmd", append([]string{c.binary}, args...))
+	_, err := c.run(ctx, args...)
+	if err != nil {
+		slog.Error("nerdctl: run container failed", "name", spec.Name, "err", err)
+	}
+	return err
+}
+
+// buildRunArgs assembles the `nerdctl run` argument list for a managed container.
+// It is pure (no exec) so the command line can be unit-tested. When meshNetwork
+// is non-empty the container is additionally attached to that network so it
+// receives a mesh IP from the node's /24, on top of the existing loopback port
+// publishing used by the proxy. See docs/mesh-network.md.
+func buildRunArgs(workloadID string, spec types.ContainerSpec, portAllocations []types.PortAllocation, dnsIP string, dnsPort uint32, meshNetwork string) []string {
 	args := []string{"run", "-d", "--name", spec.Name}
+	if meshNetwork != "" {
+		args = append(args, "--network", meshNetwork)
+	}
 	for _, env := range spec.Env {
 		args = append(args, "-e", env)
 	}
@@ -343,21 +382,15 @@ func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types
 		args = append(args, "--label", fmt.Sprintf("%s=%s", k, v))
 	}
 	args = append(args, "--label", fmt.Sprintf("%s=%s", workloadIDLabel, workloadID))
-	if c.dnsIP != "" {
-		args = append(args, "--dns", c.dnsIP, "--dns-search", "svc.local")
-		if c.dnsPort != 0 && c.dnsPort != 53 {
-			args = append(args, "--dns-opt", fmt.Sprintf("port:%d", c.dnsPort))
+	if dnsIP != "" {
+		args = append(args, "--dns", dnsIP, "--dns-search", "svc.local")
+		if dnsPort != 0 && dnsPort != 53 {
+			args = append(args, "--dns-opt", fmt.Sprintf("port:%d", dnsPort))
 		}
 	}
 	args = append(args, spec.Image)
 	args = append(args, spec.Command...)
-
-	slog.Info("nerdctl: running container", "cmd", append([]string{c.binary}, args...))
-	_, err := c.run(ctx, args...)
-	if err != nil {
-		slog.Error("nerdctl: run container failed", "name", spec.Name, "err", err)
-	}
-	return err
+	return args
 }
 
 func (c *Client) ContainerLogs(ctx context.Context, name string, tail int) (string, error) {
@@ -373,6 +406,14 @@ func (c *Client) StopContainer(ctx context.Context, name string) error {
 		return err
 	}
 	_, err := c.run(ctx, "stop", "--", name)
+	return err
+}
+
+func (c *Client) StartContainer(ctx context.Context, name string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
+	_, err := c.run(ctx, "start", "--", name)
 	return err
 }
 
@@ -409,6 +450,8 @@ func (ci containerInfo) workloadID() string {
 }
 
 // ListContainers returns all containers in the orchestrator namespace.
+// For containers that are running and attached to the mesh network, the mesh IP
+// is populated via a supplementary inspect call.
 func (c *Client) ListContainers(ctx context.Context) ([]types.ActualContainer, error) {
 	out, err := c.run(ctx, "ps", "-a", "--format", "{{json .}}")
 	if err != nil {
@@ -432,7 +475,52 @@ func (c *Client) ListContainers(ctx context.Context) ([]types.ActualContainer, e
 			Status:      ci.Status,
 		})
 	}
-	return result, scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	// Supplement with mesh IPs for running containers when the mesh network is active.
+	meshNet := c.meshNet()
+	if meshNet != "" && len(result) > 0 {
+		meshIPs := c.containerMeshIPs(ctx, result, meshNet)
+		for i := range result {
+			result[i].MeshIP = meshIPs[result[i].Name]
+		}
+	}
+	return result, nil
+}
+
+// containerMeshIPs calls nerdctl inspect for running containers and returns a
+// map from container name to the IP assigned on the given network.
+func (c *Client) containerMeshIPs(ctx context.Context, containers []types.ActualContainer, netName string) map[string]string {
+	var names []string
+	for _, ac := range containers {
+		if strings.HasPrefix(strings.ToLower(ac.Status), "up") {
+			names = append(names, ac.Name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+
+	args := append([]string{"inspect", "--type=container"}, names...)
+	out, err := c.runStdout(ctx, args...)
+	if err != nil {
+		return nil
+	}
+	var results []ContainerInspectResult
+	if err := json.Unmarshal(bytes.TrimSpace(out), &results); err != nil {
+		return nil
+	}
+	m := make(map[string]string, len(results))
+	for _, r := range results {
+		if nets := r.NetworkSettings.Networks; nets != nil {
+			if n, ok := nets[netName]; ok && n.IPAddress != "" {
+				m[r.Name] = n.IPAddress
+			}
+		}
+	}
+	return m
 }
 
 func (c *Client) composeDir(stackName string) (string, error) {
@@ -464,6 +552,7 @@ func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStac
 		return fmt.Errorf("create compose dir: %w", err)
 	}
 	composeYAML := rewriteComposePorts(spec.ComposeYAML, portAllocations)
+	composeYAML = injectMeshNetwork(composeYAML, c.meshNet())
 	composeFile := filepath.Join(dir, "docker-compose.yml")
 	if err := os.WriteFile(composeFile, []byte(composeYAML), 0o600); err != nil {
 		return fmt.Errorf("write compose file: %w", err)
@@ -647,6 +736,57 @@ type VolumeDetail struct {
 	Mountpoint string            `json:"Mountpoint"`
 	Labels     map[string]string `json:"Labels"`
 	Scope      string            `json:"Scope"`
+}
+
+// meshNetworkLabel marks the per-node mesh network so it is recognizable as
+// orchestrator-managed (value is the subnet it was created for).
+const meshNetworkLabel = "orchestrator.mesh"
+
+// EnsureMeshNetwork makes the per-node mesh network exist with the given subnet,
+// gateway and bridge MTU, creating it if absent and recreating it if its subnet
+// drifted (e.g. the node was assigned a different /24). Containers attached to
+// this network draw mesh IPs from subnet; gateway is this node's own mesh
+// address. mtu should match the WireGuard tunnel MTU (typically 1380) so that
+// container-to-container packets fit inside the encapsulated frames without
+// fragmentation.
+func (c *Client) EnsureMeshNetwork(ctx context.Context, name, subnet, gateway string, mtu int) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
+	if detail, err := c.InspectNetwork(ctx, name); err == nil {
+		if networkMatches(detail, subnet) {
+			return nil // already correct
+		}
+		slog.Info("nerdctl: mesh network subnet changed, recreating", "name", name, "want", subnet)
+		if _, err := c.run(ctx, "network", "rm", "--", name); err != nil {
+			return fmt.Errorf("remove stale mesh network %q: %w", name, err)
+		}
+	}
+	args := []string{
+		"network", "create",
+		"--subnet", subnet,
+		"--gateway", gateway,
+		"--label", meshNetworkLabel + "=" + subnet,
+	}
+	if mtu > 0 {
+		args = append(args, "--opt", fmt.Sprintf("com.docker.network.driver.mtu=%d", mtu))
+	}
+	args = append(args, name)
+	if _, err := c.run(ctx, args...); err != nil {
+		return fmt.Errorf("create mesh network %q (%s): %w", name, subnet, err)
+	}
+	slog.Info("nerdctl: mesh network ready", "name", name, "subnet", subnet, "gateway", gateway, "mtu", mtu)
+	return nil
+}
+
+// networkMatches reports whether detail's IPAM already declares subnet.
+func networkMatches(detail *NetworkDetail, subnet string) bool {
+	for _, cfg := range detail.IPAM.Config {
+		if cfg.Subnet == subnet {
+			return true
+		}
+	}
+	return false
 }
 
 // ListNetworks returns all networks in the orchestrator namespace.

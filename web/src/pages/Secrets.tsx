@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
+import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Container from "@cloudscape-design/components/container";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import Flashbar, { FlashbarProps } from "@cloudscape-design/components/flashbar";
@@ -9,9 +11,10 @@ import Header from "@cloudscape-design/components/header";
 import Input from "@cloudscape-design/components/input";
 import Modal from "@cloudscape-design/components/modal";
 import SpaceBetween from "@cloudscape-design/components/space-between";
+import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Table from "@cloudscape-design/components/table";
 import Textarea from "@cloudscape-design/components/textarea";
-import { api, ClusterState, Secret, formatAge } from "../api";
+import { api, ClusterState, OpenBaoStatus, Secret, formatAge } from "../api";
 
 interface Props {
   state: ClusterState | null;
@@ -21,11 +24,19 @@ interface Props {
 
 export default function Secrets({ state, loading, refetch }: Props) {
   const secrets: Secret[] = state?.secrets ?? [];
+
   const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [selected, setSelected] = useState<Secret[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ name: "", value: "" });
   const [saving, setSaving] = useState(false);
+
+  // OpenBao connection state
+  const [baoStatus, setBaoStatus] = useState<OpenBaoStatus | null>(null);
+  const [baoLoading, setBaoLoading] = useState(true);
+  const [showBaoConfig, setShowBaoConfig] = useState(false);
+  const [baoForm, setBaoForm] = useState({ address: "", token: "", mount: "secret" });
+  const [baoSaving, setBaoSaving] = useState(false);
 
   function addFlash(type: FlashbarProps.Type, msg: string) {
     const id = String(Date.now());
@@ -33,6 +44,41 @@ export default function Secrets({ state, loading, refetch }: Props) {
       ...f,
       { type, content: msg, id, dismissible: true, onDismiss: () => setFlash((f) => f.filter((x) => x.id !== id)) },
     ]);
+  }
+
+  function loadBaoStatus() {
+    setBaoLoading(true);
+    api
+      .getOpenBaoStatus()
+      .then(setBaoStatus)
+      .catch(() => setBaoStatus(null))
+      .finally(() => setBaoLoading(false));
+  }
+
+  useEffect(() => {
+    loadBaoStatus();
+  }, []);
+
+  async function handleSaveBaoConfig() {
+    if (!baoForm.address) {
+      addFlash("error", "Address is required");
+      return;
+    }
+    setBaoSaving(true);
+    try {
+      await api.setOpenBaoConfig({
+        address: baoForm.address,
+        token: baoForm.token,
+        mount: baoForm.mount || "secret",
+      });
+      addFlash("success", "OpenBao connection saved");
+      setShowBaoConfig(false);
+      loadBaoStatus();
+    } catch (e) {
+      addFlash("error", String(e));
+    } finally {
+      setBaoSaving(false);
+    }
   }
 
   async function handleCreate() {
@@ -67,10 +113,19 @@ export default function Secrets({ state, loading, refetch }: Props) {
     refetch();
   }
 
+  const baoConnected = baoStatus?.connected === true;
+
+  function baoStatusIndicator() {
+    if (baoLoading) return <StatusIndicator type="loading">Checking…</StatusIndicator>;
+    if (!baoStatus?.configured) return <StatusIndicator type="stopped">Not configured</StatusIndicator>;
+    if (baoConnected) return <StatusIndicator type="success">Connected — {baoStatus.address}</StatusIndicator>;
+    return <StatusIndicator type="error">Unreachable — {baoStatus.error}</StatusIndicator>;
+  }
+
   return (
     <ContentLayout
       header={
-        <Header variant="h1" actions={<Button iconName="refresh" onClick={refetch}>Refresh</Button>}>
+        <Header variant="h1" actions={<Button iconName="refresh" onClick={() => { refetch(); loadBaoStatus(); }}>Refresh</Button>}>
           Secrets
         </Header>
       }
@@ -78,19 +133,66 @@ export default function Secrets({ state, loading, refetch }: Props) {
       <SpaceBetween size="l">
         <Flashbar items={flash} />
 
+        {/* OpenBao connection card */}
+        <Container
+          header={
+            <Header
+              variant="h2"
+              description="Secrets are stored in OpenBao (Vault-compatible KV v2). Values are never written to cluster state."
+              actions={
+                <Button onClick={() => {
+                  setBaoForm({
+                    address: baoStatus?.address ?? "",
+                    token: "",
+                    mount: baoStatus?.mount ?? "secret",
+                  });
+                  setShowBaoConfig(true);
+                }}>
+                  {baoStatus?.configured ? "Update connection" : "Configure connection"}
+                </Button>
+              }
+            >
+              OpenBao connection
+            </Header>
+          }
+        >
+          <ColumnLayout columns={2} variant="text-grid">
+            <div>
+              <Box variant="awsui-key-label">Status</Box>
+              <div>{baoStatusIndicator()}</div>
+            </div>
+            <div>
+              <Box variant="awsui-key-label">Mount</Box>
+              <Box>{baoStatus?.mount ?? "—"}</Box>
+            </div>
+          </ColumnLayout>
+          {baoStatus?.configured && !baoConnected && (
+            <Box margin={{ top: "s" }}>
+              <Alert type="warning">
+                OpenBao is unreachable. Secret creation is disabled until the connection is restored.
+              </Alert>
+            </Box>
+          )}
+        </Container>
+
+        {/* Secrets table */}
         <Container>
           <Table
             loading={loading}
             loadingText="Loading secrets"
             header={
               <Header
-                description="Secrets are encrypted with AES-256-GCM before storage. Values are never shown after creation."
+                description="Secret values live in OpenBao and are injected at placement time. They are never returned after creation."
                 actions={
                   <SpaceBetween direction="horizontal" size="xs">
                     <Button disabled={selected.length === 0} onClick={handleDelete}>
                       Delete
                     </Button>
-                    <Button variant="primary" onClick={() => setShowCreate(true)}>
+                    <Button
+                      variant="primary"
+                      disabled={!baoConnected}
+                      onClick={() => setShowCreate(true)}
+                    >
                       Create secret
                     </Button>
                   </SpaceBetween>
@@ -109,10 +211,11 @@ export default function Secrets({ state, loading, refetch }: Props) {
               { id: "age",  header: "Age",  cell: (s) => formatAge(s.created_at) },
             ]}
             items={secrets}
-            empty={<Box color="text-body-secondary">No secrets stored. Use "Create secret" to add one.</Box>}
+            empty={<Box color="text-body-secondary">No secrets stored. Configure OpenBao and use "Create secret" to add one.</Box>}
           />
         </Container>
 
+        {/* Create secret modal */}
         <Modal
           visible={showCreate}
           header="Create secret"
@@ -133,7 +236,7 @@ export default function Secrets({ state, loading, refetch }: Props) {
           <SpaceBetween size="m">
             <FormField
               label="Name"
-              description="Unique label used to reference this secret in workloads (e.g. db-password)"
+              description="Unique label used to reference this secret in workloads (e.g. db-password). Stored at orchestrator/<name> in OpenBao."
             >
               <Input
                 value={form.name}
@@ -143,13 +246,55 @@ export default function Secrets({ state, loading, refetch }: Props) {
             </FormField>
             <FormField
               label="Value"
-              description="Plaintext value — encrypted before storage. Not retrievable after creation."
+              description="Plaintext value written directly to OpenBao. Not retrievable after creation."
             >
               <Textarea
                 value={form.value}
                 onChange={(e) => setForm((f) => ({ ...f, value: e.detail.value }))}
                 placeholder="super-secret-value"
                 rows={4}
+              />
+            </FormField>
+          </SpaceBetween>
+        </Modal>
+
+        {/* OpenBao config modal */}
+        <Modal
+          visible={showBaoConfig}
+          header="OpenBao connection"
+          onDismiss={() => setShowBaoConfig(false)}
+          footer={
+            <Box float="right">
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button variant="link" onClick={() => setShowBaoConfig(false)}>Cancel</Button>
+                <Button variant="primary" loading={baoSaving} onClick={handleSaveBaoConfig}>
+                  Save &amp; test
+                </Button>
+              </SpaceBetween>
+            </Box>
+          }
+        >
+          <SpaceBetween size="m">
+            <FormField label="Address" description="OpenBao server URL, e.g. https://bao.example.com:8200">
+              <Input
+                value={baoForm.address}
+                onChange={(e) => setBaoForm((f) => ({ ...f, address: e.detail.value }))}
+                placeholder="https://bao.example.com:8200"
+              />
+            </FormField>
+            <FormField label="Token" description="Service token with KV read/write on <mount>/data/orchestrator/*">
+              <Input
+                type="password"
+                value={baoForm.token}
+                onChange={(e) => setBaoForm((f) => ({ ...f, token: e.detail.value }))}
+                placeholder="hvs.XXXXXXXX"
+              />
+            </FormField>
+            <FormField label="Mount" description="KV v2 mount path (default: secret)">
+              <Input
+                value={baoForm.mount}
+                onChange={(e) => setBaoForm((f) => ({ ...f, mount: e.detail.value }))}
+                placeholder="secret"
               />
             </FormField>
           </SpaceBetween>

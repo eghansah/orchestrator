@@ -41,13 +41,16 @@ import (
 	internraft "github.com/eghansah/orchestrator/internal/raft"
 	"github.com/eghansah/orchestrator/internal/tlsutil"
 	"github.com/eghansah/orchestrator/internal/webui"
-	"github.com/eghansah/orchestrator/pkg/crypto"
 	"github.com/eghansah/orchestrator/pkg/types"
 )
 
 // version is stamped at build time via -ldflags "-X main.version=...".
 // It is used as the ingressd image tag so each release is human-identifiable.
 var version = "dev"
+
+// meshNetworkName is the per-node nerdctl network managed containers attach to
+// for a mesh IP. See docs/mesh-network.md.
+const meshNetworkName = "mesh0"
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -85,13 +88,16 @@ type config struct {
 	ingressdHTTP  string // host:port binding for ingressd HTTP  (e.g. 127.0.0.1:8080)
 	ingressdHTTPS string // host:port binding for ingressd HTTPS (e.g. 127.0.0.1:8443)
 
-	mesh           bool   // enable the WireGuard mesh overlay
-	meshListenPort int    // local UDP port for WireGuard (>= 1024)
-	meshEndpoint   string // externally reachable WireGuard endpoint (host:port); default dataAddr:meshListenPort
+	mesh            bool   // enable the WireGuard mesh overlay
+	meshListenPort  int    // local UDP port for WireGuard (>= 1024)
+	meshEndpoint    string // externally reachable WireGuard endpoint (host:port); default dataAddr:meshListenPort
+	meshBackend     string // "container" (default) or "netstack"
 
-	// Derived at runtime from the embedded ingressd image, not from flags.
-	ingressdImageTag    string // repo:tag the local registry serves, e.g. "ingressd:v1.4.0"
-	ingressdImageDigest string // manifest digest of the embedded image, e.g. "sha256:…"
+	// Derived at runtime from embedded images, not from flags.
+	ingressdImageTag      string // repo:tag the local registry serves, e.g. "ingressd:v1.4.0"
+	ingressdImageDigest   string // manifest digest of the embedded image, e.g. "sha256:…"
+	meshrouterdImageTag   string // repo:tag for the meshrouterd image
+	meshrouterdImageDigest string // manifest digest of the embedded meshrouterd image
 }
 
 func parseFlags() config {
@@ -121,6 +127,7 @@ func parseFlags() config {
 	flag.BoolVar(&cfg.mesh, "mesh", false, "enable the userland WireGuard mesh overlay (see docs/mesh-network.md)")
 	flag.IntVar(&cfg.meshListenPort, "mesh-listen-port", 51820, "local UDP port for the mesh WireGuard device (must be ≥1024)")
 	flag.StringVar(&cfg.meshEndpoint, "mesh-endpoint", "", "externally reachable WireGuard endpoint host:port (default: data-addr:mesh-listen-port)")
+	flag.StringVar(&cfg.meshBackend, "mesh-backend", "container", `WireGuard device backend: "container" (meshrouterd, default) or "netstack" (in-process userland)`)
 	flag.StringVar(&cfg.ldapAddr, "ldap-addr", "", "LDAP/AD server address host:port (empty = use local password auth)")
 	flag.BoolVar(&cfg.ldapTLS, "ldap-tls", false, "use implicit TLS when connecting to LDAP (LDAPS, typically port 636)")
 	flag.BoolVar(&cfg.ldapInsecure, "ldap-insecure", false, "skip TLS certificate verification for LDAP (for self-signed certs)")
@@ -147,6 +154,15 @@ func parseFlags() config {
 
 func main() {
 	cfg := parseFlags()
+	// Auto-bootstrap when the data directory is fresh (no raft.db) and this
+	// node is not joining an existing cluster. This lets a first-time deployment
+	// work without any flags beyond what the user actually cares about.
+	if !cfg.bootstrap && cfg.joinAddr == "" {
+		raftDB := filepath.Join(cfg.dataDir, "raft", "raft.db")
+		if _, err := os.Stat(raftDB); os.IsNotExist(err) {
+			cfg.bootstrap = true
+		}
+	}
 	cfg.joinToken = resolveJoinToken(cfg.dataDir, cfg.joinToken, cfg.bootstrap)
 	cfg.adminToken = resolveAdminToken(cfg.dataDir, cfg.adminToken, cfg.bootstrap)
 	cfg.webPassword = resolveWebPassword(cfg.dataDir, cfg.webPassword, cfg.bootstrap)
@@ -187,13 +203,22 @@ func main() {
 		imageTag := "ingressd:" + sanitizeImageTag(version)
 		reg, err := localregistry.New(localregistry.IngressdTar, imageTag)
 		if err != nil {
-			slog.Warn("local registry: failed to load image tarball", "err", err)
+			slog.Warn("local registry: failed to load ingressd image", "err", err)
 			reg, _ = localregistry.New(nil, imageTag) // start empty
 		}
 		// Record what the registry actually serves so reconcileIngressd can pull
 		// it by its readable tag and detect content changes by digest.
 		cfg.ingressdImageTag = reg.ImageTag()
 		cfg.ingressdImageDigest = reg.Digest()
+
+		// Load the meshrouterd image into the same registry if it was embedded.
+		meshTag := "meshrouterd:" + sanitizeImageTag(version)
+		if dig, err := reg.Load(localregistry.MeshrouterdTar, meshTag); err != nil {
+			slog.Warn("local registry: failed to load meshrouterd image", "err", err)
+		} else if dig != "" {
+			cfg.meshrouterdImageTag = meshTag
+			cfg.meshrouterdImageDigest = dig
+		}
 		regSrv := &http.Server{Addr: cfg.registryAddr, Handler: reg.Handler()}
 		go func() {
 			slog.Info("local registry listening", "addr", cfg.registryAddr, "images", reg.ImageCount())
@@ -255,12 +280,11 @@ func main() {
 		joinToken:  cfg.joinToken,
 		ownCertDER: ownCertDER,
 	}
-	secretsKey := crypto.DeriveKey(cfg.joinToken)
-	ctrl := control.New(peer, cfg.nodeID, cfg.grpcAddr, tlsCert, secretsKey)
+	ctrl := control.New(peer, cfg.nodeID, cfg.grpcAddr, tlsCert)
 
 	// 5b. Web console (optional) ----------------------------------------------
 	if cfg.webAddr != "" {
-		webSrv := webui.New(peer, ctrl, ag, cfg.adminToken, cfg.webPassword, cfg.webPrefix, cfg.webDisableMFA, webui.LDAPConfig{
+		webSrv := webui.New(peer, ctrl, ag, cfg.adminToken, cfg.webPassword, cfg.webPrefix, version, cfg.webDisableMFA, webui.LDAPConfig{
 			Addr:           cfg.ldapAddr,
 			UseTLS:         cfg.ldapTLS,
 			Insecure:       cfg.ldapInsecure,
@@ -268,7 +292,7 @@ func main() {
 			BaseDN:         cfg.ldapBaseDN,
 			UserFilter:     cfg.ldapUserFilter,
 			GroupDN:        cfg.ldapGroupDN,
-		}, secretsKey)
+		})
 		httpSrv := &http.Server{Addr: cfg.webAddr, Handler: webSrv.Handler()}
 		go func() {
 			slog.Info("web console listening", "addr", cfg.webAddr)
@@ -309,7 +333,7 @@ func main() {
 	// Write the initial config immediately, then re-write whenever Raft state changes.
 	// proxyd watches this file and reloads; the orchestrator is not in the data path.
 	_ = proxycfg.Write(cfg.dataDir, cfg.nodeID, cfg.dataAddr, cfg.dnsAddr, peer.State())
-	go proxycfgWriteLoop(ctx, peer, cfg.dataDir, cfg.nodeID, cfg.dataAddr, cfg.dnsAddr)
+	go proxycfgWriteLoop(ctx, peer, ag, cfg.dataDir, cfg.nodeID, cfg.dataAddr, cfg.dnsAddr)
 
 	// 5e. Ingress config writer ------------------------------------------------
 	// Write <dataDir>/ingress/config.json; ingressd watches this file and drives HAProxy.
@@ -330,15 +354,22 @@ func main() {
 		if meshEndpoint == "" {
 			meshEndpoint = fmt.Sprintf("%s:%d", cfg.dataAddr, cfg.meshListenPort)
 		}
-		mgr, err := meshd.NewManager(cfg.dataDir, meshEndpoint, cfg.meshListenPort,
-			func(meshAddr string) (meshd.Device, error) {
+		var deviceFactory meshd.DeviceFactory
+		switch cfg.meshBackend {
+		case "netstack":
+			deviceFactory = func(meshAddr string) (meshd.Device, error) {
 				return meshd.NewNetstackDevice(meshAddr, meshd.DefaultMTU)
-			})
+			}
+		default: // "container"
+			deviceFactory = meshd.NewContainerDeviceFactory(cfg.dataDir)
+		}
+		mgr, err := meshd.NewManager(cfg.dataDir, meshEndpoint, cfg.meshListenPort, deviceFactory)
 		dieOnErr(err, "create mesh manager")
 		meshMgr = mgr
 		meshPubKey = mgr.PublicKey()
 		defer meshMgr.Close() //nolint:errcheck
-		slog.Info("mesh overlay enabled", "endpoint", meshEndpoint, "pubkey", meshPubKey, "listen-port", cfg.meshListenPort)
+		slog.Info("mesh overlay enabled", "endpoint", meshEndpoint, "pubkey", meshPubKey,
+			"listen-port", cfg.meshListenPort, "backend", cfg.meshBackend)
 	}
 
 	serverTLS := tlsutil.ServerTLSConfig(tlsCert, isPinned)
@@ -375,9 +406,23 @@ func main() {
 	// Once we are leader, register this node in the cluster state.
 	go selfRegisterLoop(ctx, peer, cfg.nodeID, cfg.grpcAddr, cfg.dataAddr, ownCertDER, meshPubKey, meshEndpoint)
 
-	// Keep the local WireGuard peer set in sync with cluster state.
+	// Keep the local WireGuard peer set in sync with cluster state, and ensure the
+	// per-node mesh0 nerdctl network exists so managed containers get mesh IPs.
 	if meshMgr != nil {
 		go meshMgr.Run(ctx, cfg.nodeID, func() map[string]types.Node { return peer.State().Nodes })
+		go meshNetworkLoop(ctx, peer, nc, cfg.nodeID, meshNetworkName)
+		if cfg.meshBackend == "container" && cfg.meshrouterdImageTag != "" {
+			go func() {
+				// Brief settle delay so the local registry is accepting connections
+				// before reconcileMeshRouter tries to pull the image.
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(3 * time.Second):
+				}
+				reconcileMeshRouterLoop(ctx, peer, cfg)
+			}()
+		}
 	}
 
 	// Once we are leader, register the built-in local registry so the web UI
@@ -630,6 +675,35 @@ func selfRegisterLoop(ctx context.Context, peer *internraft.Peer, nodeID, grpcAd
 			}
 			slog.Info("registered self in cluster state", "node-id", nodeID)
 			return
+		}
+	}
+}
+
+// meshNetworkLoop waits for the leader to assign this node a mesh subnet, then
+// ensures the per-node mesh nerdctl network exists with that /24 and enables
+// container attachment to it. It re-runs if the assigned subnet ever changes.
+// Unlike the WireGuard peer sync (which runs in any case), this governs whether
+// newly placed containers receive a mesh IP.
+func meshNetworkLoop(ctx context.Context, peer *internraft.Peer, nc *nerdctl.Client, nodeID, netName string) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	var lastSubnet string
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, ok := peer.State().Nodes[nodeID]
+			if !ok || n.MeshSubnet == "" || n.MeshSubnet == lastSubnet {
+				continue
+			}
+			if err := nc.EnsureMeshNetwork(ctx, netName, n.MeshSubnet, n.MeshAddr, meshd.DefaultMTU); err != nil {
+				slog.Warn("ensure mesh network failed", "network", netName, "subnet", n.MeshSubnet, "err", err)
+				continue
+			}
+			nc.SetMeshNetwork(netName)
+			lastSubnet = n.MeshSubnet
+			slog.Info("mesh container network enabled", "network", netName, "subnet", n.MeshSubnet, "gateway", n.MeshAddr)
 		}
 	}
 }
@@ -1003,7 +1077,7 @@ func dieOnErr(err error, msg string) {
 // proxycfgWriteLoop polls Raft state every 2 seconds and rewrites the proxyd config file
 // whenever it changes. proxyd watches the file and reloads; the orchestrator is not in the
 // data path for DNS or TCP forwarding.
-func proxycfgWriteLoop(ctx context.Context, peer *internraft.Peer, dataDir, nodeID, dataIP, dnsAddr string) {
+func proxycfgWriteLoop(ctx context.Context, peer *internraft.Peer, ag *agent.Agent, dataDir, nodeID, dataIP, dnsAddr string) {
 	var lastHash uint64
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -1017,7 +1091,8 @@ func proxycfgWriteLoop(ctx context.Context, peer *internraft.Peer, dataDir, node
 			if h == lastHash {
 				continue
 			}
-			if err := proxycfg.Write(dataDir, nodeID, dataIP, dnsAddr, state); err != nil {
+			meshEntries := proxycfg.BuildMeshEntries(ag.AllStates(), state)
+			if err := proxycfg.WriteWithMesh(dataDir, nodeID, dataIP, dnsAddr, state, meshEntries); err != nil {
 				slog.Warn("proxycfg write failed", "err", err)
 				continue
 			}
@@ -1183,6 +1258,248 @@ func reconcileIngressd(ctx context.Context, cfg config) {
 		HTTPSBind:    cfg.ingressdHTTPS,
 		ImageDigest:  cfg.ingressdImageDigest,
 	})
+}
+
+// ── meshrouterd reconciliation ───────────────────────────────────────────────
+
+type meshrouterdState struct {
+	ContainerID  string `json:"container_id"`
+	RegistryAddr string `json:"registry_addr"`
+	MeshAddr     string `json:"mesh_addr"`
+	MeshCIDR     string `json:"mesh_cidr"`
+	ListenPort   int    `json:"listen_port"`
+	ImageDigest  string `json:"image_digest"`
+	RlkPortID    int    `json:"rlk_port_id"` // rootlesskit port-mapping ID; 0 if not registered
+}
+
+func meshrouterdStatePath(dataDir string) string {
+	return filepath.Join(dataDir, "system", "meshrouterd.json")
+}
+
+func readMeshrouterdState(dataDir string) (meshrouterdState, bool) {
+	data, err := os.ReadFile(meshrouterdStatePath(dataDir))
+	if err != nil {
+		return meshrouterdState{}, false
+	}
+	var s meshrouterdState
+	if err := json.Unmarshal(data, &s); err != nil {
+		return meshrouterdState{}, false
+	}
+	return s, true
+}
+
+func writeMeshrouterdState(dataDir string, s meshrouterdState) error {
+	dir := filepath.Join(dataDir, "system")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(meshrouterdStatePath(dataDir), data, 0o600)
+}
+
+// reconcileMeshRouterLoop polls Raft state until the node gets a mesh address
+// assigned, then calls reconcileMeshRouter. Re-reconciles whenever the mesh
+// address, cluster CIDR, or embedded image digest changes.
+func reconcileMeshRouterLoop(ctx context.Context, peer *internraft.Peer, cfg config) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	var lastKey string
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, ok := peer.State().Nodes[cfg.nodeID]
+			if !ok || n.MeshAddr == "" {
+				continue
+			}
+			meshCIDR := peer.State().MeshCIDR
+			if meshCIDR == "" {
+				meshCIDR = "100.64.0.0/10"
+			}
+			key := n.MeshAddr + "\x00" + meshCIDR + "\x00" + cfg.meshrouterdImageDigest
+			if key == lastKey {
+				continue
+			}
+			reconcileMeshRouter(ctx, cfg, n.MeshAddr, meshCIDR)
+			lastKey = key
+		}
+	}
+}
+
+// reconcileMeshRouter ensures the meshrouterd container is running in the
+// RootlessKit network namespace. If it already exists with the same config it
+// is left untouched; if config or image changed it is replaced. After a
+// successful start the WireGuard UDP port is registered with rootlesskit so
+// inbound encrypted packets reach the container.
+func reconcileMeshRouter(ctx context.Context, cfg config, meshAddr, meshCIDR string) {
+	const name = "meshrouterd"
+	tag := cfg.meshrouterdImageTag
+	if tag == "" {
+		tag = "meshrouterd:latest"
+	}
+	image := cfg.registryAddr + "/" + tag
+
+	prev, hasPrev := readMeshrouterdState(cfg.dataDir)
+	stale := !hasPrev ||
+		prev.RegistryAddr != cfg.registryAddr ||
+		prev.MeshAddr != meshAddr ||
+		prev.MeshCIDR != meshCIDR ||
+		prev.ListenPort != cfg.meshListenPort ||
+		prev.ImageDigest != cfg.meshrouterdImageDigest
+
+	inspectOut, err := nerdctlCmd(ctx, cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr,
+		"inspect", "--format", "{{.State.Status}}", name).Output()
+	running := err == nil && strings.TrimSpace(string(inspectOut)) == "running"
+
+	if stale && running {
+		slog.Info("meshrouterd settings or image changed, replacing container",
+			"old_digest", prev.ImageDigest, "new_digest", cfg.meshrouterdImageDigest)
+		_ = nerdctlCmd(ctx, cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr, "stop", name).Run()
+		if prev.RlkPortID != 0 {
+			if err := rlkDeletePort(xdgRuntimeDir(), prev.RlkPortID); err != nil {
+				slog.Warn("rootlesskit port delete failed", "id", prev.RlkPortID, "err", err)
+			}
+		}
+		_ = nerdctlCmd(ctx, cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr, "rm", "-f", name).Run()
+		_ = nerdctlCmd(ctx, cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr, "rmi", "-f", image).Run()
+		running = false
+	}
+
+	if running {
+		slog.Info("meshrouterd already running, no action needed")
+		return
+	}
+
+	slog.Info("pulling meshrouterd image", "image", image)
+	if out, err := nerdctlCmd(ctx, cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr,
+		"pull", "--insecure-registry", image).CombinedOutput(); err != nil {
+		slog.Error("meshrouterd image pull failed", "err", err, "output", strings.TrimSpace(string(out)))
+		return
+	}
+
+	_ = os.MkdirAll(filepath.Join(cfg.dataDir, "mesh"), 0o700)
+
+	rlkNetnsPath := filepath.Join(xdgRuntimeDir(), "containerd-rootless", "netns")
+
+	args := []string{
+		"run", "-d", "--name", name,
+		"--restart", "always",
+		"--network", "ns:" + rlkNetnsPath,
+		"--cap-add", "NET_ADMIN",
+		"--device", "/dev/net/tun",
+		"--insecure-registry",
+		"-v", filepath.Join(cfg.dataDir, "mesh") + ":/data/mesh",
+		image,
+		"--mesh-addr", meshAddr,
+		"--mesh-cidr", meshCIDR,
+		"--listen-port", fmt.Sprintf("%d", cfg.meshListenPort),
+		"--private-key-file", "/data/mesh/private.key",
+		"--config", "/data/mesh/peers.conf",
+	}
+
+	out, err := nerdctlCmd(ctx, cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr, args...).CombinedOutput()
+	if err != nil {
+		slog.Error("meshrouterd container start failed", "err", err, "output", strings.TrimSpace(string(out)))
+		return
+	}
+	containerID := strings.TrimSpace(string(out))
+	slog.Info("meshrouterd container started", "id", containerID, "mesh_addr", meshAddr)
+
+	portID, err := rlkRegisterPort(xdgRuntimeDir(), cfg.meshListenPort)
+	if err != nil {
+		slog.Warn("rootlesskit UDP port registration failed — inbound WireGuard will not be forwarded",
+			"port", cfg.meshListenPort, "err", err)
+	} else {
+		slog.Info("rootlesskit UDP port registered", "port", cfg.meshListenPort, "rlk_id", portID)
+	}
+
+	_ = writeMeshrouterdState(cfg.dataDir, meshrouterdState{
+		ContainerID:  containerID,
+		RegistryAddr: cfg.registryAddr,
+		MeshAddr:     meshAddr,
+		MeshCIDR:     meshCIDR,
+		ListenPort:   cfg.meshListenPort,
+		ImageDigest:  cfg.meshrouterdImageDigest,
+		RlkPortID:    portID,
+	})
+}
+
+// xdgRuntimeDir returns $XDG_RUNTIME_DIR or falls back to /run/user/<uid>.
+func xdgRuntimeDir() string {
+	if v := os.Getenv("XDG_RUNTIME_DIR"); v != "" {
+		return v
+	}
+	return fmt.Sprintf("/run/user/%d", os.Getuid())
+}
+
+// rlkRegisterPort calls the rootlesskit port API to add a UDP forward from
+// parentPort on the host into the RootlessKit netns. Returns the port-mapping
+// ID that must be passed to rlkDeletePort to remove the forward.
+func rlkRegisterPort(rlkDir string, port int) (int, error) {
+	sockPath := filepath.Join(rlkDir, "containerd-rootless", "api.sock")
+	c := rlkHTTPClient(sockPath)
+
+	body, _ := json.Marshal(map[string]any{
+		"proto":      "udp",
+		"parentIP":   "",
+		"parentPort": port,
+		"childIP":    "",
+		"childPort":  port,
+	})
+	resp, err := c.Post("http://local/v1/ports", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return 0, fmt.Errorf("POST /v1/ports: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("POST /v1/ports: status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	var result struct {
+		ID int `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("decode response: %w", err)
+	}
+	return result.ID, nil
+}
+
+// rlkDeletePort removes a rootlesskit port forward by its ID.
+func rlkDeletePort(rlkDir string, portID int) error {
+	sockPath := filepath.Join(rlkDir, "containerd-rootless", "api.sock")
+	c := rlkHTTPClient(sockPath)
+
+	req, err := http.NewRequest(http.MethodDelete,
+		fmt.Sprintf("http://local/v1/ports/%d", portID), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return fmt.Errorf("DELETE /v1/ports/%d: %w", portID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("DELETE /v1/ports/%d: status %d: %s", portID, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return nil
+}
+
+// rlkHTTPClient returns an http.Client that dials the given Unix socket.
+// The "local" host in request URLs is a placeholder; the transport ignores it.
+func rlkHTTPClient(sockPath string) *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
+			},
+		},
+	}
 }
 
 // sanitizeImageTag coerces an arbitrary version string into a valid OCI tag:
