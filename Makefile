@@ -80,7 +80,7 @@ $(MESHROUTERD_IMAGE): $(MESHROUTERD_SRCS)
 	  --base scratch \
 	  --binary-dest /meshrouterd \
 	  --entrypoint /meshrouterd \
-	  --dirs data/mesh \
+	  --dirs data/mesh,etc \
 	  --tag meshrouterd:$(VERSION) \
 	  --output $(MESHROUTERD_IMAGE)
 	@echo "meshrouterd image saved to $(MESHROUTERD_IMAGE)"
