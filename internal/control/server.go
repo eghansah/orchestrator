@@ -366,6 +366,7 @@ func (s *Server) CreateIngress(_ context.Context, req *gen.CreateIngressRequest)
 		ID:            newID(),
 		Host:          req.Host,
 		PathPrefix:    req.PathPrefix,
+		StripPrefix:   req.StripPrefix,
 		ContainerFQDN: req.ContainerFqdn,
 		ContainerPort: req.ContainerPort,
 		CreatedAt:     time.Now(),

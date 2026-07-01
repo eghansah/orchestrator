@@ -379,7 +379,7 @@ func (d *daemon) generateHAProxyCfg(cfg ingresscfg.Config) string {
 		if prefix == "" {
 			prefix = "/"
 		}
-		if prefix != "/" {
+		if prefix != "/" && b.StripPrefix {
 			// Strip the prefix before forwarding so the app receives requests at its own root.
 			// ^/prefix/?(.*)$ → /\1 handles /prefix, /prefix/, and /prefix/anything.
 			fmt.Fprintf(&sb, "    http-request replace-path ^%s/?(.*)$ /\\1\n", rePathEscape(prefix))

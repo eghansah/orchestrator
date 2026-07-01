@@ -116,6 +116,7 @@ message CreateIngressRequest {
   string path_prefix    = 2; // URL path prefix; empty = "/"
   string container_fqdn = 3; // target container: "workload" or "service.workload"
   uint32 container_port = 4; // port the container listens on
+  bool   strip_prefix   = 5; // strip path_prefix before forwarding to backend
 }
 
 message CreateIngressResponse {

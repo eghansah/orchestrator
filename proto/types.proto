@@ -117,6 +117,7 @@ message IngressRule {
   uint32 container_port = 5; // port the container listens on
   uint32 system_port    = 6; // auto-assigned from ingress pool (43000–45767)
   int64  created_at     = 7; // unix seconds
+  bool   strip_prefix   = 8; // strip path_prefix before forwarding to backend
 }
 
 // ── Service discovery ─────────────────────────────────────────────────────────

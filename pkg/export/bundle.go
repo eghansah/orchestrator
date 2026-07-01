@@ -42,9 +42,10 @@ type DomainEntry struct {
 }
 
 type IngressEntry struct {
-	DomainName    string `yaml:"domain_name"`          // resolved to domain ID on import
+	DomainName    string `yaml:"domain_name"`               // resolved to domain ID on import
 	Host          string `yaml:"host,omitempty"`
 	PathPrefix    string `yaml:"path_prefix,omitempty"`
+	StripPrefix   bool   `yaml:"strip_prefix,omitempty"`
 	ContainerFQDN string `yaml:"container_fqdn"`
 	ContainerPort uint32 `yaml:"container_port"`
 }
@@ -119,6 +120,7 @@ func FromState(state internraft.ClusterState) Bundle {
 			DomainName:    domainNames[r.DomainID],
 			Host:          r.Host,
 			PathPrefix:    r.PathPrefix,
+			StripPrefix:   r.StripPrefix,
 			ContainerFQDN: r.ContainerFQDN,
 			ContainerPort: r.ContainerPort,
 		})

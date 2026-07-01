@@ -894,6 +894,7 @@ type IngressRule struct {
 	ContainerPort uint32                 `protobuf:"varint,5,opt,name=container_port,json=containerPort,proto3" json:"container_port,omitempty"` // port the container listens on
 	SystemPort    uint32                 `protobuf:"varint,6,opt,name=system_port,json=systemPort,proto3" json:"system_port,omitempty"`          // auto-assigned from ingress pool (43000–45767)
 	CreatedAt     int64                  `protobuf:"varint,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`             // unix seconds
+	StripPrefix   bool                   `protobuf:"varint,8,opt,name=strip_prefix,json=stripPrefix,proto3" json:"strip_prefix,omitempty"`       // strip path_prefix before forwarding to backend
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -975,6 +976,13 @@ func (x *IngressRule) GetCreatedAt() int64 {
 		return x.CreatedAt
 	}
 	return 0
+}
+
+func (x *IngressRule) GetStripPrefix() bool {
+	if x != nil {
+		return x.StripPrefix
+	}
+	return false
 }
 
 // Service exposes a named TCP endpoint for a container. The system auto-assigns
@@ -1514,7 +1522,7 @@ const file_types_proto_rawDesc = "" +
 	"\vmesh_subnet\x18\n" +
 	" \x01(\tR\n" +
 	"meshSubnet\x12\x1b\n" +
-	"\tmesh_addr\x18\v \x01(\tR\bmeshAddr\"\xe0\x01\n" +
+	"\tmesh_addr\x18\v \x01(\tR\bmeshAddr\"\x83\x02\n" +
 	"\vIngressRule\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04host\x18\x02 \x01(\tR\x04host\x12\x1f\n" +
@@ -1525,7 +1533,8 @@ const file_types_proto_rawDesc = "" +
 	"\vsystem_port\x18\x06 \x01(\rR\n" +
 	"systemPort\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\a \x01(\x03R\tcreatedAt\"\xbb\x01\n" +
+	"created_at\x18\a \x01(\x03R\tcreatedAt\x12!\n" +
+	"\fstrip_prefix\x18\b \x01(\bR\vstripPrefix\"\xbb\x01\n" +
 	"\aService\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12%\n" +

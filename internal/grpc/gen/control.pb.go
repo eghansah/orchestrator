@@ -536,6 +536,7 @@ type CreateIngressRequest struct {
 	PathPrefix    string                 `protobuf:"bytes,2,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`           // URL path prefix; empty = "/"
 	ContainerFqdn string                 `protobuf:"bytes,3,opt,name=container_fqdn,json=containerFqdn,proto3" json:"container_fqdn,omitempty"`  // target container: "workload" or "service.workload"
 	ContainerPort uint32                 `protobuf:"varint,4,opt,name=container_port,json=containerPort,proto3" json:"container_port,omitempty"` // port the container listens on
+	StripPrefix   bool                   `protobuf:"varint,5,opt,name=strip_prefix,json=stripPrefix,proto3" json:"strip_prefix,omitempty"`       // strip path_prefix before forwarding to backend
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -596,6 +597,13 @@ func (x *CreateIngressRequest) GetContainerPort() uint32 {
 		return x.ContainerPort
 	}
 	return 0
+}
+
+func (x *CreateIngressRequest) GetStripPrefix() bool {
+	if x != nil {
+		return x.StripPrefix
+	}
+	return false
 }
 
 type CreateIngressResponse struct {
@@ -1688,13 +1696,14 @@ const file_control_proto_rawDesc = "" +
 	"\x17GetClusterStateResponse\x12(\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x12.orchestrator.NodeR\x05nodes\x124\n" +
 	"\tworkloads\x18\x02 \x03(\v2\x16.orchestrator.WorkloadR\tworkloads\x12\x1b\n" +
-	"\tleader_id\x18\x03 \x01(\tR\bleaderId\"\x99\x01\n" +
+	"\tleader_id\x18\x03 \x01(\tR\bleaderId\"\xbc\x01\n" +
 	"\x14CreateIngressRequest\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x1f\n" +
 	"\vpath_prefix\x18\x02 \x01(\tR\n" +
 	"pathPrefix\x12%\n" +
 	"\x0econtainer_fqdn\x18\x03 \x01(\tR\rcontainerFqdn\x12%\n" +
-	"\x0econtainer_port\x18\x04 \x01(\rR\rcontainerPort\"\x85\x01\n" +
+	"\x0econtainer_port\x18\x04 \x01(\rR\rcontainerPort\x12!\n" +
+	"\fstrip_prefix\x18\x05 \x01(\bR\vstripPrefix\"\x85\x01\n" +
 	"\x15CreateIngressResponse\x12\x17\n" +
 	"\arule_id\x18\x01 \x01(\tR\x06ruleId\x12\x1a\n" +
 	"\baccepted\x18\x02 \x01(\bR\baccepted\x12\x16\n" +

@@ -13,13 +13,14 @@ import (
 // Backend describes one ingress route — the data ingressd needs to generate
 // an HAProxy frontend ACL + backend stanza.
 type Backend struct {
-	ID         string `json:"id"`           // ingress rule ID; used to name HAProxy objects
-	Host       string `json:"host"`         // virtual host to match; empty = catch-all
-	PathPrefix string `json:"path_prefix"`  // URL path prefix; empty treated as "/"
-	NodeDataIP string `json:"node_data_ip"` // data-plane IP of the node running the workload
-	SystemPort uint32 `json:"system_port"`  // proxyd-bound well-known port on that node
-	TLSCert    string `json:"tls_cert"`     // PEM cert chain; empty = HTTP-only backend
-	TLSKey     string `json:"tls_key"`      // PEM private key
+	ID          string `json:"id"`           // ingress rule ID; used to name HAProxy objects
+	Host        string `json:"host"`         // virtual host to match; empty = catch-all
+	PathPrefix  string `json:"path_prefix"`  // URL path prefix; empty treated as "/"
+	StripPrefix bool   `json:"strip_prefix"` // strip path prefix before forwarding
+	NodeDataIP  string `json:"node_data_ip"` // data-plane IP of the node running the workload
+	SystemPort  uint32 `json:"system_port"`  // proxyd-bound well-known port on that node
+	TLSCert     string `json:"tls_cert"`     // PEM cert chain; empty = HTTP-only backend
+	TLSKey      string `json:"tls_key"`      // PEM private key
 }
 
 // Config is the full contents of <dataDir>/ingress/config.json.
@@ -70,13 +71,14 @@ func Write(dataDir string, state internraft.ClusterState) error {
 		}
 
 		cfg.Backends = append(cfg.Backends, Backend{
-			ID:         rule.ID,
-			Host:       host,
-			PathPrefix: rule.PathPrefix,
-			NodeDataIP: node.DataIP,
-			SystemPort: rule.SystemPort,
-			TLSCert:    tlsCert,
-			TLSKey:     tlsKey,
+			ID:          rule.ID,
+			Host:        host,
+			PathPrefix:  rule.PathPrefix,
+			StripPrefix: rule.StripPrefix,
+			NodeDataIP:  node.DataIP,
+			SystemPort:  rule.SystemPort,
+			TLSCert:     tlsCert,
+			TLSKey:      tlsKey,
 		})
 	}
 

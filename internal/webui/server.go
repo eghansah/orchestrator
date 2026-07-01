@@ -731,6 +731,7 @@ type ingressRuleJSON struct {
 	DomainID      string `json:"domain_id"`
 	Host          string `json:"host"`
 	PathPrefix    string `json:"path_prefix"`
+	StripPrefix   bool   `json:"strip_prefix"`
 	ContainerFQDN string `json:"container_fqdn"`
 	ContainerPort uint32 `json:"container_port"`
 	SystemPort    uint32 `json:"system_port"`
@@ -746,6 +747,7 @@ func (s *Server) handleListIngress(w http.ResponseWriter, _ *http.Request) {
 			DomainID:      r.DomainID,
 			Host:          r.Host,
 			PathPrefix:    r.PathPrefix,
+			StripPrefix:   r.StripPrefix,
 			ContainerFQDN: r.ContainerFQDN,
 			ContainerPort: r.ContainerPort,
 			SystemPort:    r.SystemPort,
@@ -768,6 +770,7 @@ func (s *Server) handleCreateIngress(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DomainID      string `json:"domain_id"`
 		PathPrefix    string `json:"path_prefix"`
+		StripPrefix   bool   `json:"strip_prefix"`
 		ContainerFQDN string `json:"container_fqdn"`
 		ContainerPort uint32 `json:"container_port"`
 	}
@@ -806,6 +809,7 @@ func (s *Server) handleCreateIngress(w http.ResponseWriter, r *http.Request) {
 		DomainID:      domain.ID,
 		Host:          domain.Name,
 		PathPrefix:    req.PathPrefix,
+		StripPrefix:   req.StripPrefix,
 		ContainerFQDN: req.ContainerFQDN,
 		ContainerPort: req.ContainerPort,
 		CreatedAt:     time.Now(),
@@ -840,6 +844,7 @@ func (s *Server) handleUpdateIngress(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DomainID      string `json:"domain_id"`
 		PathPrefix    string `json:"path_prefix"`
+		StripPrefix   bool   `json:"strip_prefix"`
 		ContainerFQDN string `json:"container_fqdn"`
 		ContainerPort uint32 `json:"container_port"`
 	}
@@ -875,6 +880,7 @@ func (s *Server) handleUpdateIngress(w http.ResponseWriter, r *http.Request) {
 		DomainID:      domain.ID,
 		Host:          domain.Name,
 		PathPrefix:    req.PathPrefix,
+		StripPrefix:   req.StripPrefix,
 		ContainerFQDN: req.ContainerFQDN,
 		ContainerPort: req.ContainerPort,
 		SystemPort:    existing.SystemPort,
@@ -889,6 +895,7 @@ func (s *Server) handleUpdateIngress(w http.ResponseWriter, r *http.Request) {
 		"domain_id":      updated.DomainID,
 		"host":           updated.Host,
 		"path_prefix":    updated.PathPrefix,
+		"strip_prefix":   updated.StripPrefix,
 		"container_fqdn": updated.ContainerFQDN,
 		"container_port": updated.ContainerPort,
 		"system_port":    updated.SystemPort,
@@ -2896,6 +2903,7 @@ func (s *Server) applyBundle(ctx context.Context, b *export.Bundle, overwrite bo
 			DomainID:      domainID,
 			Host:          host,
 			PathPrefix:    ie.PathPrefix,
+			StripPrefix:   ie.StripPrefix,
 			ContainerFQDN: ie.ContainerFQDN,
 			ContainerPort: ie.ContainerPort,
 			CreatedAt:     time.Now(),

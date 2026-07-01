@@ -143,6 +143,7 @@ type IngressRule struct {
 	DomainID      string // required; host is derived from the linked Domain
 	Host          string // matched against Host header; empty = match all
 	PathPrefix    string // matched against URL path prefix; empty = "/"
+	StripPrefix   bool   // strip PathPrefix before forwarding to the backend
 	ContainerFQDN string // target container: "workload" or "service.workload"
 	ContainerPort uint32 // port the container listens on
 	SystemPort    uint32 // auto-assigned from ingress port pool (43000–45767)
