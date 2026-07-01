@@ -1,4 +1,4 @@
-VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION   := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS   := -s -w -extldflags '-static' -X main.version=$(VERSION)
 DIST      := dist
 PLATFORMS := linux/amd64 linux/arm64
