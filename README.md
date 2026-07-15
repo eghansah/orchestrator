@@ -58,7 +58,7 @@ export ORCHESTRATOR_TOKEN=$(cat ~/.local/share/orchestrator/admin-token)
 
 ## Multi-node cluster
 
-See **[docs/deploy.md](docs/deploy.md)** for a full step-by-step guide.
+See **[docs/deploy.md](docs/deploy.md)** for a full step-by-step guide. For nodes with no internet access at all, see **[docs/install.md](docs/install.md)** instead.
 
 ## CLI quick reference
 
@@ -87,6 +87,7 @@ ctl service list
 | Document | Contents |
 |---|---|
 | [docs/deploy.md](docs/deploy.md) | Step-by-step cluster deployment including proxyd and ingressd |
+| [docs/install.md](docs/install.md) | Air-gapped install: build an offline bundle, run install.sh on nodes with no internet access |
 | [docs/production.md](docs/production.md) | Full flag reference, security, operations playbook, troubleshooting |
 
 ## Requirements

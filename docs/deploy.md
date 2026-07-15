@@ -14,8 +14,7 @@ Requires Linux kernel ≥ 5.11 with cgroup v2 and user namespace delegation enab
 
 ```bash
 # cgroup v2
-stat -f -c '%T' /sys/fs/cgroup
-# → tmpfs means v2 is active
+test -f /sys/fs/cgroup/cgroup.controllers && echo "cgroup v2 active"
 
 # User namespace delegation (Fedora/RHEL — path may differ on Ubuntu)
 cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/cgroup.controllers

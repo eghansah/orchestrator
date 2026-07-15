@@ -14,7 +14,7 @@
 //	# meshrouterd (scratch base)
 //	build-image --binary dist/meshrouterd --base scratch \
 //	  --binary-dest /meshrouterd --entrypoint /meshrouterd \
-//	  --dirs data/mesh --tag meshrouterd:v1.0.0 \
+//	  --dirs data/mesh,etc --files etc/passwd,etc/group --tag meshrouterd:v1.0.0 \
 //	  --output internal/localregistry/images/meshrouterd.tar
 package main
 
@@ -45,6 +45,7 @@ func main() {
 		binaryDest  = flag.String("binary-dest", "", "destination path inside the image (default: /usr/local/bin/<basename>)")
 		baseImage   = flag.String("base", "scratch", `base image reference, or "scratch" for an empty image`)
 		extraDirs   = flag.String("dirs", "", "comma-separated directories to pre-create in the layer (e.g. data/mesh,data/ingress/certs)")
+		extraFiles  = flag.String("files", "", "comma-separated empty regular files to pre-create in the layer (e.g. etc/passwd,etc/group) — needed as bind-mount targets in scratch images")
 		outputPath  = flag.String("output", "", "output tarball path (required)")
 		platform    = flag.String("platform", "linux/amd64", "target platform (os/arch)")
 		imageTag    = flag.String("tag", "", "image tag written into manifest.json (required)")
@@ -106,7 +107,16 @@ func main() {
 			}
 		}
 	}
-	layer, err := binaryLayer(*binaryPath, dest, dirs)
+	var files []string
+	if *extraFiles != "" {
+		for _, f := range strings.Split(*extraFiles, ",") {
+			f = strings.TrimSpace(f)
+			if f != "" {
+				files = append(files, f)
+			}
+		}
+	}
+	layer, err := binaryLayer(*binaryPath, dest, dirs, files)
 	if err != nil {
 		log.Fatalf("create layer: %v", err)
 	}
@@ -162,9 +172,12 @@ func main() {
 	log.Printf("done")
 }
 
-// binaryLayer returns a v1.Layer containing the binary at destPath and any
-// parent dirs needed, plus the extra pre-created directories from extraDirs.
-func binaryLayer(binaryPath, destPath string, extraDirs []string) (v1.Layer, error) {
+// binaryLayer returns a v1.Layer containing the binary at destPath, any
+// parent dirs needed, the extra pre-created directories from extraDirs, and
+// empty regular files from extraFiles (e.g. etc/passwd) — container runtimes
+// bind-mount over paths like /etc/passwd and /etc/hosts and expect the target
+// to already exist as a file, not just its parent directory.
+func binaryLayer(binaryPath, destPath string, extraDirs, extraFiles []string) (v1.Layer, error) {
 	data, err := os.ReadFile(binaryPath)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", binaryPath, err)
@@ -196,6 +209,14 @@ func binaryLayer(binaryPath, destPath string, extraDirs []string) (v1.Layer, err
 				}
 			}
 		}
+		for _, f := range extraFiles {
+			for _, seg := range parentDirs("/" + strings.TrimPrefix(f, "/")) {
+				if !seen[seg] {
+					seen[seg] = true
+					allDirs = append(allDirs, seg)
+				}
+			}
+		}
 		for _, d := range allDirs {
 			if err := tw.WriteHeader(&tar.Header{
 				Typeflag: tar.TypeDir,
@@ -203,6 +224,15 @@ func binaryLayer(binaryPath, destPath string, extraDirs []string) (v1.Layer, err
 				Mode:     0o755,
 			}); err != nil {
 				return nil, fmt.Errorf("write dir header %s: %w", d, err)
+			}
+		}
+		for _, f := range extraFiles {
+			if err := tw.WriteHeader(&tar.Header{
+				Typeflag: tar.TypeReg,
+				Name:     strings.TrimPrefix(f, "/"),
+				Mode:     0o644,
+			}); err != nil {
+				return nil, fmt.Errorf("write file header %s: %w", f, err)
 			}
 		}
 
