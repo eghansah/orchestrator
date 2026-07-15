@@ -409,7 +409,6 @@ type OpenBaoConfig struct {
 	Address            string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`                                                    // e.g. "https://bao.example.com:8200"
 	Token              string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`                                                        // service token
 	Mount              string                 `protobuf:"bytes,3,opt,name=mount,proto3" json:"mount,omitempty"`                                                        // KV v2 mount path (default "secret")
-	CaCert             string                 `protobuf:"bytes,4,opt,name=ca_cert,json=caCert,proto3" json:"ca_cert,omitempty"`                                        // optional PEM CA bundle to trust, for certs signed by an internal CA
 	InsecureSkipVerify bool                   `protobuf:"varint,5,opt,name=insecure_skip_verify,json=insecureSkipVerify,proto3" json:"insecure_skip_verify,omitempty"` // skip TLS certificate verification entirely (testing only)
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
@@ -462,13 +461,6 @@ func (x *OpenBaoConfig) GetToken() string {
 func (x *OpenBaoConfig) GetMount() string {
 	if x != nil {
 		return x.Mount
-	}
-	return ""
-}
-
-func (x *OpenBaoConfig) GetCaCert() string {
-	if x != nil {
-		return x.CaCert
 	}
 	return ""
 }
@@ -1512,13 +1504,12 @@ const file_types_proto_rawDesc = "" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
 	"created_at\x18\x03 \x01(\x03R\tcreatedAt\x12\x19\n" +
-	"\bbao_path\x18\x04 \x01(\tR\abaoPath\"\xa0\x01\n" +
+	"\bbao_path\x18\x04 \x01(\tR\abaoPath\"\x96\x01\n" +
 	"\rOpenBaoConfig\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12\x14\n" +
-	"\x05mount\x18\x03 \x01(\tR\x05mount\x12\x17\n" +
-	"\aca_cert\x18\x04 \x01(\tR\x06caCert\x120\n" +
-	"\x14insecure_skip_verify\x18\x05 \x01(\bR\x12insecureSkipVerify\"m\n" +
+	"\x05mount\x18\x03 \x01(\tR\x05mount\x120\n" +
+	"\x14insecure_skip_verify\x18\x05 \x01(\bR\x12insecureSkipVerifyJ\x04\b\x04\x10\x05R\aca_cert\"m\n" +
 	"\vPortMapping\x12\x1b\n" +
 	"\thost_port\x18\x01 \x01(\rR\bhostPort\x12%\n" +
 	"\x0econtainer_port\x18\x02 \x01(\rR\rcontainerPort\x12\x1a\n" +

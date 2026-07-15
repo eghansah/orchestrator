@@ -1,6 +1,12 @@
 package types
 
-import "time"
+import (
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"strings"
+	"time"
+)
 
 type WorkloadPhase int32
 
@@ -203,8 +209,67 @@ type OpenBaoConfig struct {
 	Address            string // e.g. "https://bao.example.com:8200"
 	Token              string // service token scoped to KV read/write on <mount>/data/orchestrator/*
 	Mount              string // KV v2 mount path; defaults to "secret" when empty
-	CACert             string // optional PEM CA bundle to trust, for certs signed by an internal CA
 	InsecureSkipVerify bool   // skip TLS certificate verification entirely (testing only)
+}
+
+// TrustedCA is a cluster-wide CA certificate that can be used to verify TLS
+// connections to internally-signed services. Each entry holds exactly one CA
+// certificate (add multiple entries for multiple CAs) and is scoped by the
+// two Applies flags to one or both consumers: the OpenBao connection and/or
+// container/compose registry image pulls.
+type TrustedCA struct {
+	ID                  string
+	Label               string // display name, e.g. "Internal Corp CA"
+	PEM                 string // a single CA certificate in PEM format
+	AppliesToOpenBao    bool   // trust this CA when verifying the OpenBao connection
+	AppliesToRegistries bool   // trust this CA when verifying container/compose image registries
+	CreatedAt           time.Time
+}
+
+// ParseCert decodes the CA's PEM block and parses it as an X.509 certificate.
+func (ca TrustedCA) ParseCert() (*x509.Certificate, error) {
+	block, _ := pem.Decode([]byte(ca.PEM))
+	if block == nil {
+		return nil, errors.New("no PEM block found")
+	}
+	return x509.ParseCertificate(block.Bytes)
+}
+
+// Expired reports whether the CA certificate is outside its validity window,
+// or can't be parsed at all (treated as untrusted rather than silently used).
+func (ca TrustedCA) Expired() bool {
+	cert, err := ca.ParseCert()
+	if err != nil {
+		return true
+	}
+	now := time.Now()
+	return now.Before(cert.NotBefore) || now.After(cert.NotAfter)
+}
+
+// OpenBaoTrustBundle concatenates the PEM of every non-expired CA flagged
+// AppliesToOpenBao, for use as the RootCAs pool verifying the OpenBao
+// connection.
+func OpenBaoTrustBundle(cas map[string]TrustedCA) string {
+	return trustBundle(cas, func(c TrustedCA) bool { return c.AppliesToOpenBao })
+}
+
+// RegistryTrustBundle concatenates the PEM of every non-expired CA flagged
+// AppliesToRegistries, for use when verifying container/compose image
+// registries.
+func RegistryTrustBundle(cas map[string]TrustedCA) string {
+	return trustBundle(cas, func(c TrustedCA) bool { return c.AppliesToRegistries })
+}
+
+func trustBundle(cas map[string]TrustedCA, match func(TrustedCA) bool) string {
+	var sb strings.Builder
+	for _, c := range cas {
+		if !match(c) || c.Expired() {
+			continue
+		}
+		sb.WriteString(c.PEM)
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
 
 // WorkloadTemplate is a saved workload definition that can be redeployed.

@@ -16,6 +16,8 @@ import (
 	"sync"
 	"syscall"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/eghansah/orchestrator/pkg/types"
 )
 
@@ -247,19 +249,33 @@ func (c *Client) Probe(ctx context.Context) error {
 // pre-flight check uses the right socket instead of the hardcoded containerd-rootless path.
 // stderr is merged into the error message verbatim.
 func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
-	return c.runInsecure(ctx, false, args...)
+	return c.exec(ctx, false, "", args...)
 }
 
 // runInsecure is like run but, when insecure is true, passes --insecure-registry
 // ahead of the subcommand so nerdctl will pull from plain-HTTP or self-signed
 // registries. That flag is global to nerdctl and must precede the subcommand.
 func (c *Client) runInsecure(ctx context.Context, insecure bool, args ...string) ([]byte, error) {
+	return c.exec(ctx, insecure, "", args...)
+}
+
+// exec is the shared nerdctl invocation path. insecure passes --insecure-registry.
+// hostsDir, when non-empty, passes --hosts-dir so nerdctl verifies registry TLS
+// certs against the CA files materialized there (see materializeRegistryCA),
+// instead of skipping verification entirely. nerdctl replaces its own default
+// hosts-dir search path once --hosts-dir is passed at all, so the defaults are
+// re-supplied alongside ours to avoid regressing any operator-managed trust
+// configured outside the orchestrator.
+func (c *Client) exec(ctx context.Context, insecure bool, hostsDir string, args ...string) ([]byte, error) {
 	global := []string{"--namespace", c.namespace}
 	if c.address != "" {
 		global = append(global, "--address", c.address)
 	}
 	if insecure {
 		global = append(global, "--insecure-registry")
+	}
+	if hostsDir != "" {
+		global = append(global, "--hosts-dir", hostsDir+","+defaultHostsDirs())
 	}
 	full := append(global, args...)
 	cmd := exec.CommandContext(ctx, c.binary, full...)
@@ -272,6 +288,18 @@ func (c *Client) runInsecure(ctx context.Context, insecure bool, args ...string)
 		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return out, nil
+}
+
+// defaultHostsDirs mirrors nerdctl's own default --hosts-dir search path
+// (~/.config/containerd/certs.d, ~/.config/docker/certs.d), so callers that
+// explicitly pass --hosts-dir don't lose nerdctl's usual fallback locations.
+func defaultHostsDirs() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".config", "containerd", "certs.d") + "," +
+		filepath.Join(home, ".config", "docker", "certs.d")
 }
 
 // runStdout is like run but captures stdout and stderr separately so that
@@ -305,6 +333,13 @@ func (c *Client) Pull(ctx context.Context, image string, insecure bool) error {
 // registry (127.0.0.1:* or localhost:*). Such registries require --insecure-registry
 // because they are served over plain HTTP without TLS.
 func isLocalhostImage(image string) bool {
+	return isIPOrLocalhost(registryHost(image))
+}
+
+// registryHost extracts the "host[:port]" prefix of an image reference, or ""
+// when the image has no explicit registry (e.g. "nginx:latest", pulled from
+// the default registry, which needs no custom CA trust).
+func registryHost(image string) string {
 	// Strip tag or digest.
 	ref := image
 	if i := strings.Index(ref, "@"); i >= 0 {
@@ -316,7 +351,18 @@ func isLocalhostImage(image string) bool {
 			ref = ref[:i]
 		}
 	}
-	return isIPOrLocalhost(ref)
+	// ref is now "host[:port]/repo..." or just "repo..." (no explicit registry).
+	if i := strings.Index(ref, "/"); i >= 0 {
+		host := ref[:i]
+		// A bare repo path segment (no '.', ':', or "localhost") isn't a registry
+		// host — e.g. "library/nginx" — so only treat it as one if it looks like
+		// a hostname.
+		if strings.ContainsAny(host, ".:") || host == "localhost" {
+			return host
+		}
+		return ""
+	}
+	return ""
 }
 
 func isIPOrLocalhost(host string) bool {
@@ -325,10 +371,64 @@ func isIPOrLocalhost(host string) bool {
 		host == "::1"
 }
 
+// composeImageHosts parses a compose YAML's services for their image
+// references and returns the distinct, non-empty registry hosts referenced.
+func composeImageHosts(composeYAML string) []string {
+	var doc struct {
+		Services map[string]struct {
+			Image string `yaml:"image"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(composeYAML), &doc); err != nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var hosts []string
+	for _, svc := range doc.Services {
+		host := registryHost(svc.Image)
+		if host == "" || seen[host] {
+			continue
+		}
+		seen[host] = true
+		hosts = append(hosts, host)
+	}
+	return hosts
+}
+
+// materializeRegistryCA writes pemBundle as the docker-style CA trust file
+// (<host>/ca.crt) nerdctl's --hosts-dir mechanism expects, for each host, so
+// registries signed by an internal CA can be verified without touching any
+// host-level containerd/docker config. Returns the hosts-dir root to pass to
+// --hosts-dir, or "" if there's nothing to materialize.
+//
+// The file must be named "*.crt", not "*.cert" — containerd's docker-style
+// hosts-dir loader treats "*.cert" as a client certificate (paired with a
+// matching "*.key" for mTLS) and only "*.crt" as a CA certificate; confirmed
+// against the installed nerdctl (v2.3.1), which contradicts its own --help text.
+func (c *Client) materializeRegistryCA(hosts []string, pemBundle string) (string, error) {
+	if pemBundle == "" || len(hosts) == 0 {
+		return "", nil
+	}
+	root := filepath.Join(c.dataDir, "registry-certs")
+	for _, host := range hosts {
+		if host == "" {
+			continue
+		}
+		hostDir := filepath.Join(root, host)
+		if err := os.MkdirAll(hostDir, 0o700); err != nil {
+			return "", fmt.Errorf("create registry cert dir for %s: %w", host, err)
+		}
+		if err := os.WriteFile(filepath.Join(hostDir, "ca.crt"), []byte(pemBundle), 0o600); err != nil {
+			return "", fmt.Errorf("write registry CA for %s: %w", host, err)
+		}
+	}
+	return root, nil
+}
+
 // RunContainer starts a detached container from the given spec, tagged with workloadID.
 // portAllocations maps container ports to auto-assigned host ports, always bound on
 // 127.0.0.1 so containers are only reachable via the ingress proxy.
-func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types.ContainerSpec, portAllocations []types.PortAllocation) error {
+func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types.ContainerSpec, portAllocations []types.PortAllocation, registryCABundle string) error {
 	if err := validateName(spec.Name); err != nil {
 		return err
 	}
@@ -342,8 +442,18 @@ func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types
 	args := buildRunArgs(workloadID, spec, portAllocations, c.dnsIP, c.dnsPort, c.meshNet())
 	insecure := spec.InsecureRegistry || isLocalhostImage(spec.Image)
 
+	hostsDir := ""
+	if host := registryHost(spec.Image); host != "" {
+		dir, err := c.materializeRegistryCA([]string{host}, registryCABundle)
+		if err != nil {
+			slog.Error("nerdctl: materialize registry CA failed", "host", host, "err", err)
+		} else {
+			hostsDir = dir
+		}
+	}
+
 	slog.Info("nerdctl: running container", "cmd", append([]string{c.binary}, args...))
-	_, err := c.runInsecure(ctx, insecure, args...)
+	_, err := c.exec(ctx, insecure, hostsDir, args...)
 	if err != nil {
 		slog.Error("nerdctl: run container failed", "name", spec.Name, "err", err)
 	}
@@ -540,7 +650,7 @@ func (c *Client) composeDir(stackName string) (string, error) {
 // If spec.ResolvedEnv is non-empty (secrets resolved at placement time), a
 // .env file is written alongside the compose file so nerdctl compose picks
 // them up automatically.
-func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStackSpec, portAllocations []types.PortAllocation) error {
+func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStackSpec, portAllocations []types.PortAllocation, registryCABundle string) error {
 	if err := validateName(spec.Name); err != nil {
 		return err
 	}
@@ -570,7 +680,16 @@ func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStac
 			return fmt.Errorf("write env file: %w", err)
 		}
 	}
-	_, err = c.runInsecure(ctx, spec.InsecureRegistry, "compose", "-f", composeFile, "--project-name", spec.Name, "up", "-d")
+	hostsDir := ""
+	if hosts := composeImageHosts(spec.ComposeYAML); len(hosts) > 0 {
+		dir, err := c.materializeRegistryCA(hosts, registryCABundle)
+		if err != nil {
+			slog.Error("nerdctl: materialize registry CA failed", "hosts", hosts, "err", err)
+		} else {
+			hostsDir = dir
+		}
+	}
+	_, err = c.exec(ctx, spec.InsecureRegistry, hostsDir, "compose", "-f", composeFile, "--project-name", spec.Name, "up", "-d")
 	return err
 }
 

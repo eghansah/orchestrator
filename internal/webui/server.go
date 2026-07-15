@@ -207,6 +207,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/secrets/{id}/delete", a(s.handleDeleteSecret))
 	mux.Handle("GET /api/openbao/status", a(s.handleOpenBaoStatus))
 	mux.Handle("POST /api/openbao/config", a(s.handleSetOpenBaoConfig))
+	mux.Handle("GET /api/trusted-cas", a(s.handleListTrustedCAs))
+	mux.Handle("POST /api/trusted-cas", a(s.handleCreateTrustedCA))
+	mux.Handle("POST /api/trusted-cas/{id}/update", a(s.handleUpdateTrustedCA))
+	mux.Handle("POST /api/trusted-cas/{id}/delete", a(s.handleDeleteTrustedCA))
 	mux.Handle("POST /api/admin/compact", a(s.handleAdminCompact))
 	mux.Handle("GET /api/export", a(s.handleExport))
 	mux.Handle("POST /api/import", a(s.handleImport))
@@ -463,6 +467,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		ContainerStats   []containerStatsJSON `json:"container_stats"`
 		Registries       []registryJSON       `json:"registries"`
 		Secrets          []secretJSON         `json:"secrets"`
+		TrustedCAs       []trustedCAJSON      `json:"trusted_cas"`
 	}
 
 	allStates := s.agent.AllStates()
@@ -478,6 +483,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		ContainerStats:   []containerStatsJSON{},
 		Registries:       []registryJSON{},
 		Secrets:          []secretJSON{},
+		TrustedCAs:       []trustedCAJSON{},
 	}
 
 	for _, n := range state.Nodes {
@@ -571,6 +577,10 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		out.Secrets = append(out.Secrets, secretJSON{ID: sec.ID, Name: sec.Name, CreatedAt: sec.CreatedAt.Unix()})
 	}
 
+	for _, ca := range state.TrustedCAs {
+		out.TrustedCAs = append(out.TrustedCAs, trustedCAToJSON(ca))
+	}
+
 	// The slices above are built by ranging over Go maps, whose iteration
 	// order is randomized per request. Sort by a stable key so the web UI
 	// (which polls every few seconds) doesn't reshuffle rows on each refresh.
@@ -581,6 +591,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(out.ContainerStats, func(i, j int) bool { return out.ContainerStats[i].Name < out.ContainerStats[j].Name })
 	sort.Slice(out.Registries, func(i, j int) bool { return out.Registries[i].Name < out.Registries[j].Name })
 	sort.Slice(out.Secrets, func(i, j int) bool { return out.Secrets[i].Name < out.Secrets[j].Name })
+	sort.Slice(out.TrustedCAs, func(i, j int) bool { return out.TrustedCAs[i].Label < out.TrustedCAs[j].Label })
 
 	writeJSON(w, out)
 }
@@ -2543,7 +2554,8 @@ func (s *Server) openBaoClient() (*baoclient.Client, error) {
 	if cfg == nil || cfg.Address == "" {
 		return nil, fmt.Errorf("OpenBao is not configured — add connection details on the Secrets page")
 	}
-	return baoclient.New(cfg.Address, cfg.Token, cfg.Mount, cfg.CACert, cfg.InsecureSkipVerify), nil
+	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
+	return baoclient.New(cfg.Address, cfg.Token, cfg.Mount, caBundle, cfg.InsecureSkipVerify), nil
 }
 
 // ── OpenBao API handlers ───────────────────────────────────────────────────────
@@ -2552,7 +2564,6 @@ type openBaoStatusJSON struct {
 	Configured         bool   `json:"configured"`
 	Address            string `json:"address,omitempty"`
 	Mount              string `json:"mount,omitempty"`
-	CACert             string `json:"caCert,omitempty"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
 	Connected          bool   `json:"connected"`
 	Error              string `json:"error,omitempty"`
@@ -2568,10 +2579,10 @@ func (s *Server) handleOpenBaoStatus(w http.ResponseWriter, r *http.Request) {
 		Configured:         true,
 		Address:            cfg.Address,
 		Mount:              cfg.Mount,
-		CACert:             cfg.CACert,
 		InsecureSkipVerify: cfg.InsecureSkipVerify,
 	}
-	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount, cfg.CACert, cfg.InsecureSkipVerify)
+	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
+	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount, caBundle, cfg.InsecureSkipVerify)
 	if err := bao.Health(r.Context()); err != nil {
 		out.Error = err.Error()
 	} else {
@@ -2585,7 +2596,6 @@ func (s *Server) handleSetOpenBaoConfig(w http.ResponseWriter, r *http.Request) 
 		Address            string `json:"address"`
 		Token              string `json:"token"`
 		Mount              string `json:"mount"`
-		CACert             string `json:"caCert"`
 		InsecureSkipVerify bool   `json:"insecureSkipVerify"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2596,7 +2606,8 @@ func (s *Server) handleSetOpenBaoConfig(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "address is required")
 		return
 	}
-	bao := baoclient.New(req.Address, req.Token, req.Mount, req.CACert, req.InsecureSkipVerify)
+	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
+	bao := baoclient.New(req.Address, req.Token, req.Mount, caBundle, req.InsecureSkipVerify)
 	if err := bao.Health(r.Context()); err != nil {
 		writeError(w, http.StatusBadGateway, "health check failed: "+err.Error())
 		return
@@ -2605,10 +2616,149 @@ func (s *Server) handleSetOpenBaoConfig(w http.ResponseWriter, r *http.Request) 
 		Address:            req.Address,
 		Token:              req.Token,
 		Mount:              req.Mount,
-		CACert:             req.CACert,
 		InsecureSkipVerify: req.InsecureSkipVerify,
 	}
 	if err := s.peer.SetOpenBaoConfig(cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"accepted": true})
+}
+
+// ── Trusted CA API handlers ────────────────────────────────────────────────────
+
+type trustedCAJSON struct {
+	ID                  string `json:"id"`
+	Label               string `json:"label"`
+	PEM                 string `json:"pem"`
+	AppliesToOpenBao    bool   `json:"appliesToOpenBao"`
+	AppliesToRegistries bool   `json:"appliesToRegistries"`
+	NotAfter            int64  `json:"notAfter,omitempty"`
+	Expired             bool   `json:"expired"`
+	CreatedAt           int64  `json:"createdAt"`
+}
+
+func trustedCAToJSON(ca types.TrustedCA) trustedCAJSON {
+	out := trustedCAJSON{
+		ID:                  ca.ID,
+		Label:               ca.Label,
+		PEM:                 ca.PEM,
+		AppliesToOpenBao:    ca.AppliesToOpenBao,
+		AppliesToRegistries: ca.AppliesToRegistries,
+		Expired:             ca.Expired(),
+		CreatedAt:           ca.CreatedAt.Unix(),
+	}
+	if cert, err := ca.ParseCert(); err == nil {
+		out.NotAfter = cert.NotAfter.Unix()
+	}
+	return out
+}
+
+func newTrustedCAID() string {
+	b := make([]byte, 8)
+	_, _ = crand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
+
+func (s *Server) handleListTrustedCAs(w http.ResponseWriter, _ *http.Request) {
+	state := s.peer.State()
+	out := make([]trustedCAJSON, 0, len(state.TrustedCAs))
+	for _, ca := range state.TrustedCAs {
+		out = append(out, trustedCAToJSON(ca))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Label != out[j].Label {
+			return out[i].Label < out[j].Label
+		}
+		return out[i].ID < out[j].ID
+	})
+	writeJSON(w, out)
+}
+
+func (s *Server) handleCreateTrustedCA(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Label               string `json:"label"`
+		PEM                 string `json:"pem"`
+		AppliesToOpenBao    bool   `json:"appliesToOpenBao"`
+		AppliesToRegistries bool   `json:"appliesToRegistries"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Label == "" || req.PEM == "" {
+		writeError(w, http.StatusBadRequest, "label and pem are required")
+		return
+	}
+	ca := types.TrustedCA{
+		ID:                  newTrustedCAID(),
+		Label:               req.Label,
+		PEM:                 req.PEM,
+		AppliesToOpenBao:    req.AppliesToOpenBao,
+		AppliesToRegistries: req.AppliesToRegistries,
+		CreatedAt:           time.Now().UTC(),
+	}
+	if _, err := ca.ParseCert(); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid PEM certificate: "+err.Error())
+		return
+	}
+	if err := s.peer.ApplyTrustedCA(ca); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, trustedCAToJSON(ca))
+}
+
+func (s *Server) handleUpdateTrustedCA(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Label               string `json:"label"`
+		PEM                 string `json:"pem"`
+		AppliesToOpenBao    bool   `json:"appliesToOpenBao"`
+		AppliesToRegistries bool   `json:"appliesToRegistries"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	state := s.peer.State()
+	existing, ok := state.TrustedCAs[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "trusted CA not found")
+		return
+	}
+
+	updated := types.TrustedCA{
+		ID:                  existing.ID,
+		Label:               existing.Label,
+		PEM:                 existing.PEM,
+		AppliesToOpenBao:    req.AppliesToOpenBao,
+		AppliesToRegistries: req.AppliesToRegistries,
+		CreatedAt:           existing.CreatedAt,
+	}
+	if req.Label != "" {
+		updated.Label = req.Label
+	}
+	// Only replace the certificate if a new one is provided; blank keeps the existing one.
+	if req.PEM != "" {
+		updated.PEM = req.PEM
+	}
+	if _, err := updated.ParseCert(); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid PEM certificate: "+err.Error())
+		return
+	}
+
+	if err := s.peer.ApplyTrustedCA(updated); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, trustedCAToJSON(updated))
+}
+
+func (s *Server) handleDeleteTrustedCA(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.peer.RemoveTrustedCA(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

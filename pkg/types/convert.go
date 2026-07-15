@@ -151,7 +151,6 @@ func OpenBaoConfigToProto(c OpenBaoConfig) *gen.OpenBaoConfig {
 		Address:            c.Address,
 		Token:              c.Token,
 		Mount:              c.Mount,
-		CaCert:             c.CACert,
 		InsecureSkipVerify: c.InsecureSkipVerify,
 	}
 }
@@ -164,7 +163,6 @@ func OpenBaoConfigFromProto(p *gen.OpenBaoConfig) OpenBaoConfig {
 		Address:            p.Address,
 		Token:              p.Token,
 		Mount:              p.Mount,
-		CACert:             p.CaCert,
 		InsecureSkipVerify: p.InsecureSkipVerify,
 	}
 }

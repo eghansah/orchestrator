@@ -269,6 +269,7 @@ func main() {
 	stateCh := make(chan types.ActualWorkloadState, 4)
 	ag := agent.New(nc, agent.Config{
 		NodeID:       cfg.nodeID,
+		Peer:         peer,
 		StateUpdates: stateCh,
 	})
 

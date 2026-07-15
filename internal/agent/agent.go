@@ -9,6 +9,7 @@ import (
 
 	gen "github.com/eghansah/orchestrator/internal/grpc/gen"
 	"github.com/eghansah/orchestrator/internal/nerdctl"
+	internraft "github.com/eghansah/orchestrator/internal/raft"
 	"github.com/eghansah/orchestrator/pkg/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,6 +21,9 @@ const defaultPollInterval = 15 * time.Second
 type Config struct {
 	NodeID       string
 	PollInterval time.Duration
+	// Peer gives the agent read access to local Raft state (e.g. trusted CA
+	// certificates), which is already replicated to every node.
+	Peer *internraft.Peer
 	// StateUpdates receives a fresh ActualWorkloadState after every poll cycle.
 	// Send is non-blocking; slow consumers lose updates.
 	StateUpdates chan<- types.ActualWorkloadState
@@ -32,6 +36,7 @@ type Agent struct {
 
 	id           string
 	nc           *nerdctl.Client
+	peer         *internraft.Peer
 	pollInterval time.Duration
 
 	mu        sync.RWMutex
@@ -49,6 +54,7 @@ func New(nc *nerdctl.Client, cfg Config) *Agent {
 	return &Agent{
 		id:           cfg.NodeID,
 		nc:           nc,
+		peer:         cfg.Peer,
 		pollInterval: interval,
 		states:       make(map[string]types.ActualWorkloadState),
 		workloads:    make(map[string]types.Workload),
@@ -222,18 +228,23 @@ func (a *Agent) PlaceWorkload(ctx context.Context, req *gen.PlaceWorkloadRequest
 	}
 	wl := types.WorkloadFromProto(req.Workload)
 
+	var registryCABundle string
+	if a.peer != nil {
+		registryCABundle = types.RegistryTrustBundle(a.peer.State().TrustedCAs)
+	}
+
 	var runErr error
 	switch wl.Kind {
 	case types.KindContainer:
 		if wl.Container == nil {
 			return nil, status.Error(codes.InvalidArgument, "container spec is required")
 		}
-		runErr = a.nc.RunContainer(ctx, wl.ID, *wl.Container, wl.PortAllocations)
+		runErr = a.nc.RunContainer(ctx, wl.ID, *wl.Container, wl.PortAllocations, registryCABundle)
 	case types.KindStack:
 		if wl.Stack == nil {
 			return nil, status.Error(codes.InvalidArgument, "stack spec is required")
 		}
-		runErr = a.nc.ComposeUp(ctx, wl.ID, *wl.Stack, wl.PortAllocations)
+		runErr = a.nc.ComposeUp(ctx, wl.ID, *wl.Stack, wl.PortAllocations, registryCABundle)
 	default:
 		return nil, status.Error(codes.InvalidArgument, "unknown workload kind")
 	}

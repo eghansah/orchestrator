@@ -22,6 +22,7 @@ import DomainDetail from "./pages/DomainDetail";
 import Users from "./pages/Users";
 import Registries from "./pages/Registries";
 import Secrets from "./pages/Secrets";
+import TrustedCAs from "./pages/TrustedCAs";
 import WorkflowBuilder from "./pages/WorkflowBuilder";
 import WorkloadDetail from "./pages/WorkloadDetail";
 import NodeDetail from "./pages/NodeDetail";
@@ -39,7 +40,7 @@ import SystemServices from "./pages/SystemServices";
 import Changelog from "./pages/Changelog";
 import ExportImport from "./pages/ExportImport";
 
-type Page = "overview" | "workloads" | "containers" | "templates" | "nodes" | "web-services" | "tcp-services" | "domains" | "users" | "docs" | string;
+type Page = "overview" | "workloads" | "containers" | "templates" | "nodes" | "web-services" | "tcp-services" | "domains" | "users" | "docs" | "trusted-cas" | string;
 
 function buildNavItems(version: string): SideNavigationProps.Item[] {
   return [
@@ -83,6 +84,7 @@ function buildNavItems(version: string): SideNavigationProps.Item[] {
       { type: "link", text: "Users", href: "#users" },
       { type: "link", text: "Registries", href: "#registries" },
       { type: "link", text: "Secrets", href: "#secrets" },
+      { type: "link", text: "Trusted CAs", href: "#trusted-cas" },
       { type: "link", text: "System Services", href: "#system-services" },
       { type: "link", text: "Export / Import", href: "#export-import" },
     ],
@@ -302,6 +304,7 @@ export default function App() {
     users: <Users />,
     registries: <Registries state={state} loading={loading} refetch={refetch} />,
     secrets: <Secrets state={state} loading={loading} refetch={refetch} />,
+    "trusted-cas": <TrustedCAs state={state} loading={loading} refetch={refetch} />,
     "workflow-builder": <WorkflowBuilder onNavigate={setActivePage} />,
     docs: <Docs />,
     networks: <Networks onNavigate={setActivePage} />,

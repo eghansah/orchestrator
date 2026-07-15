@@ -1159,7 +1159,6 @@ type SetOpenBaoConfigRequest struct {
 	Address            string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
 	Token              string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
 	Mount              string                 `protobuf:"bytes,3,opt,name=mount,proto3" json:"mount,omitempty"`                                                        // KV v2 mount path (default "secret")
-	CaCert             string                 `protobuf:"bytes,4,opt,name=ca_cert,json=caCert,proto3" json:"ca_cert,omitempty"`                                        // optional PEM CA bundle to trust, for certs signed by an internal CA
 	InsecureSkipVerify bool                   `protobuf:"varint,5,opt,name=insecure_skip_verify,json=insecureSkipVerify,proto3" json:"insecure_skip_verify,omitempty"` // skip TLS certificate verification entirely (testing only)
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
@@ -1212,13 +1211,6 @@ func (x *SetOpenBaoConfigRequest) GetToken() string {
 func (x *SetOpenBaoConfigRequest) GetMount() string {
 	if x != nil {
 		return x.Mount
-	}
-	return ""
-}
-
-func (x *SetOpenBaoConfigRequest) GetCaCert() string {
-	if x != nil {
-		return x.CaCert
 	}
 	return ""
 }
@@ -1325,7 +1317,6 @@ type GetOpenBaoStatusResponse struct {
 	Mount              string                 `protobuf:"bytes,3,opt,name=mount,proto3" json:"mount,omitempty"`
 	Connected          bool                   `protobuf:"varint,4,opt,name=connected,proto3" json:"connected,omitempty"` // live health probe result
 	Error              string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`          // non-empty when connected=false
-	CaCert             string                 `protobuf:"bytes,6,opt,name=ca_cert,json=caCert,proto3" json:"ca_cert,omitempty"`
 	InsecureSkipVerify bool                   `protobuf:"varint,7,opt,name=insecure_skip_verify,json=insecureSkipVerify,proto3" json:"insecure_skip_verify,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
@@ -1392,13 +1383,6 @@ func (x *GetOpenBaoStatusResponse) GetConnected() bool {
 func (x *GetOpenBaoStatusResponse) GetError() string {
 	if x != nil {
 		return x.Error
-	}
-	return ""
-}
-
-func (x *GetOpenBaoStatusResponse) GetCaCert() string {
-	if x != nil {
-		return x.CaCert
 	}
 	return ""
 }
@@ -1769,17 +1753,16 @@ const file_control_proto_rawDesc = "" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x14\n" +
 	"\x12ListServiceRequest\"H\n" +
 	"\x13ListServiceResponse\x121\n" +
-	"\bservices\x18\x01 \x03(\v2\x15.orchestrator.ServiceR\bservices\"\xaa\x01\n" +
+	"\bservices\x18\x01 \x03(\v2\x15.orchestrator.ServiceR\bservices\"\xa0\x01\n" +
 	"\x17SetOpenBaoConfigRequest\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12\x14\n" +
-	"\x05mount\x18\x03 \x01(\tR\x05mount\x12\x17\n" +
-	"\aca_cert\x18\x04 \x01(\tR\x06caCert\x120\n" +
-	"\x14insecure_skip_verify\x18\x05 \x01(\bR\x12insecureSkipVerify\"N\n" +
+	"\x05mount\x18\x03 \x01(\tR\x05mount\x120\n" +
+	"\x14insecure_skip_verify\x18\x05 \x01(\bR\x12insecureSkipVerifyJ\x04\b\x04\x10\x05R\aca_cert\"N\n" +
 	"\x18SetOpenBaoConfigResponse\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x19\n" +
-	"\x17GetOpenBaoStatusRequest\"\xe9\x01\n" +
+	"\x17GetOpenBaoStatusRequest\"\xdf\x01\n" +
 	"\x18GetOpenBaoStatusResponse\x12\x1e\n" +
 	"\n" +
 	"configured\x18\x01 \x01(\bR\n" +
@@ -1787,9 +1770,8 @@ const file_control_proto_rawDesc = "" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x14\n" +
 	"\x05mount\x18\x03 \x01(\tR\x05mount\x12\x1c\n" +
 	"\tconnected\x18\x04 \x01(\bR\tconnected\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05error\x12\x17\n" +
-	"\aca_cert\x18\x06 \x01(\tR\x06caCert\x120\n" +
-	"\x14insecure_skip_verify\x18\a \x01(\bR\x12insecureSkipVerify\"?\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\x120\n" +
+	"\x14insecure_skip_verify\x18\a \x01(\bR\x12insecureSkipVerifyJ\x04\b\x06\x10\aR\aca_cert\"?\n" +
 	"\x13CreateSecretRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\"g\n" +

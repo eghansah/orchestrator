@@ -35,6 +35,8 @@ const (
 	cmdApplySecret                   // add or update a secret
 	cmdRemoveSecret                  // remove a secret
 	cmdSetOpenBaoConfig              // store OpenBao connection config
+	cmdApplyTrustedCA                // add or update a trusted CA certificate
+	cmdRemoveTrustedCA               // remove a trusted CA certificate
 )
 
 type command struct {
@@ -68,6 +70,7 @@ type ClusterState struct {
 	Registries      map[string]types.Registry         `json:"registries"`
 	Templates       map[string]types.WorkloadTemplate `json:"templates"`
 	Secrets         map[string]types.Secret           `json:"secrets"`
+	TrustedCAs      map[string]types.TrustedCA        `json:"trusted_cas"`
 	OpenBaoConfig   *types.OpenBaoConfig              `json:"openbao_config,omitempty"`
 	NextPort        uint32                            `json:"next_port"`         // container port pool
 	NextServicePort uint32                            `json:"next_service_port"` // service port pool
@@ -87,6 +90,7 @@ func newClusterState() ClusterState {
 		NextServicePort: svcPortPoolStart,
 		Templates:       make(map[string]types.WorkloadTemplate),
 		Secrets:         make(map[string]types.Secret),
+		TrustedCAs:      make(map[string]types.TrustedCA),
 		MeshCIDR:        defaultMeshCIDR,
 	}
 }
@@ -477,6 +481,28 @@ func (f *fsm) Apply(l *raft.Log) any {
 			return err
 		}
 		f.state.OpenBaoConfig = &cfg
+
+	case cmdApplyTrustedCA:
+		var ca types.TrustedCA
+		if err := json.Unmarshal(cmd.Data, &ca); err != nil {
+			return err
+		}
+		if f.state.TrustedCAs == nil {
+			f.state.TrustedCAs = make(map[string]types.TrustedCA)
+		}
+		for _, existing := range f.state.TrustedCAs {
+			if existing.Label == ca.Label && existing.ID != ca.ID {
+				return fmt.Errorf("trusted CA label %q already exists", ca.Label)
+			}
+		}
+		f.state.TrustedCAs[ca.ID] = ca
+
+	case cmdRemoveTrustedCA:
+		var id string
+		if err := json.Unmarshal(cmd.Data, &id); err != nil {
+			return err
+		}
+		delete(f.state.TrustedCAs, id)
 	}
 	return nil
 }

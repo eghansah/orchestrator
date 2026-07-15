@@ -40,7 +40,6 @@ export default function Secrets({ state, loading, refetch }: Props) {
     address: "",
     token: "",
     mount: "secret",
-    caCert: "",
     insecureSkipVerify: false,
   });
   const [baoSaving, setBaoSaving] = useState(false);
@@ -77,7 +76,6 @@ export default function Secrets({ state, loading, refetch }: Props) {
         address: baoForm.address,
         token: baoForm.token,
         mount: baoForm.mount || "secret",
-        caCert: baoForm.caCert,
         insecureSkipVerify: baoForm.insecureSkipVerify,
       });
       addFlash("success", "OpenBao connection saved");
@@ -154,7 +152,6 @@ export default function Secrets({ state, loading, refetch }: Props) {
                     address: baoStatus?.address ?? "",
                     token: "",
                     mount: baoStatus?.mount ?? "secret",
-                    caCert: baoStatus?.caCert ?? "",
                     insecureSkipVerify: baoStatus?.insecureSkipVerify ?? false,
                   });
                   setShowBaoConfig(true);
@@ -308,18 +305,10 @@ export default function Secrets({ state, loading, refetch }: Props) {
                 placeholder="secret"
               />
             </FormField>
-            <FormField
-              label="CA certificate"
-              description="Optional PEM CA bundle to trust, for OpenBao certs signed by an internal CA. Leave blank to use the system trust store."
-            >
-              <Textarea
-                value={baoForm.caCert}
-                onChange={(e) => setBaoForm((f) => ({ ...f, caCert: e.detail.value }))}
-                placeholder="-----BEGIN CERTIFICATE-----..."
-                rows={4}
-                disabled={baoForm.insecureSkipVerify}
-              />
-            </FormField>
+            <Alert type="info">
+              To trust a certificate signed by an internal CA for this connection, add it on the{" "}
+              <b>Trusted CAs</b> page and check "Apply to OpenBao connection" — no need to paste it here.
+            </Alert>
             <Checkbox
               checked={baoForm.insecureSkipVerify}
               onChange={(e) => setBaoForm((f) => ({ ...f, insecureSkipVerify: e.detail.checked }))}

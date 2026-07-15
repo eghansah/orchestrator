@@ -67,6 +67,7 @@ export interface ClusterState {
   container_stats: ContainerStats[];
   registries: Registry[];
   secrets: Secret[];
+  trusted_cas: TrustedCA[];
 }
 
 export interface MutationResult {
@@ -225,6 +226,31 @@ export interface Secret {
   created_at: number; // unix seconds
 }
 
+export interface TrustedCA {
+  id: string;
+  label: string;
+  pem: string;
+  appliesToOpenBao: boolean;
+  appliesToRegistries: boolean;
+  notAfter?: number; // unix seconds
+  expired: boolean;
+  createdAt: number; // unix seconds
+}
+
+export interface CreateTrustedCARequest {
+  label: string;
+  pem: string;
+  appliesToOpenBao: boolean;
+  appliesToRegistries: boolean;
+}
+
+export interface UpdateTrustedCARequest {
+  label: string;
+  pem: string; // blank keeps the existing certificate
+  appliesToOpenBao: boolean;
+  appliesToRegistries: boolean;
+}
+
 export interface CreateSecretRequest {
   name: string;
   value: string;
@@ -244,7 +270,6 @@ export interface OpenBaoStatus {
   configured: boolean;
   address?: string;
   mount?: string;
-  caCert?: string;
   insecureSkipVerify: boolean;
   connected: boolean;
   error?: string;
@@ -254,7 +279,6 @@ export interface SetOpenBaoConfigRequest {
   address: string;
   token: string;
   mount: string;
-  caCert: string;
   insecureSkipVerify: boolean;
 }
 
@@ -514,6 +538,13 @@ export const api = {
   getOpenBaoStatus: () => request<OpenBaoStatus>("GET", "/api/openbao/status"),
   setOpenBaoConfig: (req: SetOpenBaoConfigRequest) =>
     request<{ accepted: boolean }>("POST", "/api/openbao/config", req),
+  listTrustedCAs: () => request<TrustedCA[]>("GET", "/api/trusted-cas"),
+  createTrustedCA: (req: CreateTrustedCARequest) =>
+    request<TrustedCA>("POST", "/api/trusted-cas", req),
+  updateTrustedCA: (id: string, req: UpdateTrustedCARequest) =>
+    request<TrustedCA>("POST", `/api/trusted-cas/${id}/update`, req),
+  deleteTrustedCA: (id: string) =>
+    request<{ accepted: boolean }>("POST", `/api/trusted-cas/${id}/delete`),
   adminCompact: () => request<{ accepted: boolean }>("POST", "/api/admin/compact"),
   listNetworks: () => request<NetworkListEntry[]>("GET", "/api/networks"),
   inspectNetwork: (name: string) =>

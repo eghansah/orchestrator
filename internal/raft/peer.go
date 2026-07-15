@@ -212,6 +212,16 @@ func (p *Peer) SetOpenBaoConfig(cfg types.OpenBaoConfig) error {
 	return p.apply(cmdSetOpenBaoConfig, cfg)
 }
 
+// ApplyTrustedCA writes a trusted CA certificate into the Raft log.
+func (p *Peer) ApplyTrustedCA(ca types.TrustedCA) error {
+	return p.apply(cmdApplyTrustedCA, ca)
+}
+
+// RemoveTrustedCA removes a trusted CA certificate from the Raft log.
+func (p *Peer) RemoveTrustedCA(id string) error {
+	return p.apply(cmdRemoveTrustedCA, id)
+}
+
 // ForceSnapshot takes an immediate Raft snapshot and compacts the log up to
 // the snapshot index, removing historical log entries that contained ciphertext.
 func (p *Peer) ForceSnapshot() error {
