@@ -185,6 +185,7 @@ export interface WorkloadTemplate {
   kind: "container" | "stack";
   compose_yaml?: string;
   image?: string;
+  insecure_registry?: boolean;
   created_at: number; // unix seconds
 }
 
@@ -200,6 +201,7 @@ export interface CreateTemplateRequest {
   volumes?: { source: string; target: string; read_only: boolean }[];
   labels?: Record<string, string>;
   namespace?: string;
+  insecure_registry?: boolean;
 }
 
 export interface Registry {
@@ -242,6 +244,8 @@ export interface OpenBaoStatus {
   configured: boolean;
   address?: string;
   mount?: string;
+  caCert?: string;
+  insecureSkipVerify: boolean;
   connected: boolean;
   error?: string;
 }
@@ -250,6 +254,8 @@ export interface SetOpenBaoConfigRequest {
   address: string;
   token: string;
   mount: string;
+  caCert: string;
+  insecureSkipVerify: boolean;
 }
 
 export interface ContainerInspectResult {

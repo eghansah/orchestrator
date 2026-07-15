@@ -71,6 +71,9 @@ type config struct {
 	adminToken     string // bearer token required for all ControlService RPCs
 	webPassword    string // password for the web console login form
 	webDisableMFA  bool   // skip TOTP MFA for all logins when true
+	webTLS         bool   // serve the web console over HTTPS
+	webTLSCert     string // path to a PEM cert (chain) for the web console; empty = use the node's self-signed cert
+	webTLSKey      string // path to the PEM private key matching webTLSCert
 	// LDAP/AD auth
 	ldapAddr           string
 	ldapTLS            bool
@@ -112,8 +115,11 @@ func parseFlags() config {
 	flag.StringVar(&cfg.adminToken, "admin-token", "", "bearer token for ControlService RPCs (auto-generated if bootstrapping)")
 	flag.StringVar(&cfg.webPassword, "web-password", "", "password for web console login (auto-generated if bootstrapping)")
 	flag.BoolVar(&cfg.webDisableMFA, "web-disable-mfa", false, "disable TOTP MFA for web console logins")
-	flag.StringVar(&cfg.webAddr, "web-addr", ":7948", "web console HTTP listen address (empty to disable)")
+	flag.StringVar(&cfg.webAddr, "web-addr", ":7948", "web console listen address (empty to disable)")
 	flag.StringVar(&cfg.webPrefix, "web-prefix", "", "URL prefix for the web console, e.g. /console (empty = serve at root)")
+	flag.BoolVar(&cfg.webTLS, "web-tls", false, "serve the web console over HTTPS (uses the node's self-signed cert unless --web-tls-cert/--web-tls-key are set)")
+	flag.StringVar(&cfg.webTLSCert, "web-tls-cert", "", "path to a PEM certificate (chain) for the web console; requires --web-tls-key")
+	flag.StringVar(&cfg.webTLSKey, "web-tls-key", "", "path to the PEM private key matching --web-tls-cert")
 	flag.StringVar(&cfg.ingressAddr, "ingress-addr", ":8080", "HTTP ingress proxy listen address (empty to disable)")
 	flag.StringVar(&cfg.ingressTLSAddr, "ingress-tls-addr", "", "HTTPS ingress proxy listen address, e.g. :8443 (empty to disable; uses domain TLS certs)")
 	flag.StringVar(&cfg.dnsAddr, "dns-addr", "", "DNS listen address for svc.local zone, e.g. :5353 (empty to disable; any port ≥1024 works without root)")
@@ -136,6 +142,10 @@ func parseFlags() config {
 	flag.StringVar(&cfg.ldapUserFilter, "ldap-user-filter", "", "LDAP search filter with %%s for username; required when --ldap-group-dn is set (e.g. (sAMAccountName=%%s))")
 	flag.StringVar(&cfg.ldapGroupDN, "ldap-group-dn", "", "optional: restrict login to members of this group DN")
 	flag.Parse()
+
+	if (cfg.webTLSCert == "") != (cfg.webTLSKey == "") {
+		dieOnErr(fmt.Errorf("--web-tls-cert and --web-tls-key must be set together"), "parse flags")
+	}
 
 	if cfg.nodeID == "" {
 		hostname, err := os.Hostname()
@@ -294,12 +304,27 @@ func main() {
 			GroupDN:        cfg.ldapGroupDN,
 		})
 		httpSrv := &http.Server{Addr: cfg.webAddr, Handler: webSrv.Handler()}
-		go func() {
-			slog.Info("web console listening", "addr", cfg.webAddr)
-			if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				slog.Error("web console error", "err", err)
+		if cfg.webTLS {
+			webCert := tlsCert
+			if cfg.webTLSCert != "" {
+				webCert, err = tls.LoadX509KeyPair(cfg.webTLSCert, cfg.webTLSKey)
+				dieOnErr(err, "load web console TLS cert")
 			}
-		}()
+			httpSrv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{webCert}}
+			go func() {
+				slog.Info("web console listening (https)", "addr", cfg.webAddr)
+				if err := httpSrv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+					slog.Error("web console error", "err", err)
+				}
+			}()
+		} else {
+			go func() {
+				slog.Info("web console listening", "addr", cfg.webAddr)
+				if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					slog.Error("web console error", "err", err)
+				}
+			}()
+		}
 		defer httpSrv.Shutdown(context.Background()) //nolint:errcheck
 	}
 
@@ -1038,6 +1063,8 @@ func logConfig(cfg config) {
 		"web-addr", cfg.webAddr,
 		"web-prefix", cfg.webPrefix,
 		"web-disable-mfa", cfg.webDisableMFA,
+		"web-tls", cfg.webTLS,
+		"web-tls-cert", cfg.webTLSCert,
 		"ingress-addr", cfg.ingressAddr,
 		"ingress-tls-addr", cfg.ingressTLSAddr,
 		"dns-addr", cfg.dnsAddr,

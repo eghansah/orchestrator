@@ -70,16 +70,17 @@ func ContainerSpecToProto(s ContainerSpec) *gen.ContainerSpec {
 		vols[i] = &gen.VolumeMount{Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly}
 	}
 	return &gen.ContainerSpec{
-		Name:       s.Name,
-		Image:      s.Image,
-		Command:    s.Command,
-		Env:        s.Env,
-		Ports:      ports,
-		Volumes:    vols,
-		Labels:     s.Labels,
-		Namespace:  s.Namespace,
-		SecretRefs: s.SecretRefs,
-		Replicas:   int32(s.Replicas),
+		Name:             s.Name,
+		Image:            s.Image,
+		Command:          s.Command,
+		Env:              s.Env,
+		Ports:            ports,
+		Volumes:          vols,
+		Labels:           s.Labels,
+		Namespace:        s.Namespace,
+		SecretRefs:       s.SecretRefs,
+		Replicas:         int32(s.Replicas),
+		InsecureRegistry: s.InsecureRegistry,
 	}
 }
 
@@ -93,25 +94,38 @@ func ContainerSpecFromProto(ps *gen.ContainerSpec) ContainerSpec {
 		vols[i] = VolumeMount{Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly}
 	}
 	return ContainerSpec{
-		Name:       ps.Name,
-		Image:      ps.Image,
-		Command:    ps.Command,
-		Env:        ps.Env,
-		Ports:      ports,
-		Volumes:    vols,
-		Labels:     ps.Labels,
-		Namespace:  ps.Namespace,
-		SecretRefs: ps.SecretRefs,
-		Replicas:   int(ps.Replicas),
+		Name:             ps.Name,
+		Image:            ps.Image,
+		Command:          ps.Command,
+		Env:              ps.Env,
+		Ports:            ports,
+		Volumes:          vols,
+		Labels:           ps.Labels,
+		Namespace:        ps.Namespace,
+		SecretRefs:       ps.SecretRefs,
+		Replicas:         int(ps.Replicas),
+		InsecureRegistry: ps.InsecureRegistry,
 	}
 }
 
 func ComposeStackSpecToProto(s ComposeStackSpec) *gen.ComposeStackSpec {
-	return &gen.ComposeStackSpec{Name: s.Name, ComposeYaml: s.ComposeYAML, SecretRefs: s.SecretRefs, Replicas: int32(s.Replicas)}
+	return &gen.ComposeStackSpec{
+		Name:             s.Name,
+		ComposeYaml:      s.ComposeYAML,
+		SecretRefs:       s.SecretRefs,
+		Replicas:         int32(s.Replicas),
+		InsecureRegistry: s.InsecureRegistry,
+	}
 }
 
 func ComposeStackSpecFromProto(ps *gen.ComposeStackSpec) ComposeStackSpec {
-	return ComposeStackSpec{Name: ps.Name, ComposeYAML: ps.ComposeYaml, SecretRefs: ps.SecretRefs, Replicas: int(ps.Replicas)}
+	return ComposeStackSpec{
+		Name:             ps.Name,
+		ComposeYAML:      ps.ComposeYaml,
+		SecretRefs:       ps.SecretRefs,
+		Replicas:         int(ps.Replicas),
+		InsecureRegistry: ps.InsecureRegistry,
+	}
 }
 
 func SecretToProto(s Secret) *gen.Secret {
@@ -134,9 +148,11 @@ func SecretFromProto(ps *gen.Secret) Secret {
 
 func OpenBaoConfigToProto(c OpenBaoConfig) *gen.OpenBaoConfig {
 	return &gen.OpenBaoConfig{
-		Address: c.Address,
-		Token:   c.Token,
-		Mount:   c.Mount,
+		Address:            c.Address,
+		Token:              c.Token,
+		Mount:              c.Mount,
+		CaCert:             c.CACert,
+		InsecureSkipVerify: c.InsecureSkipVerify,
 	}
 }
 
@@ -145,9 +161,11 @@ func OpenBaoConfigFromProto(p *gen.OpenBaoConfig) OpenBaoConfig {
 		return OpenBaoConfig{}
 	}
 	return OpenBaoConfig{
-		Address: p.Address,
-		Token:   p.Token,
-		Mount:   p.Mount,
+		Address:            p.Address,
+		Token:              p.Token,
+		Mount:              p.Mount,
+		CACert:             p.CaCert,
+		InsecureSkipVerify: p.InsecureSkipVerify,
 	}
 }
 

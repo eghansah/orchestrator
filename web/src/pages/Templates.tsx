@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
+import Checkbox from "@cloudscape-design/components/checkbox";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import Flashbar, { FlashbarProps } from "@cloudscape-design/components/flashbar";
 import FormField from "@cloudscape-design/components/form-field";
@@ -27,7 +28,7 @@ const KIND_OPTIONS = [
   { value: "container", label: "Container" },
 ];
 
-const emptyForm = (): CreateTemplateRequest => ({ name: "", description: "", kind: "stack", compose_yaml: "", image: "" });
+const emptyForm = (): CreateTemplateRequest => ({ name: "", description: "", kind: "stack", compose_yaml: "", image: "", insecure_registry: false });
 
 // Phases that mean a deployed workload is still live; in any of these the
 // template's Deploy button becomes Redeploy (which replaces the workload).
@@ -85,6 +86,7 @@ export default function Templates({ state, loading, error, refetch, onNavigate: 
       kind: t.kind,
       compose_yaml: t.compose_yaml ?? "",
       image: t.image ?? "",
+      insecure_registry: t.insecure_registry ?? false,
     });
     setEditTarget(t);
     setShowNew(true);
@@ -243,6 +245,15 @@ export default function Templates({ state, loading, error, refetch, onNavigate: 
               <Input value={form.image ?? ""} onChange={(e) => setForm((f) => ({ ...f, image: e.detail.value }))} placeholder="nginx:latest" />
             </FormField>
           )}
+          <Checkbox
+            checked={form.insecure_registry ?? false}
+            onChange={(e) => setForm((f) => ({ ...f, insecure_registry: e.detail.checked }))}
+          >
+            Insecure registry
+            <Box variant="small" color="text-body-secondary">
+              Allow pulling from a plain-HTTP or self-signed registry (passes --insecure-registry to nerdctl)
+            </Box>
+          </Checkbox>
         </SpaceBetween>
       </Modal>
 

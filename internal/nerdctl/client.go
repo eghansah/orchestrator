@@ -247,9 +247,19 @@ func (c *Client) Probe(ctx context.Context) error {
 // pre-flight check uses the right socket instead of the hardcoded containerd-rootless path.
 // stderr is merged into the error message verbatim.
 func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
+	return c.runInsecure(ctx, false, args...)
+}
+
+// runInsecure is like run but, when insecure is true, passes --insecure-registry
+// ahead of the subcommand so nerdctl will pull from plain-HTTP or self-signed
+// registries. That flag is global to nerdctl and must precede the subcommand.
+func (c *Client) runInsecure(ctx context.Context, insecure bool, args ...string) ([]byte, error) {
 	global := []string{"--namespace", c.namespace}
 	if c.address != "" {
 		global = append(global, "--address", c.address)
+	}
+	if insecure {
+		global = append(global, "--insecure-registry")
 	}
 	full := append(global, args...)
 	cmd := exec.CommandContext(ctx, c.binary, full...)
@@ -286,13 +296,8 @@ func (c *Client) runStdout(ctx context.Context, args ...string) ([]byte, error) 
 	return stdout.Bytes(), nil
 }
 
-func (c *Client) Pull(ctx context.Context, image string) error {
-	args := []string{"pull"}
-	if isLocalhostImage(image) {
-		args = append(args, "--insecure-registry")
-	}
-	args = append(args, image)
-	_, err := c.run(ctx, args...)
+func (c *Client) Pull(ctx context.Context, image string, insecure bool) error {
+	_, err := c.runInsecure(ctx, insecure || isLocalhostImage(image), "pull", image)
 	return err
 }
 
@@ -335,9 +340,10 @@ func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types
 	_, _ = c.run(ctx, "rm", "--", spec.Name)
 
 	args := buildRunArgs(workloadID, spec, portAllocations, c.dnsIP, c.dnsPort, c.meshNet())
+	insecure := spec.InsecureRegistry || isLocalhostImage(spec.Image)
 
 	slog.Info("nerdctl: running container", "cmd", append([]string{c.binary}, args...))
-	_, err := c.run(ctx, args...)
+	_, err := c.runInsecure(ctx, insecure, args...)
 	if err != nil {
 		slog.Error("nerdctl: run container failed", "name", spec.Name, "err", err)
 	}
@@ -564,7 +570,7 @@ func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStac
 			return fmt.Errorf("write env file: %w", err)
 		}
 	}
-	_, err = c.run(ctx, "compose", "-f", composeFile, "--project-name", spec.Name, "up", "-d")
+	_, err = c.runInsecure(ctx, spec.InsecureRegistry, "compose", "-f", composeFile, "--project-name", spec.Name, "up", "-d")
 	return err
 }
 

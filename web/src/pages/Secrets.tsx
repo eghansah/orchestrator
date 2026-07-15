@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
+import Checkbox from "@cloudscape-design/components/checkbox";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Container from "@cloudscape-design/components/container";
 import ContentLayout from "@cloudscape-design/components/content-layout";
@@ -35,7 +36,13 @@ export default function Secrets({ state, loading, refetch }: Props) {
   const [baoStatus, setBaoStatus] = useState<OpenBaoStatus | null>(null);
   const [baoLoading, setBaoLoading] = useState(true);
   const [showBaoConfig, setShowBaoConfig] = useState(false);
-  const [baoForm, setBaoForm] = useState({ address: "", token: "", mount: "secret" });
+  const [baoForm, setBaoForm] = useState({
+    address: "",
+    token: "",
+    mount: "secret",
+    caCert: "",
+    insecureSkipVerify: false,
+  });
   const [baoSaving, setBaoSaving] = useState(false);
 
   function addFlash(type: FlashbarProps.Type, msg: string) {
@@ -70,6 +77,8 @@ export default function Secrets({ state, loading, refetch }: Props) {
         address: baoForm.address,
         token: baoForm.token,
         mount: baoForm.mount || "secret",
+        caCert: baoForm.caCert,
+        insecureSkipVerify: baoForm.insecureSkipVerify,
       });
       addFlash("success", "OpenBao connection saved");
       setShowBaoConfig(false);
@@ -145,6 +154,8 @@ export default function Secrets({ state, loading, refetch }: Props) {
                     address: baoStatus?.address ?? "",
                     token: "",
                     mount: baoStatus?.mount ?? "secret",
+                    caCert: baoStatus?.caCert ?? "",
+                    insecureSkipVerify: baoStatus?.insecureSkipVerify ?? false,
                   });
                   setShowBaoConfig(true);
                 }}>
@@ -297,6 +308,24 @@ export default function Secrets({ state, loading, refetch }: Props) {
                 placeholder="secret"
               />
             </FormField>
+            <FormField
+              label="CA certificate"
+              description="Optional PEM CA bundle to trust, for OpenBao certs signed by an internal CA. Leave blank to use the system trust store."
+            >
+              <Textarea
+                value={baoForm.caCert}
+                onChange={(e) => setBaoForm((f) => ({ ...f, caCert: e.detail.value }))}
+                placeholder="-----BEGIN CERTIFICATE-----..."
+                rows={4}
+                disabled={baoForm.insecureSkipVerify}
+              />
+            </FormField>
+            <Checkbox
+              checked={baoForm.insecureSkipVerify}
+              onChange={(e) => setBaoForm((f) => ({ ...f, insecureSkipVerify: e.detail.checked }))}
+            >
+              Skip TLS certificate verification (testing only — disables all cert checks)
+            </Checkbox>
           </SpaceBetween>
         </Modal>
       </SpaceBetween>

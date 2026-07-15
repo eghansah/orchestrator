@@ -132,19 +132,20 @@ func (NodeStatus) EnumDescriptor() ([]byte, []int) {
 }
 
 type ContainerSpec struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Image         string                 `protobuf:"bytes,2,opt,name=image,proto3" json:"image,omitempty"`
-	Command       []string               `protobuf:"bytes,3,rep,name=command,proto3" json:"command,omitempty"`
-	Env           []string               `protobuf:"bytes,4,rep,name=env,proto3" json:"env,omitempty"` // KEY=VALUE
-	Ports         []*PortMapping         `protobuf:"bytes,5,rep,name=ports,proto3" json:"ports,omitempty"`
-	Volumes       []*VolumeMount         `protobuf:"bytes,6,rep,name=volumes,proto3" json:"volumes,omitempty"`
-	Labels        map[string]string      `protobuf:"bytes,7,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Namespace     string                 `protobuf:"bytes,8,opt,name=namespace,proto3" json:"namespace,omitempty"`                                                                                               // nerdctl namespace; defaults to "orchestrator"
-	SecretRefs    map[string]string      `protobuf:"bytes,9,rep,name=secret_refs,json=secretRefs,proto3" json:"secret_refs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // env_var_name → secret_name; resolved at placement
-	Replicas      int32                  `protobuf:"varint,10,opt,name=replicas,proto3" json:"replicas,omitempty"`                                                                                               // desired replica count; 0/1 = single instance
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Name             string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Image            string                 `protobuf:"bytes,2,opt,name=image,proto3" json:"image,omitempty"`
+	Command          []string               `protobuf:"bytes,3,rep,name=command,proto3" json:"command,omitempty"`
+	Env              []string               `protobuf:"bytes,4,rep,name=env,proto3" json:"env,omitempty"` // KEY=VALUE
+	Ports            []*PortMapping         `protobuf:"bytes,5,rep,name=ports,proto3" json:"ports,omitempty"`
+	Volumes          []*VolumeMount         `protobuf:"bytes,6,rep,name=volumes,proto3" json:"volumes,omitempty"`
+	Labels           map[string]string      `protobuf:"bytes,7,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Namespace        string                 `protobuf:"bytes,8,opt,name=namespace,proto3" json:"namespace,omitempty"`                                                                                               // nerdctl namespace; defaults to "orchestrator"
+	SecretRefs       map[string]string      `protobuf:"bytes,9,rep,name=secret_refs,json=secretRefs,proto3" json:"secret_refs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // env_var_name → secret_name; resolved at placement
+	Replicas         int32                  `protobuf:"varint,10,opt,name=replicas,proto3" json:"replicas,omitempty"`                                                                                               // desired replica count; 0/1 = single instance
+	InsecureRegistry bool                   `protobuf:"varint,11,opt,name=insecure_registry,json=insecureRegistry,proto3" json:"insecure_registry,omitempty"`                                                       // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ContainerSpec) Reset() {
@@ -247,14 +248,22 @@ func (x *ContainerSpec) GetReplicas() int32 {
 	return 0
 }
 
+func (x *ContainerSpec) GetInsecureRegistry() bool {
+	if x != nil {
+		return x.InsecureRegistry
+	}
+	return false
+}
+
 type ComposeStackSpec struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	ComposeYaml   string                 `protobuf:"bytes,2,opt,name=compose_yaml,json=composeYaml,proto3" json:"compose_yaml,omitempty"`                                                                        // inline compose file content
-	SecretRefs    map[string]string      `protobuf:"bytes,3,rep,name=secret_refs,json=secretRefs,proto3" json:"secret_refs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // env_var_name → secret_name; resolved at placement
-	Replicas      int32                  `protobuf:"varint,4,opt,name=replicas,proto3" json:"replicas,omitempty"`                                                                                                // desired replica count; 0/1 = single instance
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Name             string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	ComposeYaml      string                 `protobuf:"bytes,2,opt,name=compose_yaml,json=composeYaml,proto3" json:"compose_yaml,omitempty"`                                                                        // inline compose file content
+	SecretRefs       map[string]string      `protobuf:"bytes,3,rep,name=secret_refs,json=secretRefs,proto3" json:"secret_refs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // env_var_name → secret_name; resolved at placement
+	Replicas         int32                  `protobuf:"varint,4,opt,name=replicas,proto3" json:"replicas,omitempty"`                                                                                                // desired replica count; 0/1 = single instance
+	InsecureRegistry bool                   `protobuf:"varint,5,opt,name=insecure_registry,json=insecureRegistry,proto3" json:"insecure_registry,omitempty"`                                                        // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ComposeStackSpec) Reset() {
@@ -313,6 +322,13 @@ func (x *ComposeStackSpec) GetReplicas() int32 {
 		return x.Replicas
 	}
 	return 0
+}
+
+func (x *ComposeStackSpec) GetInsecureRegistry() bool {
+	if x != nil {
+		return x.InsecureRegistry
+	}
+	return false
 }
 
 // Secret holds metadata for a named cluster secret. Values live in OpenBao;
@@ -389,12 +405,14 @@ func (x *Secret) GetBaoPath() string {
 // Stored in Raft so all nodes can resolve secrets at placement time.
 // The token is a service token scoped to KV read/write on <mount>/data/orchestrator/*.
 type OpenBaoConfig struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Address       string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"` // e.g. "https://bao.example.com:8200"
-	Token         string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`     // service token
-	Mount         string                 `protobuf:"bytes,3,opt,name=mount,proto3" json:"mount,omitempty"`     // KV v2 mount path (default "secret")
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Address            string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`                                                    // e.g. "https://bao.example.com:8200"
+	Token              string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`                                                        // service token
+	Mount              string                 `protobuf:"bytes,3,opt,name=mount,proto3" json:"mount,omitempty"`                                                        // KV v2 mount path (default "secret")
+	CaCert             string                 `protobuf:"bytes,4,opt,name=ca_cert,json=caCert,proto3" json:"ca_cert,omitempty"`                                        // optional PEM CA bundle to trust, for certs signed by an internal CA
+	InsecureSkipVerify bool                   `protobuf:"varint,5,opt,name=insecure_skip_verify,json=insecureSkipVerify,proto3" json:"insecure_skip_verify,omitempty"` // skip TLS certificate verification entirely (testing only)
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *OpenBaoConfig) Reset() {
@@ -446,6 +464,20 @@ func (x *OpenBaoConfig) GetMount() string {
 		return x.Mount
 	}
 	return ""
+}
+
+func (x *OpenBaoConfig) GetCaCert() string {
+	if x != nil {
+		return x.CaCert
+	}
+	return ""
+}
+
+func (x *OpenBaoConfig) GetInsecureSkipVerify() bool {
+	if x != nil {
+		return x.InsecureSkipVerify
+	}
+	return false
 }
 
 type PortMapping struct {
@@ -1444,7 +1476,7 @@ var File_types_proto protoreflect.FileDescriptor
 
 const file_types_proto_rawDesc = "" +
 	"\n" +
-	"\vtypes.proto\x12\forchestrator\"\x8e\x04\n" +
+	"\vtypes.proto\x12\forchestrator\"\xbb\x04\n" +
 	"\rContainerSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x18\n" +
@@ -1457,19 +1489,21 @@ const file_types_proto_rawDesc = "" +
 	"\vsecret_refs\x18\t \x03(\v2+.orchestrator.ContainerSpec.SecretRefsEntryR\n" +
 	"secretRefs\x12\x1a\n" +
 	"\breplicas\x18\n" +
-	" \x01(\x05R\breplicas\x1a9\n" +
+	" \x01(\x05R\breplicas\x12+\n" +
+	"\x11insecure_registry\x18\v \x01(\bR\x10insecureRegistry\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a=\n" +
 	"\x0fSecretRefsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf5\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa2\x02\n" +
 	"\x10ComposeStackSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
 	"\fcompose_yaml\x18\x02 \x01(\tR\vcomposeYaml\x12O\n" +
 	"\vsecret_refs\x18\x03 \x03(\v2..orchestrator.ComposeStackSpec.SecretRefsEntryR\n" +
 	"secretRefs\x12\x1a\n" +
-	"\breplicas\x18\x04 \x01(\x05R\breplicas\x1a=\n" +
+	"\breplicas\x18\x04 \x01(\x05R\breplicas\x12+\n" +
+	"\x11insecure_registry\x18\x05 \x01(\bR\x10insecureRegistry\x1a=\n" +
 	"\x0fSecretRefsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"f\n" +
@@ -1478,11 +1512,13 @@ const file_types_proto_rawDesc = "" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
 	"created_at\x18\x03 \x01(\x03R\tcreatedAt\x12\x19\n" +
-	"\bbao_path\x18\x04 \x01(\tR\abaoPath\"U\n" +
+	"\bbao_path\x18\x04 \x01(\tR\abaoPath\"\xa0\x01\n" +
 	"\rOpenBaoConfig\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12\x14\n" +
-	"\x05mount\x18\x03 \x01(\tR\x05mount\"m\n" +
+	"\x05mount\x18\x03 \x01(\tR\x05mount\x12\x17\n" +
+	"\aca_cert\x18\x04 \x01(\tR\x06caCert\x120\n" +
+	"\x14insecure_skip_verify\x18\x05 \x01(\bR\x12insecureSkipVerify\"m\n" +
 	"\vPortMapping\x12\x1b\n" +
 	"\thost_port\x18\x01 \x01(\rR\bhostPort\x12%\n" +
 	"\x0econtainer_port\x18\x02 \x01(\rR\rcontainerPort\x12\x1a\n" +

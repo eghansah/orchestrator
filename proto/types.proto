@@ -17,6 +17,7 @@ message ContainerSpec {
   string namespace   = 8; // nerdctl namespace; defaults to "orchestrator"
   map<string, string> secret_refs = 9; // env_var_name → secret_name; resolved at placement
   int32  replicas    = 10; // desired replica count; 0/1 = single instance
+  bool   insecure_registry = 11; // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
 }
 
 message ComposeStackSpec {
@@ -24,6 +25,7 @@ message ComposeStackSpec {
   string compose_yaml = 2; // inline compose file content
   map<string, string> secret_refs = 3; // env_var_name → secret_name; resolved at placement
   int32  replicas    = 4; // desired replica count; 0/1 = single instance
+  bool   insecure_registry = 5; // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
 }
 
 // Secret holds metadata for a named cluster secret. Values live in OpenBao;
@@ -42,6 +44,8 @@ message OpenBaoConfig {
   string address = 1; // e.g. "https://bao.example.com:8200"
   string token   = 2; // service token
   string mount   = 3; // KV v2 mount path (default "secret")
+  string ca_cert = 4; // optional PEM CA bundle to trust, for certs signed by an internal CA
+  bool insecure_skip_verify = 5; // skip TLS certificate verification entirely (testing only)
 }
 
 message PortMapping {

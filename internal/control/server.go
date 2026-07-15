@@ -40,7 +40,7 @@ func (s *Server) baoClient() (*baoclient.Client, error) {
 	if cfg == nil || cfg.Address == "" {
 		return nil, fmt.Errorf("OpenBao is not configured — set an address via the Secrets page or ctl")
 	}
-	return baoclient.New(cfg.Address, cfg.Token, cfg.Mount), nil
+	return baoclient.New(cfg.Address, cfg.Token, cfg.Mount, cfg.CACert, cfg.InsecureSkipVerify), nil
 }
 
 func newID() string {
@@ -527,12 +527,14 @@ func (s *Server) SetOpenBaoConfig(ctx context.Context, req *gen.SetOpenBaoConfig
 		return nil, err
 	}
 	cfg := types.OpenBaoConfig{
-		Address: req.Address,
-		Token:   req.Token,
-		Mount:   req.Mount,
+		Address:            req.Address,
+		Token:              req.Token,
+		Mount:              req.Mount,
+		CACert:             req.CaCert,
+		InsecureSkipVerify: req.InsecureSkipVerify,
 	}
 	// Validate the connection before persisting.
-	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount)
+	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount, cfg.CACert, cfg.InsecureSkipVerify)
 	if err := bao.Health(ctx); err != nil {
 		return &gen.SetOpenBaoConfigResponse{Accepted: false, Reason: "health check failed: " + err.Error()}, nil
 	}
@@ -548,11 +550,13 @@ func (s *Server) GetOpenBaoStatus(ctx context.Context, _ *gen.GetOpenBaoStatusRe
 		return &gen.GetOpenBaoStatusResponse{Configured: false}, nil
 	}
 	resp := &gen.GetOpenBaoStatusResponse{
-		Configured: true,
-		Address:    cfg.Address,
-		Mount:      cfg.Mount,
+		Configured:         true,
+		Address:            cfg.Address,
+		Mount:              cfg.Mount,
+		CaCert:             cfg.CACert,
+		InsecureSkipVerify: cfg.InsecureSkipVerify,
 	}
-	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount)
+	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount, cfg.CACert, cfg.InsecureSkipVerify)
 	if err := bao.Health(ctx); err != nil {
 		resp.Error = err.Error()
 	} else {

@@ -173,6 +173,8 @@ message SetOpenBaoConfigRequest {
   string address = 1;
   string token   = 2;
   string mount   = 3; // KV v2 mount path (default "secret")
+  string ca_cert = 4; // optional PEM CA bundle to trust, for certs signed by an internal CA
+  bool insecure_skip_verify = 5; // skip TLS certificate verification entirely (testing only)
 }
 
 message SetOpenBaoConfigResponse {
@@ -188,6 +190,8 @@ message GetOpenBaoStatusResponse {
   string mount      = 3;
   bool   connected  = 4; // live health probe result
   string error      = 5; // non-empty when connected=false
+  string ca_cert    = 6;
+  bool   insecure_skip_verify = 7;
 }
 
 message CreateSecretRequest {

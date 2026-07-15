@@ -38,24 +38,26 @@ const (
 )
 
 type ContainerSpec struct {
-	Name       string            `yaml:"name"`
-	Image      string            `yaml:"image"`
-	Command    []string          `yaml:"command,omitempty"`
-	Env        []string          `yaml:"env,omitempty"`        // KEY=VALUE pairs
-	Ports      []PortMapping     `yaml:"ports,omitempty"`
-	Volumes    []VolumeMount     `yaml:"volumes,omitempty"`
-	Labels     map[string]string `yaml:"labels,omitempty"`
-	Namespace  string            `yaml:"namespace,omitempty"`  // nerdctl namespace; defaults to "orchestrator"
-	SecretRefs map[string]string `yaml:"secret_refs,omitempty"` // env_var_name → secret_name; resolved at placement
-	Replicas   int               `yaml:"replicas,omitempty"`   // desired replica count; 0 or 1 = single instance
+	Name             string            `yaml:"name"`
+	Image            string            `yaml:"image"`
+	Command          []string          `yaml:"command,omitempty"`
+	Env              []string          `yaml:"env,omitempty"`        // KEY=VALUE pairs
+	Ports            []PortMapping     `yaml:"ports,omitempty"`
+	Volumes          []VolumeMount     `yaml:"volumes,omitempty"`
+	Labels           map[string]string `yaml:"labels,omitempty"`
+	Namespace        string            `yaml:"namespace,omitempty"`  // nerdctl namespace; defaults to "orchestrator"
+	SecretRefs       map[string]string `yaml:"secret_refs,omitempty"` // env_var_name → secret_name; resolved at placement
+	Replicas         int               `yaml:"replicas,omitempty"`   // desired replica count; 0 or 1 = single instance
+	InsecureRegistry bool              `yaml:"insecure_registry,omitempty"` // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
 }
 
 type ComposeStackSpec struct {
-	Name        string            `yaml:"name"`
-	ComposeYAML string            `yaml:"compose_yaml"`          // inline compose file content
-	SecretRefs  map[string]string `yaml:"secret_refs,omitempty"` // env_var_name → secret_name; resolved at placement
-	ResolvedEnv []string          `yaml:"-"`                     // runtime only; never exported
-	Replicas    int               `yaml:"replicas,omitempty"`    // desired replica count; 0 or 1 = single instance
+	Name             string            `yaml:"name"`
+	ComposeYAML      string            `yaml:"compose_yaml"`          // inline compose file content
+	SecretRefs       map[string]string `yaml:"secret_refs,omitempty"` // env_var_name → secret_name; resolved at placement
+	ResolvedEnv      []string          `yaml:"-"`                     // runtime only; never exported
+	Replicas         int               `yaml:"replicas,omitempty"`    // desired replica count; 0 or 1 = single instance
+	InsecureRegistry bool              `yaml:"insecure_registry,omitempty"` // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
 }
 
 type PortMapping struct {
@@ -198,9 +200,11 @@ type Secret struct {
 // OpenBaoConfig holds the connection parameters for the cluster's OpenBao instance.
 // All nodes read this from Raft state to resolve secrets at placement time.
 type OpenBaoConfig struct {
-	Address string // e.g. "https://bao.example.com:8200"
-	Token   string // service token scoped to KV read/write on <mount>/data/orchestrator/*
-	Mount   string // KV v2 mount path; defaults to "secret" when empty
+	Address            string // e.g. "https://bao.example.com:8200"
+	Token              string // service token scoped to KV read/write on <mount>/data/orchestrator/*
+	Mount              string // KV v2 mount path; defaults to "secret" when empty
+	CACert             string // optional PEM CA bundle to trust, for certs signed by an internal CA
+	InsecureSkipVerify bool   // skip TLS certificate verification entirely (testing only)
 }
 
 // WorkloadTemplate is a saved workload definition that can be redeployed.

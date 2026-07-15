@@ -2090,18 +2090,20 @@ type templateRequestJSON struct {
 		Target   string `json:"target"`
 		ReadOnly bool   `json:"read_only"`
 	} `json:"volumes,omitempty"`
-	Labels    map[string]string `json:"labels,omitempty"`
-	Namespace string            `json:"namespace,omitempty"`
+	Labels           map[string]string `json:"labels,omitempty"`
+	Namespace        string            `json:"namespace,omitempty"`
+	InsecureRegistry bool              `json:"insecure_registry,omitempty"`
 }
 
 type templateJSON struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Kind        string `json:"kind"`
-	ComposeYAML string `json:"compose_yaml,omitempty"`
-	Image       string `json:"image,omitempty"`
-	CreatedAt   int64  `json:"created_at"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	Kind             string `json:"kind"`
+	ComposeYAML      string `json:"compose_yaml,omitempty"`
+	Image            string `json:"image,omitempty"`
+	InsecureRegistry bool   `json:"insecure_registry,omitempty"`
+	CreatedAt        int64  `json:"created_at"`
 }
 
 func templateToJSON(t types.WorkloadTemplate) templateJSON {
@@ -2114,9 +2116,11 @@ func templateToJSON(t types.WorkloadTemplate) templateJSON {
 	}
 	if t.Stack != nil {
 		out.ComposeYAML = t.Stack.ComposeYAML
+		out.InsecureRegistry = t.Stack.InsecureRegistry
 	}
 	if t.Container != nil {
 		out.Image = t.Container.Image
+		out.InsecureRegistry = t.Container.InsecureRegistry
 	}
 	return out
 }
@@ -2129,15 +2133,16 @@ func templateFromRequest(req templateRequestJSON) (types.WorkloadTemplate, error
 	switch req.Kind {
 	case "stack":
 		t.Kind = types.KindStack
-		t.Stack = &types.ComposeStackSpec{ComposeYAML: req.ComposeYAML}
+		t.Stack = &types.ComposeStackSpec{ComposeYAML: req.ComposeYAML, InsecureRegistry: req.InsecureRegistry}
 	case "container":
 		t.Kind = types.KindContainer
 		spec := types.ContainerSpec{
-			Image:     req.Image,
-			Command:   req.Command,
-			Env:       req.Env,
-			Labels:    req.Labels,
-			Namespace: req.Namespace,
+			Image:            req.Image,
+			Command:          req.Command,
+			Env:              req.Env,
+			Labels:           req.Labels,
+			Namespace:        req.Namespace,
+			InsecureRegistry: req.InsecureRegistry,
 		}
 		for _, p := range req.Ports {
 			spec.Ports = append(spec.Ports, types.PortMapping{ContainerPort: p.ContainerPort, Protocol: p.Protocol})
@@ -2259,9 +2264,9 @@ func (s *Server) handleDeployTemplate(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "template has no stack spec")
 			return
 		}
-		resp, err = s.ctrl.SubmitStack(r.Context(), &gen.SubmitStackRequest{
-			Spec: &gen.ComposeStackSpec{Name: t.Name, ComposeYaml: t.Stack.ComposeYAML},
-		})
+		stackSpec := types.ComposeStackSpecToProto(*t.Stack)
+		stackSpec.Name = t.Name
+		resp, err = s.ctrl.SubmitStack(r.Context(), &gen.SubmitStackRequest{Spec: stackSpec})
 	case types.KindContainer:
 		if t.Container == nil {
 			writeError(w, http.StatusBadRequest, "template has no container spec")
@@ -2538,17 +2543,19 @@ func (s *Server) openBaoClient() (*baoclient.Client, error) {
 	if cfg == nil || cfg.Address == "" {
 		return nil, fmt.Errorf("OpenBao is not configured — add connection details on the Secrets page")
 	}
-	return baoclient.New(cfg.Address, cfg.Token, cfg.Mount), nil
+	return baoclient.New(cfg.Address, cfg.Token, cfg.Mount, cfg.CACert, cfg.InsecureSkipVerify), nil
 }
 
 // ── OpenBao API handlers ───────────────────────────────────────────────────────
 
 type openBaoStatusJSON struct {
-	Configured bool   `json:"configured"`
-	Address    string `json:"address,omitempty"`
-	Mount      string `json:"mount,omitempty"`
-	Connected  bool   `json:"connected"`
-	Error      string `json:"error,omitempty"`
+	Configured         bool   `json:"configured"`
+	Address            string `json:"address,omitempty"`
+	Mount              string `json:"mount,omitempty"`
+	CACert             string `json:"caCert,omitempty"`
+	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+	Connected          bool   `json:"connected"`
+	Error              string `json:"error,omitempty"`
 }
 
 func (s *Server) handleOpenBaoStatus(w http.ResponseWriter, r *http.Request) {
@@ -2558,11 +2565,13 @@ func (s *Server) handleOpenBaoStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := openBaoStatusJSON{
-		Configured: true,
-		Address:    cfg.Address,
-		Mount:      cfg.Mount,
+		Configured:         true,
+		Address:            cfg.Address,
+		Mount:              cfg.Mount,
+		CACert:             cfg.CACert,
+		InsecureSkipVerify: cfg.InsecureSkipVerify,
 	}
-	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount)
+	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount, cfg.CACert, cfg.InsecureSkipVerify)
 	if err := bao.Health(r.Context()); err != nil {
 		out.Error = err.Error()
 	} else {
@@ -2573,9 +2582,11 @@ func (s *Server) handleOpenBaoStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSetOpenBaoConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Address string `json:"address"`
-		Token   string `json:"token"`
-		Mount   string `json:"mount"`
+		Address            string `json:"address"`
+		Token              string `json:"token"`
+		Mount              string `json:"mount"`
+		CACert             string `json:"caCert"`
+		InsecureSkipVerify bool   `json:"insecureSkipVerify"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -2585,12 +2596,18 @@ func (s *Server) handleSetOpenBaoConfig(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "address is required")
 		return
 	}
-	bao := baoclient.New(req.Address, req.Token, req.Mount)
+	bao := baoclient.New(req.Address, req.Token, req.Mount, req.CACert, req.InsecureSkipVerify)
 	if err := bao.Health(r.Context()); err != nil {
 		writeError(w, http.StatusBadGateway, "health check failed: "+err.Error())
 		return
 	}
-	cfg := types.OpenBaoConfig{Address: req.Address, Token: req.Token, Mount: req.Mount}
+	cfg := types.OpenBaoConfig{
+		Address:            req.Address,
+		Token:              req.Token,
+		Mount:              req.Mount,
+		CACert:             req.CACert,
+		InsecureSkipVerify: req.InsecureSkipVerify,
+	}
 	if err := s.peer.SetOpenBaoConfig(cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

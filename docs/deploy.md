@@ -553,7 +553,13 @@ Open `http://192.168.1.10:7948` in a browser. Log in with:
 - **Username:** `admin`
 - **Password:** contents of `~/.local/share/orchestrator/web-password` on node1
 
-> Recommend placing the web console and gRPC port (7948, 7946) behind a TLS-terminating reverse proxy or restricting them to a management VLAN. The ingress proxy (8080) is the only port that needs to be publicly reachable.
+To serve the console over HTTPS, pass `--web-tls`. With no other flags this reuses the node's own self-signed identity cert (`~/.local/share/orchestrator/node.crt`), so browsers will show an untrusted-certificate warning on first visit. To use a real certificate instead, pass `--web-tls-cert`/`--web-tls-key` with a PEM cert (chain) and key:
+
+```
+--web-tls --web-tls-cert /path/to/fullchain.pem --web-tls-key /path/to/privkey.pem
+```
+
+> Recommend enabling `--web-tls` (or placing the web console and gRPC port (7948, 7946) behind a TLS-terminating reverse proxy) or restricting them to a management VLAN. The ingress proxy (8080) is the only port that needs to be publicly reachable.
 
 ---
 

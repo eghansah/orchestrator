@@ -5,6 +5,8 @@ package baoclient
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,15 +25,31 @@ type Client struct {
 
 // New returns a client for the given OpenBao instance. mount is the KV v2
 // secret engine path (e.g. "secret"); an empty string defaults to "secret".
-func New(address, token, mount string) *Client {
+//
+// caCert is an optional PEM CA bundle to trust in addition to the system
+// roots — set it when OpenBao's certificate is signed by an internal CA.
+// insecureSkipVerify disables TLS certificate verification entirely and
+// takes precedence over caCert; it exists for testing only.
+func New(address, token, mount, caCert string, insecureSkipVerify bool) *Client {
 	if mount == "" {
 		mount = "secret"
+	}
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	if insecureSkipVerify || caCert != "" {
+		tlsConfig := &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec
+		if !insecureSkipVerify && caCert != "" {
+			pool := x509.NewCertPool()
+			if pool.AppendCertsFromPEM([]byte(caCert)) {
+				tlsConfig.RootCAs = pool
+			}
+		}
+		httpClient.Transport = &http.Transport{TLSClientConfig: tlsConfig}
 	}
 	return &Client{
 		address: strings.TrimRight(address, "/"),
 		token:   token,
 		mount:   mount,
-		http:    &http.Client{Timeout: 5 * time.Second},
+		http:    httpClient,
 	}
 }
 
