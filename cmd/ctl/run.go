@@ -19,6 +19,7 @@ func (sl *stringList) Set(v string) error    { *sl = append(*sl, v); return nil 
 func runContainerCmd(server string, args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	name := fs.String("name", "", "container name (required)")
+	replicas := fs.Int("replicas", 1, "number of instances to run across nodes")
 	var ports, envs, volumes, labels, secrets stringList
 	fs.Var(&ports, "p", "container port to expose `PORT[/PROTO]` (repeatable); host port is auto-assigned")
 	fs.Var(&envs, "e", "environment variable `KEY=VALUE` (repeatable)")
@@ -90,6 +91,7 @@ func runContainerCmd(server string, args []string) {
 			Volumes:    parseVolumes(volumes),
 			Labels:     parseLabels(labels),
 			SecretRefs: parseSecretRefs(secrets),
+			Replicas:   int32(*replicas),
 		},
 	})
 	if err != nil {

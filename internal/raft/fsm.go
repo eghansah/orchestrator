@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
+	"net/netip"
 	"sync"
 
 	"github.com/hashicorp/raft"
@@ -32,6 +34,9 @@ const (
 	cmdRemoveTemplate                // remove a workload template
 	cmdApplySecret                   // add or update a secret
 	cmdRemoveSecret                  // remove a secret
+	cmdSetOpenBaoConfig              // store OpenBao connection config
+	cmdApplyTrustedCA                // add or update a trusted CA certificate
+	cmdRemoveTrustedCA               // remove a trusted CA certificate
 )
 
 type command struct {
@@ -40,11 +45,19 @@ type command struct {
 }
 
 const (
-	portPoolStart    uint32 = 30000
-	portPoolEnd      uint32 = 32767
-	svcPortPoolStart uint32 = 40000
-	svcPortPoolEnd   uint32 = 42767
+	portPoolStart        uint32 = 30000
+	portPoolEnd          uint32 = 32767
+	svcPortPoolStart     uint32 = 40000
+	svcPortPoolEnd       uint32 = 42767
+	ingressPortPoolStart uint32 = 43000
+	ingressPortPoolEnd   uint32 = 45767
 )
+
+// defaultMeshCIDR is the cluster-wide mesh address range from which the leader
+// carves a /24 per node. 100.64.0.0/10 (RFC 6598, carrier-grade NAT) is chosen
+// because it almost never collides with real LANs. Configurable per cluster via
+// ClusterState.MeshCIDR. See docs/mesh-network.md.
+const defaultMeshCIDR = "100.64.0.0/10"
 
 // ClusterState is the desired-state view maintained by the FSM.
 type ClusterState struct {
@@ -57,8 +70,11 @@ type ClusterState struct {
 	Registries      map[string]types.Registry         `json:"registries"`
 	Templates       map[string]types.WorkloadTemplate `json:"templates"`
 	Secrets         map[string]types.Secret           `json:"secrets"`
+	TrustedCAs      map[string]types.TrustedCA        `json:"trusted_cas"`
+	OpenBaoConfig   *types.OpenBaoConfig              `json:"openbao_config,omitempty"`
 	NextPort        uint32                            `json:"next_port"`         // container port pool
 	NextServicePort uint32                            `json:"next_service_port"` // service port pool
+	MeshCIDR        string                            `json:"mesh_cidr"`         // cluster mesh range; leader carves a /24 per node
 }
 
 func newClusterState() ClusterState {
@@ -74,6 +90,8 @@ func newClusterState() ClusterState {
 		NextServicePort: svcPortPoolStart,
 		Templates:       make(map[string]types.WorkloadTemplate),
 		Secrets:         make(map[string]types.Secret),
+		TrustedCAs:      make(map[string]types.TrustedCA),
+		MeshCIDR:        defaultMeshCIDR,
 	}
 }
 
@@ -87,6 +105,45 @@ func scanFreePort(inUse map[uint32]bool, start, end uint32) uint32 {
 	}
 	return 0
 }
+
+// allocMeshSubnet returns the lowest /24 within cidr that is not present in
+// inUse (keyed by canonical "a.b.c.0/24" string), together with that subnet's
+// first host address (".1") to use as the node's mesh address. cidr must be an
+// IPv4 prefix of /24 or larger. Returns an error if cidr is invalid or every
+// /24 is taken.
+func allocMeshSubnet(cidr string, inUse map[string]bool) (subnet, addr string, err error) {
+	p, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		return "", "", fmt.Errorf("parse mesh CIDR %q: %w", cidr, err)
+	}
+	p = p.Masked()
+	if !p.Addr().Is4() {
+		return "", "", fmt.Errorf("mesh CIDR %q must be IPv4", cidr)
+	}
+	if p.Bits() > 24 {
+		return "", "", fmt.Errorf("mesh CIDR %q must be /24 or larger", cidr)
+	}
+	blocks := 1 << (24 - p.Bits())
+	cur := p.Addr() // network address, already aligned to <=/24
+	for range blocks {
+		sn := netip.PrefixFrom(cur, 24).String()
+		if !inUse[sn] {
+			return sn, cur.Next().String(), nil
+		}
+		cur = nextSlash24(cur)
+	}
+	return "", "", fmt.Errorf("mesh CIDR %q exhausted: no free /24", cidr)
+}
+
+// nextSlash24 returns the address 256 higher than a (the base of the next /24).
+func nextSlash24(a netip.Addr) netip.Addr {
+	b := a.As4()
+	v := uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+	v += 256
+	return netip.AddrFrom4([4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
+}
+
+
 
 type fsm struct {
 	mu    sync.RWMutex
@@ -145,11 +202,45 @@ func (f *fsm) Apply(l *raft.Log) any {
 				})
 			}
 		}
-		// For stacks, parse the compose YAML to populate PortAllocations so that
-		// Service objects can proxy to stack containers the same way they do for
-		// container workloads.
+		// For stacks, parse container ports from the compose YAML and auto-assign
+		// AllocatedPorts from the pool — same logic as container workloads.
+		// The agent rewrites the YAML at deploy time to bind each container port
+		// to 127.0.0.1:AllocatedPort so nerdctl uses the orchestrator-managed ports.
 		if wl.Kind == types.KindStack && wl.Stack != nil {
-			wl.PortAllocations = parseComposePortAllocations(wl.Stack.ComposeYAML)
+			inUse := make(map[uint32]bool)
+			for id, existing := range f.state.Workloads {
+				if id == wl.ID {
+					continue
+				}
+				for _, pa := range existing.PortAllocations {
+					inUse[pa.AllocatedPort] = true
+				}
+			}
+			// Count how many allocations already exist per container port.
+			existing := make(map[uint32]int)
+			for _, pa := range wl.PortAllocations {
+				existing[pa.ContainerPort]++
+				inUse[pa.AllocatedPort] = true
+			}
+			// Allocate one host port per port declaration. Each occurrence of a
+			// container port across different services gets its own loopback binding.
+			seen := make(map[uint32]int)
+			for _, cp := range parseComposeContainerPorts(wl.Stack.ComposeYAML) {
+				seen[cp.ContainerPort]++
+				if seen[cp.ContainerPort] <= existing[cp.ContainerPort] {
+					continue // this occurrence already has an allocation
+				}
+				port := scanFreePort(inUse, portPoolStart, portPoolEnd)
+				if port == 0 {
+					return fmt.Errorf("container port pool exhausted")
+				}
+				inUse[port] = true
+				wl.PortAllocations = append(wl.PortAllocations, types.PortAllocation{
+					ContainerPort: cp.ContainerPort,
+					AllocatedPort: port,
+					Protocol:      cp.Protocol,
+				})
+			}
 		}
 		f.state.Workloads[wl.ID] = wl
 
@@ -164,6 +255,31 @@ func (f *fsm) Apply(l *raft.Log) any {
 		var n types.Node
 		if err := json.Unmarshal(cmd.Data, &n); err != nil {
 			return err
+		}
+		// Assign (or preserve) the leader-controlled mesh subnet. The subnet must
+		// stay stable across re-registration, so an existing assignment always wins
+		// over whatever the (re-)registering node sent. Node-provided fields
+		// (MeshPubKey/MeshEndpoint) come from n and are kept as-is.
+		if existing, ok := f.state.Nodes[n.ID]; ok && existing.MeshSubnet != "" {
+			n.MeshSubnet = existing.MeshSubnet
+			n.MeshAddr = existing.MeshAddr
+		} else if n.MeshSubnet == "" {
+			inUse := make(map[string]bool)
+			for id, other := range f.state.Nodes {
+				if id != n.ID && other.MeshSubnet != "" {
+					inUse[other.MeshSubnet] = true
+				}
+			}
+			cidr := f.state.MeshCIDR
+			if cidr == "" {
+				cidr = defaultMeshCIDR
+			}
+			subnet, addr, err := allocMeshSubnet(cidr, inUse)
+			if err != nil {
+				return fmt.Errorf("allocate mesh subnet for node %s: %w", n.ID, err)
+			}
+			n.MeshSubnet = subnet
+			n.MeshAddr = addr
 		}
 		f.state.Nodes[n.ID] = n
 
@@ -189,6 +305,23 @@ func (f *fsm) Apply(l *raft.Log) any {
 		if f.state.IngressRules == nil {
 			f.state.IngressRules = make(map[string]types.IngressRule)
 		}
+		slog.Info("fsm: applying ingress rule",
+			"id", rule.ID, "fqdn", rule.ContainerFQDN, "container_port", rule.ContainerPort, "system_port", rule.SystemPort)
+		// Auto-assign system port from the ingress pool on first creation.
+		if rule.SystemPort == 0 {
+			inUse := make(map[uint32]bool)
+			for _, r := range f.state.IngressRules {
+				if r.SystemPort > 0 {
+					inUse[r.SystemPort] = true
+				}
+			}
+			port := scanFreePort(inUse, ingressPortPoolStart, ingressPortPoolEnd)
+			if port == 0 {
+				return fmt.Errorf("ingress port pool exhausted")
+			}
+			rule.SystemPort = port
+		}
+		slog.Info("fsm: ingress rule committed", "id", rule.ID, "system_port", rule.SystemPort)
 		f.state.IngressRules[rule.ID] = rule
 
 	case cmdRemoveIngress:
@@ -206,6 +339,8 @@ func (f *fsm) Apply(l *raft.Log) any {
 		if f.state.Services == nil {
 			f.state.Services = make(map[string]types.Service)
 		}
+		slog.Info("fsm: applying service",
+			"id", svc.ID, "name", svc.Name, "fqdn", svc.ContainerFQDN, "container_port", svc.ContainerPort, "system_port", svc.SystemPort)
 		// Auto-assign system port on first creation (SystemPort == 0).
 		if svc.SystemPort == 0 {
 			inUse := make(map[uint32]bool)
@@ -220,6 +355,7 @@ func (f *fsm) Apply(l *raft.Log) any {
 			}
 			svc.SystemPort = port
 		}
+		slog.Info("fsm: service committed", "id", svc.ID, "name", svc.Name, "system_port", svc.SystemPort)
 		f.state.Services[svc.ID] = svc
 
 	case cmdRemoveService:
@@ -338,6 +474,35 @@ func (f *fsm) Apply(l *raft.Log) any {
 			return err
 		}
 		delete(f.state.Secrets, id)
+
+	case cmdSetOpenBaoConfig:
+		var cfg types.OpenBaoConfig
+		if err := json.Unmarshal(cmd.Data, &cfg); err != nil {
+			return err
+		}
+		f.state.OpenBaoConfig = &cfg
+
+	case cmdApplyTrustedCA:
+		var ca types.TrustedCA
+		if err := json.Unmarshal(cmd.Data, &ca); err != nil {
+			return err
+		}
+		if f.state.TrustedCAs == nil {
+			f.state.TrustedCAs = make(map[string]types.TrustedCA)
+		}
+		for _, existing := range f.state.TrustedCAs {
+			if existing.Label == ca.Label && existing.ID != ca.ID {
+				return fmt.Errorf("trusted CA label %q already exists", ca.Label)
+			}
+		}
+		f.state.TrustedCAs[ca.ID] = ca
+
+	case cmdRemoveTrustedCA:
+		var id string
+		if err := json.Unmarshal(cmd.Data, &id); err != nil {
+			return err
+		}
+		delete(f.state.TrustedCAs, id)
 	}
 	return nil
 }

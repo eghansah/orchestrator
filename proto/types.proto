@@ -16,20 +16,37 @@ message ContainerSpec {
   map<string, string> labels = 7;
   string namespace   = 8; // nerdctl namespace; defaults to "orchestrator"
   map<string, string> secret_refs = 9; // env_var_name → secret_name; resolved at placement
+  int32  replicas    = 10; // desired replica count; 0/1 = single instance
+  bool   insecure_registry = 11; // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
 }
 
 message ComposeStackSpec {
   string name         = 1;
   string compose_yaml = 2; // inline compose file content
   map<string, string> secret_refs = 3; // env_var_name → secret_name; resolved at placement
+  int32  replicas    = 4; // desired replica count; 0/1 = single instance
+  bool   insecure_registry = 5; // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
 }
 
-// Secret holds metadata for a named cluster secret. The encrypted value is
-// stored server-side only; it is never returned in list or get responses.
+// Secret holds metadata for a named cluster secret. Values live in OpenBao;
+// only the path reference is stored in Raft state.
 message Secret {
   string id         = 1;
   string name       = 2;
   int64  created_at = 3; // unix seconds
+  string bao_path   = 4; // KV v2 path within the configured mount, e.g. "orchestrator/db-password"
+}
+
+// OpenBaoConfig holds connection parameters for the cluster's OpenBao instance.
+// Stored in Raft so all nodes can resolve secrets at placement time.
+// The token is a service token scoped to KV read/write on <mount>/data/orchestrator/*.
+message OpenBaoConfig {
+  reserved 4;
+  reserved "ca_cert"; // superseded by the cluster-wide TrustedCA store (web UI only, no proto)
+  string address = 1; // e.g. "https://bao.example.com:8200"
+  string token   = 2; // service token
+  string mount   = 3; // KV v2 mount path (default "secret")
+  bool insecure_skip_verify = 5; // skip TLS certificate verification entirely (testing only)
 }
 
 message PortMapping {
@@ -65,6 +82,7 @@ message Workload {
   string        node_id     = 5; // assigned node; empty = unscheduled
   int64         created_at  = 6; // unix seconds
   repeated PortAllocation port_allocations = 7; // auto-assigned host ports
+  string        group_name  = 8; // set on replica instances; links them to the parent workload name
 }
 
 enum WorkloadPhase {
@@ -86,28 +104,37 @@ message Node {
   int64  last_seen_at  = 5; // unix seconds
   bytes  tls_cert      = 6; // DER-encoded self-signed cert for mTLS key pinning
   string data_ip       = 7; // routable IP for container traffic (ingress backend)
+  // Mesh overlay (see docs/mesh-network.md). pub_key/endpoint are node-published;
+  // subnet/addr are leader-assigned from the cluster mesh CIDR.
+  string mesh_pub_key  = 8;  // WireGuard public key (base64)
+  string mesh_endpoint = 9;  // reachable WireGuard UDP endpoint (host:port)
+  string mesh_subnet   = 10; // leader-assigned /24, e.g. 100.64.3.0/24
+  string mesh_addr     = 11; // this node's own mesh address (first host of subnet)
 }
 
 // ── Ingress ───────────────────────────────────────────────────────────────────
 
 message IngressRule {
-  string id           = 1;
-  string host         = 2; // Host header to match; empty = match all
-  string path_prefix  = 3; // URL path prefix to match; empty = "/"
-  string service_name = 4; // target service (routes via named Service record)
-  int64  created_at   = 5; // unix seconds
+  string id             = 1;
+  string host           = 2; // Host header to match; empty = match all
+  string path_prefix    = 3; // URL path prefix to match; empty = "/"
+  string container_fqdn = 4; // target container: "workload" or "service.workload"
+  uint32 container_port = 5; // port the container listens on
+  uint32 system_port    = 6; // auto-assigned from ingress pool (43000–45767)
+  int64  created_at     = 7; // unix seconds
+  bool   strip_prefix   = 8; // strip path_prefix before forwarding to backend
 }
 
 // ── Service discovery ─────────────────────────────────────────────────────────
 
-// Service exposes a named TCP endpoint for a workload. The system auto-assigns
-// a port from the service pool (40000–42767). Containers reach it via DNS
-// <name>.svc.local on that port.
+// Service exposes a named TCP endpoint for a container. The system auto-assigns
+// a port from the service pool (40000–42767). Clients reach it via
+// nodeDataIP:SystemPort; proxyd forwards to the container.
 message Service {
   string id             = 1;
   string name           = 2; // short DNS label, e.g. "api"
-  string workload_name  = 3; // stable workload name (Container.Name or Stack.Name)
-  uint32 target_port    = 4; // container port to proxy to
+  string container_fqdn = 3; // target container: "workload" or "service.workload"
+  uint32 container_port = 4; // port the container listens on
   uint32 system_port    = 5; // auto-assigned host port (40000–42767)
   int64  created_at     = 6; // unix seconds
 }
@@ -144,6 +171,7 @@ message ActualContainer {
   string name         = 3;
   string status       = 4; // nerdctl status string (running, exited, etc.)
   int64  started_at   = 5; // unix seconds; 0 if not running
+  string mesh_ip      = 6; // container's IP on the mesh0 bridge; empty if not on mesh
 }
 
 message ActualStack {

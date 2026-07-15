@@ -7,18 +7,24 @@ import (
 	"github.com/eghansah/orchestrator/pkg/types"
 )
 
-// parseComposePortAllocations extracts host→container port mappings from a
-// compose YAML string and returns them as PortAllocation entries so that
-// Service objects can route to stack containers via the service proxy.
+// parseComposeContainerPorts scans a compose YAML string for port declarations
+// and returns one PortAllocation per unique container port with AllocatedPort=0.
+// AllocatedPort is filled in by the FSM from the port pool, the same way
+// container workloads are handled.
 //
-// Only the short-form port syntax is supported:
+// Both short-form strings and bare integers are supported:
 //
-//	"HOST:CONTAINER[/proto]"
-//	"IP:HOST:CONTAINER[/proto]"
+//	"80"                → ContainerPort 80
+//	"80/tcp"            → ContainerPort 80, Protocol tcp
+//	"8080:80"           → ContainerPort 80  (host side ignored; FSM reassigns)
+//	"8080:80/tcp"       → ContainerPort 80
+//	"127.0.0.1:8080:80" → ContainerPort 80
 //
-// Container-only entries (no host port) are skipped because the host port
-// is unknown until nerdctl runs. Port ranges are not supported.
-func parseComposePortAllocations(yaml string) []types.PortAllocation {
+// Long-form (target:/published: mapping) and port ranges are not supported.
+// parseComposeContainerPorts returns one PortAllocation per port declaration
+// line. It does NOT deduplicate across services — two services each exposing
+// port 80 produce two entries so each gets its own loopback binding.
+func parseComposeContainerPorts(yaml string) []types.PortAllocation {
 	var out []types.PortAllocation
 	for _, line := range strings.Split(yaml, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -28,63 +34,33 @@ func parseComposePortAllocations(yaml string) []types.PortAllocation {
 		val := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
 		val = strings.Trim(val, "\"'")
 
-		pa := parseComposePortEntry(val)
-		if pa == nil {
+		containerPort, proto := PortContainerSide(val)
+		if containerPort == 0 {
 			continue
 		}
-		// Skip duplicates (same host+container pair from multiple services).
-		dup := false
-		for _, e := range out {
-			if e.AllocatedPort == pa.AllocatedPort && e.ContainerPort == pa.ContainerPort {
-				dup = true
-				break
-			}
-		}
-		if !dup {
-			out = append(out, *pa)
-		}
+		out = append(out, types.PortAllocation{
+			ContainerPort: containerPort,
+			Protocol:      proto,
+		})
 	}
 	return out
 }
 
-// parseComposePortEntry parses a single short-form compose port string.
-// Returns nil if the string is not a valid host:container mapping.
-func parseComposePortEntry(s string) *types.PortAllocation {
-	proto := "tcp"
-	// Strip optional /proto suffix — must appear after the last colon segment.
+// PortContainerSide extracts the container port and protocol from a short-form
+// compose port string. Returns (0, "") when the string is not a port entry.
+// Exported so the nerdctl package can reuse the parsing logic when rewriting
+// compose files at deployment time.
+func PortContainerSide(s string) (containerPort uint32, proto string) {
+	proto = "tcp"
 	if idx := strings.LastIndex(s, "/"); idx > strings.LastIndex(s, ":") {
 		proto = strings.ToLower(s[idx+1:])
 		s = s[:idx]
 	}
-
+	// Container port is always the last colon-separated segment.
 	parts := strings.Split(s, ":")
-	var hostStr, containerStr string
-	switch len(parts) {
-	case 1:
-		return nil // container port only; host port is unknown
-	case 2:
-		// HOST:CONTAINER or IP:CONTAINER (no host port).
-		// If parts[0] fails to parse as a number it's an IP without a host port.
-		hostStr, containerStr = parts[0], parts[1]
-	case 3:
-		// IP:HOST:CONTAINER
-		hostStr, containerStr = parts[1], parts[2]
-	default:
-		return nil
+	port, err := strconv.ParseUint(parts[len(parts)-1], 10, 32)
+	if err != nil || port == 0 {
+		return 0, ""
 	}
-
-	host, err := strconv.ParseUint(hostStr, 10, 32)
-	if err != nil || host == 0 {
-		return nil
-	}
-	container, err := strconv.ParseUint(containerStr, 10, 32)
-	if err != nil || container == 0 {
-		return nil
-	}
-
-	return &types.PortAllocation{
-		AllocatedPort: uint32(host),
-		ContainerPort: uint32(container),
-		Protocol:      proto,
-	}
+	return uint32(port), proto
 }

@@ -1,0 +1,40 @@
+# ~/.config/systemd/user/proxyd.service
+#
+# Runs the TCP service proxy and svc.local DNS server alongside the orchestrator.
+# proxyd reads <dataDir>/proxy/config.json, which the orchestrator writes and
+# keeps up to date. Start proxyd on every node that runs the orchestrator.
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp proxyd.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now proxyd
+#
+# To start at boot even without a login session:
+#   loginctl enable-linger $USER
+
+[Unit]
+Description=Service Proxy and DNS (svc.local)
+After=network-online.target orchestrator.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+ExecStart=%h/.local/bin/proxyd \
+  --config  %h/.local/share/orchestrator/proxy/config.json \
+  --node-id %H
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=proxyd
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

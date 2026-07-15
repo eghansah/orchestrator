@@ -6,13 +6,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/eghansah/orchestrator/pkg/types"
 )
@@ -47,10 +51,29 @@ const (
 type Client struct {
 	binary    string
 	namespace string
-	address   string   // containerd socket path, passed as --address to nerdctl
-	dataDir   string   // root for compose file storage
-	dnsIP     string   // injected into containers for svc.local resolution
-	dnsPort   uint32   // DNS port; if != 53, adds resolv.conf "options port:N"
+	address   string // containerd socket path, passed as --address to nerdctl
+	dataDir   string // root for compose file storage
+	dnsIP     string // injected into containers for svc.local resolution
+	dnsPort   uint32 // DNS port; if != 53, adds resolv.conf "options port:N"
+
+	mu          sync.Mutex
+	meshNetwork string // when set, managed containers attach to this nerdctl network for a mesh IP
+}
+
+// SetMeshNetwork enables (or, with "", disables) attaching managed containers to
+// the named mesh network. Called once the leader has assigned this node a mesh
+// subnet and the network has been created. Safe for concurrent use.
+func (c *Client) SetMeshNetwork(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.meshNetwork = name
+}
+
+// meshNet returns the currently configured mesh network name (or "").
+func (c *Client) meshNet() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.meshNetwork
 }
 
 // detectContainerdSocket returns the first containerd socket that exists,
@@ -226,12 +249,37 @@ func (c *Client) Probe(ctx context.Context) error {
 // pre-flight check uses the right socket instead of the hardcoded containerd-rootless path.
 // stderr is merged into the error message verbatim.
 func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
+	return c.exec(ctx, false, "", args...)
+}
+
+// runInsecure is like run but, when insecure is true, passes --insecure-registry
+// ahead of the subcommand so nerdctl will pull from plain-HTTP or self-signed
+// registries. That flag is global to nerdctl and must precede the subcommand.
+func (c *Client) runInsecure(ctx context.Context, insecure bool, args ...string) ([]byte, error) {
+	return c.exec(ctx, insecure, "", args...)
+}
+
+// exec is the shared nerdctl invocation path. insecure passes --insecure-registry.
+// hostsDir, when non-empty, passes --hosts-dir so nerdctl verifies registry TLS
+// certs against the CA files materialized there (see materializeRegistryCA),
+// instead of skipping verification entirely. nerdctl replaces its own default
+// hosts-dir search path once --hosts-dir is passed at all, so the defaults are
+// re-supplied alongside ours to avoid regressing any operator-managed trust
+// configured outside the orchestrator.
+func (c *Client) exec(ctx context.Context, insecure bool, hostsDir string, args ...string) ([]byte, error) {
 	global := []string{"--namespace", c.namespace}
 	if c.address != "" {
 		global = append(global, "--address", c.address)
 	}
+	if insecure {
+		global = append(global, "--insecure-registry")
+	}
+	if hostsDir != "" {
+		global = append(global, "--hosts-dir", hostsDir+","+defaultHostsDirs())
+	}
 	full := append(global, args...)
 	cmd := exec.CommandContext(ctx, c.binary, full...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if c.address != "" {
 		cmd.Env = append(os.Environ(), "CONTAINERD_ADDRESS="+c.address)
 	}
@@ -240,6 +288,18 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return out, nil
+}
+
+// defaultHostsDirs mirrors nerdctl's own default --hosts-dir search path
+// (~/.config/containerd/certs.d, ~/.config/docker/certs.d), so callers that
+// explicitly pass --hosts-dir don't lose nerdctl's usual fallback locations.
+func defaultHostsDirs() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".config", "containerd", "certs.d") + "," +
+		filepath.Join(home, ".config", "docker", "certs.d")
 }
 
 // runStdout is like run but captures stdout and stderr separately so that
@@ -251,6 +311,7 @@ func (c *Client) runStdout(ctx context.Context, args ...string) ([]byte, error) 
 	}
 	full := append(global, args...)
 	cmd := exec.CommandContext(ctx, c.binary, full...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if c.address != "" {
 		cmd.Env = append(os.Environ(), "CONTAINERD_ADDRESS="+c.address)
 	}
@@ -263,35 +324,168 @@ func (c *Client) runStdout(ctx context.Context, args ...string) ([]byte, error) 
 	return stdout.Bytes(), nil
 }
 
-func (c *Client) Pull(ctx context.Context, image string) error {
-	_, err := c.run(ctx, "pull", image)
+func (c *Client) Pull(ctx context.Context, image string, insecure bool) error {
+	_, err := c.runInsecure(ctx, insecure || isLocalhostImage(image), "pull", image)
 	return err
+}
+
+// isLocalhostImage reports whether the image reference points at a loopback
+// registry (127.0.0.1:* or localhost:*). Such registries require --insecure-registry
+// because they are served over plain HTTP without TLS.
+func isLocalhostImage(image string) bool {
+	return isIPOrLocalhost(registryHost(image))
+}
+
+// registryHost extracts the "host[:port]" prefix of an image reference, or ""
+// when the image has no explicit registry (e.g. "nginx:latest", pulled from
+// the default registry, which needs no custom CA trust).
+func registryHost(image string) string {
+	// Strip tag or digest.
+	ref := image
+	if i := strings.Index(ref, "@"); i >= 0 {
+		ref = ref[:i]
+	}
+	if i := strings.LastIndex(ref, ":"); i >= 0 {
+		// only strip the port/tag part if there's a '/' before it (i.e. it's a host:port, not name:tag)
+		if strings.ContainsRune(ref[:i], '/') || strings.ContainsRune(ref[:i], ':') || isIPOrLocalhost(ref[:i]) {
+			ref = ref[:i]
+		}
+	}
+	// ref is now "host[:port]/repo..." or just "repo..." (no explicit registry).
+	if i := strings.Index(ref, "/"); i >= 0 {
+		host := ref[:i]
+		// A bare repo path segment (no '.', ':', or "localhost") isn't a registry
+		// host — e.g. "library/nginx" — so only treat it as one if it looks like
+		// a hostname.
+		if strings.ContainsAny(host, ".:") || host == "localhost" {
+			return host
+		}
+		return ""
+	}
+	return ""
+}
+
+func isIPOrLocalhost(host string) bool {
+	return host == "localhost" ||
+		strings.HasPrefix(host, "127.") ||
+		host == "::1"
+}
+
+// composeImageHosts parses a compose YAML's services for their image
+// references and returns the distinct, non-empty registry hosts referenced.
+func composeImageHosts(composeYAML string) []string {
+	var doc struct {
+		Services map[string]struct {
+			Image string `yaml:"image"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(composeYAML), &doc); err != nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var hosts []string
+	for _, svc := range doc.Services {
+		host := registryHost(svc.Image)
+		if host == "" || seen[host] {
+			continue
+		}
+		seen[host] = true
+		hosts = append(hosts, host)
+	}
+	return hosts
+}
+
+// materializeRegistryCA writes pemBundle as the docker-style CA trust file
+// (<host>/ca.crt) nerdctl's --hosts-dir mechanism expects, for each host, so
+// registries signed by an internal CA can be verified without touching any
+// host-level containerd/docker config. Returns the hosts-dir root to pass to
+// --hosts-dir, or "" if there's nothing to materialize.
+//
+// The file must be named "*.crt", not "*.cert" — containerd's docker-style
+// hosts-dir loader treats "*.cert" as a client certificate (paired with a
+// matching "*.key" for mTLS) and only "*.crt" as a CA certificate; confirmed
+// against the installed nerdctl (v2.3.1), which contradicts its own --help text.
+func (c *Client) materializeRegistryCA(hosts []string, pemBundle string) (string, error) {
+	if pemBundle == "" || len(hosts) == 0 {
+		return "", nil
+	}
+	root := filepath.Join(c.dataDir, "registry-certs")
+	for _, host := range hosts {
+		if host == "" {
+			continue
+		}
+		hostDir := filepath.Join(root, host)
+		if err := os.MkdirAll(hostDir, 0o700); err != nil {
+			return "", fmt.Errorf("create registry cert dir for %s: %w", host, err)
+		}
+		if err := os.WriteFile(filepath.Join(hostDir, "ca.crt"), []byte(pemBundle), 0o600); err != nil {
+			return "", fmt.Errorf("write registry CA for %s: %w", host, err)
+		}
+	}
+	return root, nil
 }
 
 // RunContainer starts a detached container from the given spec, tagged with workloadID.
 // portAllocations maps container ports to auto-assigned host ports, always bound on
 // 127.0.0.1 so containers are only reachable via the ingress proxy.
-func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types.ContainerSpec, portAllocations []types.PortAllocation) error {
+func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types.ContainerSpec, portAllocations []types.PortAllocation, registryCABundle string) error {
 	if err := validateName(spec.Name); err != nil {
 		return err
 	}
 
-	// Build containerPort → allocatedPort lookup from auto-assigned allocations.
-	allocMap := make(map[uint32]uint32, len(portAllocations))
-	for _, pa := range portAllocations {
-		allocMap[pa.ContainerPort] = pa.AllocatedPort
+	// Replace any existing container so that port-binding changes (e.g. a loopback
+	// port auto-allocated after initial deployment) take effect. Errors here are
+	// expected when no prior container exists and are intentionally ignored.
+	_, _ = c.run(ctx, "stop", "--", spec.Name)
+	_, _ = c.run(ctx, "rm", "--", spec.Name)
+
+	args := buildRunArgs(workloadID, spec, portAllocations, c.dnsIP, c.dnsPort, c.meshNet())
+	insecure := spec.InsecureRegistry || isLocalhostImage(spec.Image)
+
+	hostsDir := ""
+	if host := registryHost(spec.Image); host != "" {
+		dir, err := c.materializeRegistryCA([]string{host}, registryCABundle)
+		if err != nil {
+			slog.Error("nerdctl: materialize registry CA failed", "host", host, "err", err)
+		} else {
+			hostsDir = dir
+		}
 	}
 
+	slog.Info("nerdctl: running container", "cmd", append([]string{c.binary}, args...))
+	_, err := c.exec(ctx, insecure, hostsDir, args...)
+	if err != nil {
+		slog.Error("nerdctl: run container failed", "name", spec.Name, "err", err)
+	}
+	return err
+}
+
+// buildRunArgs assembles the `nerdctl run` argument list for a managed container.
+// It is pure (no exec) so the command line can be unit-tested. When meshNetwork
+// is non-empty the container is additionally attached to that network so it
+// receives a mesh IP from the node's /24, on top of the existing loopback port
+// publishing used by the proxy. See docs/mesh-network.md.
+func buildRunArgs(workloadID string, spec types.ContainerSpec, portAllocations []types.PortAllocation, dnsIP string, dnsPort uint32, meshNetwork string) []string {
 	args := []string{"run", "-d", "--name", spec.Name}
+	if meshNetwork != "" {
+		args = append(args, "--network", meshNetwork)
+	}
 	for _, env := range spec.Env {
 		args = append(args, "-e", env)
 	}
-	for _, p := range spec.Ports {
-		if alloc, ok := allocMap[p.ContainerPort]; ok && alloc > 0 {
-			// Bind on loopback only — containers are not reachable from the network.
-			args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d/%s", alloc, p.ContainerPort, p.Protocol))
+	// Use portAllocations as the authoritative source for -p flags. This covers
+	// both ports declared in spec.Ports (assigned by the FSM on workload submit)
+	// and ports auto-allocated later by ensurePortAllocated when a Service or
+	// IngressRule references a port not originally declared in the workload spec.
+	for _, pa := range portAllocations {
+		if pa.AllocatedPort == 0 {
+			continue
 		}
-		// Ports without an allocation are intentionally not bound.
+		proto := pa.Protocol
+		if proto == "" {
+			proto = "tcp"
+		}
+		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d/%s", pa.AllocatedPort, pa.ContainerPort, proto))
 	}
 	for _, v := range spec.Volumes {
 		mount := fmt.Sprintf("%s:%s", v.Source, v.Target)
@@ -304,17 +498,15 @@ func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types
 		args = append(args, "--label", fmt.Sprintf("%s=%s", k, v))
 	}
 	args = append(args, "--label", fmt.Sprintf("%s=%s", workloadIDLabel, workloadID))
-	if c.dnsIP != "" {
-		args = append(args, "--dns", c.dnsIP, "--dns-search", "svc.local")
-		if c.dnsPort != 0 && c.dnsPort != 53 {
-			args = append(args, "--dns-opt", fmt.Sprintf("port:%d", c.dnsPort))
+	if dnsIP != "" {
+		args = append(args, "--dns", dnsIP, "--dns-search", "svc.local")
+		if dnsPort != 0 && dnsPort != 53 {
+			args = append(args, "--dns-opt", fmt.Sprintf("port:%d", dnsPort))
 		}
 	}
 	args = append(args, spec.Image)
 	args = append(args, spec.Command...)
-
-	_, err := c.run(ctx, args...)
-	return err
+	return args
 }
 
 func (c *Client) ContainerLogs(ctx context.Context, name string, tail int) (string, error) {
@@ -330,6 +522,14 @@ func (c *Client) StopContainer(ctx context.Context, name string) error {
 		return err
 	}
 	_, err := c.run(ctx, "stop", "--", name)
+	return err
+}
+
+func (c *Client) StartContainer(ctx context.Context, name string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
+	_, err := c.run(ctx, "start", "--", name)
 	return err
 }
 
@@ -366,6 +566,8 @@ func (ci containerInfo) workloadID() string {
 }
 
 // ListContainers returns all containers in the orchestrator namespace.
+// For containers that are running and attached to the mesh network, the mesh IP
+// is populated via a supplementary inspect call.
 func (c *Client) ListContainers(ctx context.Context) ([]types.ActualContainer, error) {
 	out, err := c.run(ctx, "ps", "-a", "--format", "{{json .}}")
 	if err != nil {
@@ -389,7 +591,52 @@ func (c *Client) ListContainers(ctx context.Context) ([]types.ActualContainer, e
 			Status:      ci.Status,
 		})
 	}
-	return result, scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	// Supplement with mesh IPs for running containers when the mesh network is active.
+	meshNet := c.meshNet()
+	if meshNet != "" && len(result) > 0 {
+		meshIPs := c.containerMeshIPs(ctx, result, meshNet)
+		for i := range result {
+			result[i].MeshIP = meshIPs[result[i].Name]
+		}
+	}
+	return result, nil
+}
+
+// containerMeshIPs calls nerdctl inspect for running containers and returns a
+// map from container name to the IP assigned on the given network.
+func (c *Client) containerMeshIPs(ctx context.Context, containers []types.ActualContainer, netName string) map[string]string {
+	var names []string
+	for _, ac := range containers {
+		if strings.HasPrefix(strings.ToLower(ac.Status), "up") {
+			names = append(names, ac.Name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+
+	args := append([]string{"inspect", "--type=container"}, names...)
+	out, err := c.runStdout(ctx, args...)
+	if err != nil {
+		return nil
+	}
+	var results []ContainerInspectResult
+	if err := json.Unmarshal(bytes.TrimSpace(out), &results); err != nil {
+		return nil
+	}
+	m := make(map[string]string, len(results))
+	for _, r := range results {
+		if nets := r.NetworkSettings.Networks; nets != nil {
+			if n, ok := nets[netName]; ok && n.IPAddress != "" {
+				m[r.Name] = n.IPAddress
+			}
+		}
+	}
+	return m
 }
 
 func (c *Client) composeDir(stackName string) (string, error) {
@@ -403,7 +650,7 @@ func (c *Client) composeDir(stackName string) (string, error) {
 // If spec.ResolvedEnv is non-empty (secrets resolved at placement time), a
 // .env file is written alongside the compose file so nerdctl compose picks
 // them up automatically.
-func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStackSpec) error {
+func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStackSpec, portAllocations []types.PortAllocation, registryCABundle string) error {
 	if err := validateName(spec.Name); err != nil {
 		return err
 	}
@@ -420,8 +667,10 @@ func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStac
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create compose dir: %w", err)
 	}
+	composeYAML := rewriteComposePorts(spec.ComposeYAML, portAllocations)
+	composeYAML = injectMeshNetwork(composeYAML, c.meshNet())
 	composeFile := filepath.Join(dir, "docker-compose.yml")
-	if err := os.WriteFile(composeFile, []byte(spec.ComposeYAML), 0o600); err != nil {
+	if err := os.WriteFile(composeFile, []byte(composeYAML), 0o600); err != nil {
 		return fmt.Errorf("write compose file: %w", err)
 	}
 	if len(spec.ResolvedEnv) > 0 {
@@ -431,7 +680,16 @@ func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStac
 			return fmt.Errorf("write env file: %w", err)
 		}
 	}
-	_, err = c.run(ctx, "compose", "-f", composeFile, "--project-name", spec.Name, "up", "-d")
+	hostsDir := ""
+	if hosts := composeImageHosts(spec.ComposeYAML); len(hosts) > 0 {
+		dir, err := c.materializeRegistryCA(hosts, registryCABundle)
+		if err != nil {
+			slog.Error("nerdctl: materialize registry CA failed", "hosts", hosts, "err", err)
+		} else {
+			hostsDir = dir
+		}
+	}
+	_, err = c.exec(ctx, spec.InsecureRegistry, hostsDir, "compose", "-f", composeFile, "--project-name", spec.Name, "up", "-d")
 	return err
 }
 
@@ -491,6 +749,251 @@ type serviceInfo struct {
 	Name    string `json:"Name"`
 	Service string `json:"Service"`
 	Status  string `json:"Status"`
+}
+
+// ContainerInspectResult holds the fields we surface from `nerdctl inspect`.
+type ContainerInspectResult struct {
+	ID    string `json:"Id"`
+	Name  string `json:"Name"`
+	State struct {
+		Status    string `json:"Status"`
+		Running   bool   `json:"Running"`
+		Pid       int    `json:"Pid"`
+		StartedAt string `json:"StartedAt"`
+	} `json:"State"`
+	Config struct {
+		Image string   `json:"Image"`
+		Env   []string `json:"Env"`
+	} `json:"Config"`
+	HostConfig struct {
+		PortBindings map[string][]struct {
+			HostIP   string `json:"HostIp"`
+			HostPort string `json:"HostPort"`
+		} `json:"PortBindings"`
+	} `json:"HostConfig"`
+	NetworkSettings struct {
+		Networks map[string]struct {
+			IPAddress  string `json:"IPAddress"`
+			Gateway    string `json:"Gateway"`
+			MacAddress string `json:"MacAddress"`
+		} `json:"Networks"`
+	} `json:"NetworkSettings"`
+	Mounts []struct {
+		Type        string `json:"Type"`
+		Name        string `json:"Name"`
+		Source      string `json:"Source"`
+		Destination string `json:"Destination"`
+		Mode        string `json:"Mode"`
+		RW          bool   `json:"RW"`
+	} `json:"Mounts"`
+}
+
+// InspectContainer returns full runtime details for the named container.
+func (c *Client) InspectContainer(ctx context.Context, name string) (*ContainerInspectResult, error) {
+	if err := validateName(name); err != nil {
+		return nil, err
+	}
+	out, err := c.runStdout(ctx, "inspect", "--type=container", "--", name)
+	if err != nil {
+		return nil, err
+	}
+	var results []ContainerInspectResult
+	if err := json.Unmarshal(bytes.TrimSpace(out), &results); err != nil {
+		return nil, fmt.Errorf("parse container inspect: %w", err)
+	}
+	if len(results) == 0 {
+		return nil, fmt.Errorf("container %q not found", name)
+	}
+	return &results[0], nil
+}
+
+// RestartContainer restarts the named container.
+func (c *Client) RestartContainer(ctx context.Context, name string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
+	_, err := c.run(ctx, "restart", "--", name)
+	return err
+}
+
+// NetworkInfo is the per-entry data from `nerdctl network ls --format '{{json .}}'`.
+type NetworkInfo struct {
+	NetworkID string `json:"NetworkID"`
+	Name      string `json:"Name"`
+	Driver    string `json:"Driver"`
+	IPv4      string `json:"IPv4"`
+	Labels    string `json:"Labels"`
+}
+
+// NetworkContainer is a container attached to a network.
+type NetworkContainer struct {
+	Name        string `json:"Name"`
+	IPv4Address string `json:"IPv4Address"`
+}
+
+// NetworkDetail is the full inspect result from `nerdctl network inspect`.
+type NetworkDetail struct {
+	Name   string `json:"Name"`
+	ID     string `json:"Id"`
+	Driver string `json:"Driver"`
+	IPAM   struct {
+		Config []struct {
+			Subnet  string `json:"Subnet"`
+			Gateway string `json:"Gateway"`
+		} `json:"Config"`
+	} `json:"IPAM"`
+	Containers map[string]NetworkContainer `json:"Containers"`
+	Labels     map[string]string           `json:"Labels"`
+}
+
+// VolumeInfo is the per-entry data from `nerdctl volume ls --format '{{json .}}'`.
+type VolumeInfo struct {
+	Name       string `json:"Name"`
+	Driver     string `json:"Driver"`
+	Mountpoint string `json:"Mountpoint"`
+	Labels     string `json:"Labels"`
+}
+
+// VolumeDetail is the full inspect result from `nerdctl volume inspect`.
+type VolumeDetail struct {
+	Name       string            `json:"Name"`
+	Driver     string            `json:"Driver"`
+	Mountpoint string            `json:"Mountpoint"`
+	Labels     map[string]string `json:"Labels"`
+	Scope      string            `json:"Scope"`
+}
+
+// meshNetworkLabel marks the per-node mesh network so it is recognizable as
+// orchestrator-managed (value is the subnet it was created for).
+const meshNetworkLabel = "orchestrator.mesh"
+
+// EnsureMeshNetwork makes the per-node mesh network exist with the given subnet,
+// gateway and bridge MTU, creating it if absent and recreating it if its subnet
+// drifted (e.g. the node was assigned a different /24). Containers attached to
+// this network draw mesh IPs from subnet; gateway is this node's own mesh
+// address. mtu should match the WireGuard tunnel MTU (typically 1380) so that
+// container-to-container packets fit inside the encapsulated frames without
+// fragmentation.
+func (c *Client) EnsureMeshNetwork(ctx context.Context, name, subnet, gateway string, mtu int) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
+	if detail, err := c.InspectNetwork(ctx, name); err == nil {
+		if networkMatches(detail, subnet) {
+			return nil // already correct
+		}
+		slog.Info("nerdctl: mesh network subnet changed, recreating", "name", name, "want", subnet)
+		if _, err := c.run(ctx, "network", "rm", "--", name); err != nil {
+			return fmt.Errorf("remove stale mesh network %q: %w", name, err)
+		}
+	}
+	args := []string{
+		"network", "create",
+		"--subnet", subnet,
+		"--gateway", gateway,
+		"--label", meshNetworkLabel + "=" + subnet,
+	}
+	if mtu > 0 {
+		args = append(args, "--opt", fmt.Sprintf("com.docker.network.driver.mtu=%d", mtu))
+	}
+	args = append(args, name)
+	if _, err := c.run(ctx, args...); err != nil {
+		return fmt.Errorf("create mesh network %q (%s): %w", name, subnet, err)
+	}
+	slog.Info("nerdctl: mesh network ready", "name", name, "subnet", subnet, "gateway", gateway, "mtu", mtu)
+	return nil
+}
+
+// networkMatches reports whether detail's IPAM already declares subnet.
+func networkMatches(detail *NetworkDetail, subnet string) bool {
+	for _, cfg := range detail.IPAM.Config {
+		if cfg.Subnet == subnet {
+			return true
+		}
+	}
+	return false
+}
+
+// ListNetworks returns all networks in the orchestrator namespace.
+func (c *Client) ListNetworks(ctx context.Context) ([]NetworkInfo, error) {
+	out, err := c.runStdout(ctx, "network", "ls", "--format", "{{json .}}")
+	if err != nil {
+		return nil, err
+	}
+	var result []NetworkInfo
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var ni NetworkInfo
+		if err := json.Unmarshal([]byte(line), &ni); err != nil {
+			continue
+		}
+		result = append(result, ni)
+	}
+	return result, scanner.Err()
+}
+
+// InspectNetwork returns full details for a single network by name.
+func (c *Client) InspectNetwork(ctx context.Context, name string) (*NetworkDetail, error) {
+	if err := validateName(name); err != nil {
+		return nil, err
+	}
+	out, err := c.runStdout(ctx, "network", "inspect", "--", name)
+	if err != nil {
+		return nil, err
+	}
+	var results []NetworkDetail
+	if err := json.Unmarshal(bytes.TrimSpace(out), &results); err != nil {
+		return nil, fmt.Errorf("parse network inspect: %w", err)
+	}
+	if len(results) == 0 {
+		return nil, fmt.Errorf("network %q not found", name)
+	}
+	return &results[0], nil
+}
+
+// ListVolumes returns all named volumes in the orchestrator namespace.
+func (c *Client) ListVolumes(ctx context.Context) ([]VolumeInfo, error) {
+	out, err := c.runStdout(ctx, "volume", "ls", "--format", "{{json .}}")
+	if err != nil {
+		return nil, err
+	}
+	var result []VolumeInfo
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var vi VolumeInfo
+		if err := json.Unmarshal([]byte(line), &vi); err != nil {
+			continue
+		}
+		result = append(result, vi)
+	}
+	return result, scanner.Err()
+}
+
+// InspectVolume returns full details for a single volume by name.
+func (c *Client) InspectVolume(ctx context.Context, name string) (*VolumeDetail, error) {
+	if err := validateName(name); err != nil {
+		return nil, err
+	}
+	out, err := c.runStdout(ctx, "volume", "inspect", "--", name)
+	if err != nil {
+		return nil, err
+	}
+	var results []VolumeDetail
+	if err := json.Unmarshal(bytes.TrimSpace(out), &results); err != nil {
+		return nil, fmt.Errorf("parse volume inspect: %w", err)
+	}
+	if len(results) == 0 {
+		return nil, fmt.Errorf("volume %q not found", name)
+	}
+	return &results[0], nil
 }
 
 // ComposePS returns the services of a running compose stack.

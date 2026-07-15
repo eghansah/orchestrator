@@ -2,6 +2,7 @@ package webui
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -16,8 +17,10 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"os"
 	"math/big"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,12 +31,14 @@ import (
 
 	"github.com/pquerna/otp/totp"
 
+	"github.com/eghansah/orchestrator/docs"
 	"github.com/eghansah/orchestrator/internal/agent"
+	"github.com/eghansah/orchestrator/internal/baoclient"
 	"github.com/eghansah/orchestrator/internal/control"
 	gen "github.com/eghansah/orchestrator/internal/grpc/gen"
 	internraft "github.com/eghansah/orchestrator/internal/raft"
 	"github.com/eghansah/orchestrator/internal/registry"
-	orcrypto "github.com/eghansah/orchestrator/pkg/crypto"
+	"github.com/eghansah/orchestrator/pkg/export"
 	"github.com/eghansah/orchestrator/pkg/types"
 )
 
@@ -47,7 +52,7 @@ type Server struct {
 	prefix        string // URL path prefix, e.g. "/console" (no trailing slash, may be "")
 	disableMFA    bool   // when true, skip TOTP step and issue session on password success
 	ldap          LDAPConfig
-	secretsKey    []byte // AES-256 key for secret encryption (derived from join-token)
+	version       string // stamped at build time; "dev" in local builds
 
 	sessionsMu sync.RWMutex
 	sessions   map[string]time.Time // per-login token → expiry
@@ -119,13 +124,16 @@ func (s *Server) consumePendingToken(token string) (pendingMFA, bool) {
 
 // New creates a Server. prefix is an optional URL subdirectory (e.g. "/console");
 // pass "" to serve at the root. A trailing slash is stripped automatically.
-func New(peer *internraft.Peer, ctrl *control.Server, ag *agent.Agent, adminToken, webPassword, prefix string, disableMFA bool, ldapCfg LDAPConfig, secretsKey []byte) *Server {
+func New(peer *internraft.Peer, ctrl *control.Server, ag *agent.Agent, adminToken, webPassword, prefix, version string, disableMFA bool, ldapCfg LDAPConfig) *Server {
 	p := strings.TrimRight(prefix, "/")
 	if p != "" && !strings.HasPrefix(p, "/") {
 		p = "/" + p
 	}
 	if ldapCfg.UserFilter == "" {
 		ldapCfg.UserFilter = "(sAMAccountName=%s)"
+	}
+	if version == "" {
+		version = "dev"
 	}
 	return &Server{
 		peer:        peer,
@@ -134,9 +142,9 @@ func New(peer *internraft.Peer, ctrl *control.Server, ag *agent.Agent, adminToke
 		adminToken:  adminToken,
 		webPassword: webPassword,
 		prefix:      p,
+		version:     version,
 		disableMFA:  disableMFA,
 		ldap:        ldapCfg,
-		secretsKey:  secretsKey,
 		sessions:    make(map[string]time.Time),
 		pending:     make(map[string]pendingMFA),
 	}
@@ -145,7 +153,8 @@ func New(peer *internraft.Peer, ctrl *control.Server, ag *agent.Agent, adminToke
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// Auth routes — unprotected (no Bearer token required).
+	// Unauthenticated routes.
+	mux.Handle("GET /api/version", http.HandlerFunc(s.handleVersion))
 	mux.Handle("POST /api/auth/login", http.HandlerFunc(s.handleLogin))
 	mux.Handle("POST /api/auth/logout", http.HandlerFunc(s.handleLogout))
 	mux.Handle("POST /api/auth/mfa", http.HandlerFunc(s.handleMFA))
@@ -160,6 +169,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/nodes/{id}/drain", a(s.handleDrain))
 	mux.Handle("GET /api/ingress", a(s.handleListIngress))
 	mux.Handle("POST /api/ingress", a(s.handleCreateIngress))
+	mux.Handle("POST /api/ingress/{id}/update", a(s.handleUpdateIngress))
 	mux.Handle("POST /api/ingress/{id}/delete", a(s.handleDeleteIngress))
 	mux.Handle("GET /api/services", a(s.handleListServices))
 	mux.Handle("POST /api/services", a(s.handleCreateService))
@@ -187,12 +197,32 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/templates/{id}/delete", a(s.handleDeleteTemplate))
 	mux.Handle("POST /api/templates/{id}/deploy", a(s.handleDeployTemplate))
 	mux.Handle("GET /api/containers/{name}/logs", a(s.handleContainerLogs))
+	mux.Handle("GET /api/containers/{name}/inspect", a(s.handleInspectContainer))
+	mux.Handle("POST /api/containers/{name}/restart", a(s.handleRestartContainer))
 	mux.Handle("GET /api/registries/{id}/catalog", a(s.handleRegistryCatalog))
 	mux.Handle("GET /api/registries/{id}/tags", a(s.handleRegistryTags))
 	mux.Handle("GET /api/registries/{id}/env", a(s.handleRegistryEnv))
 	mux.Handle("GET /api/secrets", a(s.handleListSecrets))
 	mux.Handle("POST /api/secrets", a(s.handleCreateSecret))
 	mux.Handle("POST /api/secrets/{id}/delete", a(s.handleDeleteSecret))
+	mux.Handle("GET /api/openbao/status", a(s.handleOpenBaoStatus))
+	mux.Handle("POST /api/openbao/config", a(s.handleSetOpenBaoConfig))
+	mux.Handle("GET /api/trusted-cas", a(s.handleListTrustedCAs))
+	mux.Handle("POST /api/trusted-cas", a(s.handleCreateTrustedCA))
+	mux.Handle("POST /api/trusted-cas/{id}/update", a(s.handleUpdateTrustedCA))
+	mux.Handle("POST /api/trusted-cas/{id}/delete", a(s.handleDeleteTrustedCA))
+	mux.Handle("POST /api/admin/compact", a(s.handleAdminCompact))
+	mux.Handle("GET /api/export", a(s.handleExport))
+	mux.Handle("POST /api/import", a(s.handleImport))
+	mux.Handle("GET /api/docs/{name}", a(s.handleDocs))
+	mux.Handle("GET /api/networks", a(s.handleListNetworks))
+	mux.Handle("GET /api/networks/{name}/inspect", a(s.handleInspectNetwork))
+	mux.Handle("GET /api/volumes", a(s.handleListVolumes))
+	mux.Handle("GET /api/volumes/{name}/inspect", a(s.handleInspectVolume))
+	mux.Handle("GET /api/system/services", a(s.handleSystemServices))
+	mux.Handle("POST /api/system/services/{name}/start", a(s.handleSystemServiceStart))
+	mux.Handle("POST /api/system/services/{name}/stop", a(s.handleSystemServiceStop))
+	mux.Handle("GET /api/system/changelog", a(s.handleChangelog))
 
 	// SPA: serve embedded dist/ with index.html fallback for client-side routing.
 	sub, _ := fs.Sub(distFS, "dist")
@@ -437,6 +467,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		ContainerStats   []containerStatsJSON `json:"container_stats"`
 		Registries       []registryJSON       `json:"registries"`
 		Secrets          []secretJSON         `json:"secrets"`
+		TrustedCAs       []trustedCAJSON      `json:"trusted_cas"`
 	}
 
 	allStates := s.agent.AllStates()
@@ -452,6 +483,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		ContainerStats:   []containerStatsJSON{},
 		Registries:       []registryJSON{},
 		Secrets:          []secretJSON{},
+		TrustedCAs:       []trustedCAJSON{},
 	}
 
 	for _, n := range state.Nodes {
@@ -512,6 +544,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 					StartedAt:   startedAt(svc.StartedAt),
 				})
 			}
+			sort.Slice(svcs, func(i, j int) bool { return svcs[i].Name < svcs[j].Name })
 			out.ActualStacks = append(out.ActualStacks, actualStackJSON{
 				WorkloadID: st.WorkloadID,
 				Name:       st.Name,
@@ -543,6 +576,22 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	for _, sec := range state.Secrets {
 		out.Secrets = append(out.Secrets, secretJSON{ID: sec.ID, Name: sec.Name, CreatedAt: sec.CreatedAt.Unix()})
 	}
+
+	for _, ca := range state.TrustedCAs {
+		out.TrustedCAs = append(out.TrustedCAs, trustedCAToJSON(ca))
+	}
+
+	// The slices above are built by ranging over Go maps, whose iteration
+	// order is randomized per request. Sort by a stable key so the web UI
+	// (which polls every few seconds) doesn't reshuffle rows on each refresh.
+	sort.Slice(out.Nodes, func(i, j int) bool { return out.Nodes[i].ID < out.Nodes[j].ID })
+	sort.Slice(out.Workloads, func(i, j int) bool { return out.Workloads[i].ID < out.Workloads[j].ID })
+	sort.Slice(out.ActualContainers, func(i, j int) bool { return out.ActualContainers[i].Name < out.ActualContainers[j].Name })
+	sort.Slice(out.ActualStacks, func(i, j int) bool { return out.ActualStacks[i].Name < out.ActualStacks[j].Name })
+	sort.Slice(out.ContainerStats, func(i, j int) bool { return out.ContainerStats[i].Name < out.ContainerStats[j].Name })
+	sort.Slice(out.Registries, func(i, j int) bool { return out.Registries[i].Name < out.Registries[j].Name })
+	sort.Slice(out.Secrets, func(i, j int) bool { return out.Secrets[i].Name < out.Secrets[j].Name })
+	sort.Slice(out.TrustedCAs, func(i, j int) bool { return out.TrustedCAs[i].Label < out.TrustedCAs[j].Label })
 
 	writeJSON(w, out)
 }
@@ -689,12 +738,15 @@ func (s *Server) handleDrain(w http.ResponseWriter, r *http.Request) {
 // ── Ingress API handlers ──────────────────────────────────────────────────────
 
 type ingressRuleJSON struct {
-	ID          string `json:"id"`
-	DomainID    string `json:"domain_id"`
-	Host        string `json:"host"`
-	PathPrefix  string `json:"path_prefix"`
-	ServiceName string `json:"service_name"`
-	CreatedAt   int64  `json:"created_at"`
+	ID            string `json:"id"`
+	DomainID      string `json:"domain_id"`
+	Host          string `json:"host"`
+	PathPrefix    string `json:"path_prefix"`
+	StripPrefix   bool   `json:"strip_prefix"`
+	ContainerFQDN string `json:"container_fqdn"`
+	ContainerPort uint32 `json:"container_port"`
+	SystemPort    uint32 `json:"system_port"`
+	CreatedAt     int64  `json:"created_at"`
 }
 
 func (s *Server) handleListIngress(w http.ResponseWriter, _ *http.Request) {
@@ -702,22 +754,36 @@ func (s *Server) handleListIngress(w http.ResponseWriter, _ *http.Request) {
 	rules := make([]ingressRuleJSON, 0, len(state.IngressRules))
 	for _, r := range state.IngressRules {
 		rules = append(rules, ingressRuleJSON{
-			ID:          r.ID,
-			DomainID:    r.DomainID,
-			Host:        r.Host,
-			PathPrefix:  r.PathPrefix,
-			ServiceName: r.ServiceName,
-			CreatedAt:   r.CreatedAt.Unix(),
+			ID:            r.ID,
+			DomainID:      r.DomainID,
+			Host:          r.Host,
+			PathPrefix:    r.PathPrefix,
+			StripPrefix:   r.StripPrefix,
+			ContainerFQDN: r.ContainerFQDN,
+			ContainerPort: r.ContainerPort,
+			SystemPort:    r.SystemPort,
+			CreatedAt:     r.CreatedAt.Unix(),
 		})
 	}
+	sort.Slice(rules, func(i, j int) bool {
+		if rules[i].Host != rules[j].Host {
+			return rules[i].Host < rules[j].Host
+		}
+		if rules[i].PathPrefix != rules[j].PathPrefix {
+			return rules[i].PathPrefix < rules[j].PathPrefix
+		}
+		return rules[i].ID < rules[j].ID
+	})
 	writeJSON(w, rules)
 }
 
 func (s *Server) handleCreateIngress(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		DomainID    string `json:"domain_id"`
-		PathPrefix  string `json:"path_prefix"`
-		ServiceName string `json:"service_name"`
+		DomainID      string `json:"domain_id"`
+		PathPrefix    string `json:"path_prefix"`
+		StripPrefix   bool   `json:"strip_prefix"`
+		ContainerFQDN string `json:"container_fqdn"`
+		ContainerPort uint32 `json:"container_port"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -727,8 +793,16 @@ func (s *Server) handleCreateIngress(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "domain_id is required")
 		return
 	}
-	if req.ServiceName == "" {
-		writeError(w, http.StatusBadRequest, "service_name is required")
+	if req.ContainerFQDN == "" {
+		writeError(w, http.StatusBadRequest, "container_fqdn is required")
+		return
+	}
+	if req.ContainerPort == 0 {
+		writeError(w, http.StatusBadRequest, "container_port is required")
+		return
+	}
+	if msg := s.checkContainerPort(req.ContainerFQDN, req.ContainerPort); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 	if !s.peer.IsLeader() {
@@ -742,18 +816,21 @@ func (s *Server) handleCreateIngress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rule := types.IngressRule{
-		ID:          newIngressID(),
-		DomainID:    domain.ID,
-		Host:        domain.Name,
-		PathPrefix:  req.PathPrefix,
-		ServiceName: req.ServiceName,
-		CreatedAt:   time.Now(),
+		ID:            newIngressID(),
+		DomainID:      domain.ID,
+		Host:          domain.Name,
+		PathPrefix:    req.PathPrefix,
+		StripPrefix:   req.StripPrefix,
+		ContainerFQDN: req.ContainerFQDN,
+		ContainerPort: req.ContainerPort,
+		CreatedAt:     time.Now(),
 	}
 	if err := s.peer.ApplyIngress(rule); err != nil {
 		writeError(w, http.StatusInternalServerError, "apply ingress: "+err.Error())
 		return
 	}
-	writeJSON(w, map[string]any{"rule_id": rule.ID, "accepted": true})
+	committed := s.peer.State().IngressRules[rule.ID]
+	writeJSON(w, map[string]any{"rule_id": rule.ID, "system_port": committed.SystemPort, "accepted": true})
 }
 
 func newIngressID() string {
@@ -773,6 +850,70 @@ func (s *Server) handleDeleteIngress(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+func (s *Server) handleUpdateIngress(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		DomainID      string `json:"domain_id"`
+		PathPrefix    string `json:"path_prefix"`
+		StripPrefix   bool   `json:"strip_prefix"`
+		ContainerFQDN string `json:"container_fqdn"`
+		ContainerPort uint32 `json:"container_port"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.DomainID == "" || req.ContainerFQDN == "" || req.ContainerPort == 0 {
+		writeError(w, http.StatusBadRequest, "domain_id, container_fqdn, and container_port are required")
+		return
+	}
+	if !s.peer.IsLeader() {
+		writeError(w, http.StatusServiceUnavailable, "not the leader")
+		return
+	}
+	state := s.peer.State()
+	existing, ok := state.IngressRules[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "ingress rule not found")
+		return
+	}
+	domain, ok := state.Domains[req.DomainID]
+	if !ok {
+		writeError(w, http.StatusBadRequest, "domain not found")
+		return
+	}
+	if msg := s.checkContainerPort(req.ContainerFQDN, req.ContainerPort); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
+	updated := types.IngressRule{
+		ID:            existing.ID,
+		DomainID:      domain.ID,
+		Host:          domain.Name,
+		PathPrefix:    req.PathPrefix,
+		StripPrefix:   req.StripPrefix,
+		ContainerFQDN: req.ContainerFQDN,
+		ContainerPort: req.ContainerPort,
+		SystemPort:    existing.SystemPort,
+		CreatedAt:     existing.CreatedAt,
+	}
+	if err := s.peer.ApplyIngress(updated); err != nil {
+		writeError(w, http.StatusInternalServerError, "apply ingress: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{
+		"id":             updated.ID,
+		"domain_id":      updated.DomainID,
+		"host":           updated.Host,
+		"path_prefix":    updated.PathPrefix,
+		"strip_prefix":   updated.StripPrefix,
+		"container_fqdn": updated.ContainerFQDN,
+		"container_port": updated.ContainerPort,
+		"system_port":    updated.SystemPort,
+		"created_at":     updated.CreatedAt.Unix(),
+	})
+}
+
 // ── Services API handlers ─────────────────────────────────────────────────────
 
 func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
@@ -783,91 +924,105 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type svcJSON struct {
-		ID           string `json:"id"`
-		Name         string `json:"name"`
-		WorkloadName string `json:"workload_name"`
-		TargetPort   uint32 `json:"target_port"`
-		SystemPort   uint32 `json:"system_port"`
-		CreatedAt    int64  `json:"created_at"`
+		ID            string `json:"id"`
+		Name          string `json:"name"`
+		ContainerFQDN string `json:"container_fqdn"`
+		ContainerPort uint32 `json:"container_port"`
+		SystemPort    uint32 `json:"system_port"`
+		CreatedAt     int64  `json:"created_at"`
 	}
 	svcs := make([]svcJSON, 0, len(resp.Services))
 	for _, s := range resp.Services {
 		svcs = append(svcs, svcJSON{
-			ID:           s.Id,
-			Name:         s.Name,
-			WorkloadName: s.WorkloadName,
-			TargetPort:   s.TargetPort,
-			SystemPort:   s.SystemPort,
-			CreatedAt:    s.CreatedAt,
+			ID:            s.Id,
+			Name:          s.Name,
+			ContainerFQDN: s.ContainerFqdn,
+			ContainerPort: s.ContainerPort,
+			SystemPort:    s.SystemPort,
+			CreatedAt:     s.CreatedAt,
 		})
 	}
+	sort.Slice(svcs, func(i, j int) bool {
+		if svcs[i].Name != svcs[j].Name {
+			return svcs[i].Name < svcs[j].Name
+		}
+		return svcs[i].ID < svcs[j].ID
+	})
 	writeJSON(w, svcs)
 }
 
-// checkServicePort returns a warning string if workloadName does not publish
-// targetPort as an allocated container port. Returns "" when the port is fine.
-func (s *Server) checkServicePort(workloadName string, targetPort uint32) string {
+// checkContainerPort returns a non-empty error string when no host port has
+// been allocated for containerPort on the workload identified by containerFQDN.
+// Returns "" when a valid allocation is found. Callers must reject the request
+// on a non-empty return — without an AllocatedPort, proxyd has nothing to route to.
+func (s *Server) checkContainerPort(containerFQDN string, containerPort uint32) string {
+	workloadName := containerFQDN
+	if i := strings.LastIndex(containerFQDN, "."); i >= 0 {
+		workloadName = containerFQDN[i+1:]
+	}
 	state := s.peer.State()
 	for _, wl := range state.Workloads {
 		if wl.Name() != workloadName {
 			continue
 		}
 		for _, pa := range wl.PortAllocations {
-			if pa.ContainerPort == targetPort {
+			if pa.ContainerPort == containerPort && pa.AllocatedPort != 0 {
 				return ""
 			}
 		}
-		if wl.Kind == types.KindStack {
-			return fmt.Sprintf("port %d is not declared in the compose YAML for workload %q — add a host:container port mapping and re-submit", targetPort, workloadName)
-		}
-		return fmt.Sprintf("port %d is not published by workload %q — add the port to the workload definition and re-submit for the service to function", targetPort, workloadName)
+		return fmt.Sprintf(
+			"no host port allocated for container port %d on workload %q — "+
+				"add a ports entry (e.g. ports: [\"%d\"]) to the workload definition and redeploy",
+			containerPort, workloadName, containerPort)
 	}
-	return fmt.Sprintf("workload %q not found", workloadName)
+	return fmt.Sprintf("workload %q not found — deploy the workload before creating a service", workloadName)
 }
 
 func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name         string `json:"name"`
-		WorkloadName string `json:"workload_name"`
-		TargetPort   uint32 `json:"target_port"`
+		Name          string `json:"name"`
+		ContainerFQDN string `json:"container_fqdn"`
+		ContainerPort uint32 `json:"container_port"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if msg := s.checkContainerPort(req.ContainerFQDN, req.ContainerPort); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
 	resp, err := s.ctrl.CreateService(r.Context(), &gen.CreateServiceRequest{
-		Name:         req.Name,
-		WorkloadName: req.WorkloadName,
-		TargetPort:   req.TargetPort,
+		Name:          req.Name,
+		ContainerFqdn: req.ContainerFQDN,
+		ContainerPort: req.ContainerPort,
 	})
 	if err != nil {
 		st, _ := status.FromError(err)
 		writeError(w, grpcHTTPStatus(st.Code()), st.Message())
 		return
 	}
-	warning := s.checkServicePort(req.WorkloadName, req.TargetPort)
 	writeJSON(w, map[string]any{
 		"service_id":  resp.ServiceId,
 		"system_port": resp.SystemPort,
 		"accepted":    resp.Accepted,
 		"reason":      resp.Reason,
-		"warning":     warning,
 	})
 }
 
 func (s *Server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req struct {
-		Name         string `json:"name"`
-		WorkloadName string `json:"workload_name"`
-		TargetPort   uint32 `json:"target_port"`
+		Name          string `json:"name"`
+		ContainerFQDN string `json:"container_fqdn"`
+		ContainerPort uint32 `json:"container_port"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Name == "" || req.WorkloadName == "" || req.TargetPort == 0 {
-		writeError(w, http.StatusBadRequest, "name, workload_name, and target_port are required")
+	if req.Name == "" || req.ContainerFQDN == "" || req.ContainerPort == 0 {
+		writeError(w, http.StatusBadRequest, "name, container_fqdn, and container_port are required")
 		return
 	}
 	state := s.peer.State()
@@ -877,26 +1032,28 @@ func (s *Server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated := types.Service{
-		ID:           existing.ID,
-		Name:         req.Name,
-		WorkloadName: req.WorkloadName,
-		TargetPort:   req.TargetPort,
-		SystemPort:   existing.SystemPort,
-		CreatedAt:    existing.CreatedAt,
+		ID:            existing.ID,
+		Name:          req.Name,
+		ContainerFQDN: req.ContainerFQDN,
+		ContainerPort: req.ContainerPort,
+		SystemPort:    existing.SystemPort,
+		CreatedAt:     existing.CreatedAt,
+	}
+	if msg := s.checkContainerPort(req.ContainerFQDN, req.ContainerPort); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
 	}
 	if err := s.peer.ApplyService(updated); err != nil {
 		writeError(w, http.StatusInternalServerError, "apply service: "+err.Error())
 		return
 	}
-	warning := s.checkServicePort(req.WorkloadName, req.TargetPort)
 	writeJSON(w, map[string]any{
-		"id":            updated.ID,
-		"name":          updated.Name,
-		"workload_name": updated.WorkloadName,
-		"target_port":   updated.TargetPort,
-		"system_port":   updated.SystemPort,
-		"created_at":    updated.CreatedAt.Unix(),
-		"warning":       warning,
+		"id":             updated.ID,
+		"name":           updated.Name,
+		"container_fqdn": updated.ContainerFQDN,
+		"container_port": updated.ContainerPort,
+		"system_port":    updated.SystemPort,
+		"created_at":     updated.CreatedAt.Unix(),
 	})
 }
 
@@ -909,6 +1066,30 @@ func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, resp)
+}
+
+// ── Docs handler ─────────────────────────────────────────────────────────────
+
+var allowedDocs = map[string]string{
+	"deploy":     "deploy.md",
+	"production": "production.md",
+	"changelog":  "CHANGELOG.md",
+}
+
+func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	filename, ok := allowedDocs[name]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := docs.FS.ReadFile(filename)
+	if err != nil {
+		http.Error(w, "doc not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	_, _ = w.Write(data)
 }
 
 // ── SPA handler ───────────────────────────────────────────────────────────────
@@ -961,6 +1142,126 @@ func (h spaHandler) serveIndex(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(data)
+}
+
+// ── Networks ──────────────────────────────────────────────────────────────────
+
+func (s *Server) handleListNetworks(w http.ResponseWriter, r *http.Request) {
+	networks, err := s.agent.ListNetworks(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "list networks: "+err.Error())
+		return
+	}
+	type networkJSON struct {
+		NetworkID string `json:"network_id"`
+		Name      string `json:"name"`
+		Driver    string `json:"driver"`
+		IPv4      string `json:"ipv4"`
+		Labels    string `json:"labels"`
+	}
+	out := make([]networkJSON, 0, len(networks))
+	for _, n := range networks {
+		out = append(out, networkJSON{
+			NetworkID: n.NetworkID,
+			Name:      n.Name,
+			Driver:    n.Driver,
+			IPv4:      n.IPv4,
+			Labels:    n.Labels,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	writeJSON(w, out)
+}
+
+func (s *Server) handleInspectNetwork(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	detail, err := s.agent.InspectNetwork(r.Context(), name)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "inspect network: "+err.Error())
+		return
+	}
+	type containerOnNet struct {
+		Name        string `json:"name"`
+		IPv4Address string `json:"ipv4_address"`
+	}
+	type networkDetailJSON struct {
+		Name       string            `json:"name"`
+		ID         string            `json:"id"`
+		Driver     string            `json:"driver"`
+		Subnet     string            `json:"subnet"`
+		Gateway    string            `json:"gateway"`
+		Containers []containerOnNet  `json:"containers"`
+		Labels     map[string]string `json:"labels"`
+	}
+	out := networkDetailJSON{
+		Name:       detail.Name,
+		ID:         detail.ID,
+		Driver:     detail.Driver,
+		Containers: []containerOnNet{},
+		Labels:     detail.Labels,
+	}
+	if len(detail.IPAM.Config) > 0 {
+		out.Subnet = detail.IPAM.Config[0].Subnet
+		out.Gateway = detail.IPAM.Config[0].Gateway
+	}
+	for _, c := range detail.Containers {
+		out.Containers = append(out.Containers, containerOnNet{
+			Name:        c.Name,
+			IPv4Address: c.IPv4Address,
+		})
+	}
+	sort.Slice(out.Containers, func(i, j int) bool { return out.Containers[i].Name < out.Containers[j].Name })
+	writeJSON(w, out)
+}
+
+// ── Volumes ───────────────────────────────────────────────────────────────────
+
+func (s *Server) handleListVolumes(w http.ResponseWriter, r *http.Request) {
+	volumes, err := s.agent.ListVolumes(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "list volumes: "+err.Error())
+		return
+	}
+	type volumeJSON struct {
+		Name       string `json:"name"`
+		Driver     string `json:"driver"`
+		Mountpoint string `json:"mountpoint"`
+		Labels     string `json:"labels"`
+	}
+	out := make([]volumeJSON, 0, len(volumes))
+	for _, v := range volumes {
+		out = append(out, volumeJSON{
+			Name:       v.Name,
+			Driver:     v.Driver,
+			Mountpoint: v.Mountpoint,
+			Labels:     v.Labels,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	writeJSON(w, out)
+}
+
+func (s *Server) handleInspectVolume(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	detail, err := s.agent.InspectVolume(r.Context(), name)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "inspect volume: "+err.Error())
+		return
+	}
+	type volumeDetailJSON struct {
+		Name       string            `json:"name"`
+		Driver     string            `json:"driver"`
+		Mountpoint string            `json:"mountpoint"`
+		Labels     map[string]string `json:"labels"`
+		Scope      string            `json:"scope"`
+	}
+	writeJSON(w, volumeDetailJSON{
+		Name:       detail.Name,
+		Driver:     detail.Driver,
+		Mountpoint: detail.Mountpoint,
+		Labels:     detail.Labels,
+		Scope:      detail.Scope,
+	})
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1075,6 +1376,12 @@ func (s *Server) handleListDomains(w http.ResponseWriter, _ *http.Request) {
 	for _, d := range state.Domains {
 		out = append(out, domainToJSON(d))
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ID < out[j].ID
+	})
 	writeJSON(w, out)
 }
 
@@ -1339,6 +1646,12 @@ func (s *Server) handleListUsers(w http.ResponseWriter, _ *http.Request) {
 			CreatedAt:  u.CreatedAt.Unix(),
 		})
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Username != out[j].Username {
+			return out[i].Username < out[j].Username
+		}
+		return out[i].ID < out[j].ID
+	})
 	writeJSON(w, out)
 }
 
@@ -1455,6 +1768,12 @@ func (s *Server) handleListRegistries(w http.ResponseWriter, _ *http.Request) {
 			CreatedAt: r.CreatedAt.Unix(),
 		})
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ID < out[j].ID
+	})
 	writeJSON(w, out)
 }
 
@@ -1665,6 +1984,98 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"logs": logs})
 }
 
+func (s *Server) handleInspectContainer(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	detail, err := s.agent.InspectContainer(r.Context(), name)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "inspect container: "+err.Error())
+		return
+	}
+
+	type portBinding struct {
+		HostIP   string `json:"host_ip"`
+		HostPort string `json:"host_port"`
+	}
+	type networkEntry struct {
+		Name       string `json:"name"`
+		IPAddress  string `json:"ip_address"`
+		Gateway    string `json:"gateway"`
+		MacAddress string `json:"mac_address"`
+	}
+	type mountEntry struct {
+		Type        string `json:"type"`
+		Name        string `json:"name"`
+		Source      string `json:"source"`
+		Destination string `json:"destination"`
+		Mode        string `json:"mode"`
+		RW          bool   `json:"rw"`
+	}
+	type resp struct {
+		ID           string                   `json:"id"`
+		Name         string                   `json:"name"`
+		Status       string                   `json:"status"`
+		Running      bool                     `json:"running"`
+		Pid          int                      `json:"pid"`
+		StartedAt    string                   `json:"started_at"`
+		Image        string                   `json:"image"`
+		Env          []string                 `json:"env"`
+		PortBindings map[string][]portBinding `json:"port_bindings"`
+		Networks     []networkEntry           `json:"networks"`
+		Mounts       []mountEntry             `json:"mounts"`
+	}
+
+	out := resp{
+		ID:        detail.ID,
+		Name:      strings.TrimPrefix(detail.Name, "/"),
+		Status:    detail.State.Status,
+		Running:   detail.State.Running,
+		Pid:       detail.State.Pid,
+		StartedAt: detail.State.StartedAt,
+		Image:     detail.Config.Image,
+		Env:       detail.Config.Env,
+		Mounts:    []mountEntry{},
+		Networks:  []networkEntry{},
+	}
+
+	out.PortBindings = make(map[string][]portBinding, len(detail.HostConfig.PortBindings))
+	for proto, bindings := range detail.HostConfig.PortBindings {
+		for _, b := range bindings {
+			out.PortBindings[proto] = append(out.PortBindings[proto], portBinding{b.HostIP, b.HostPort})
+		}
+	}
+
+	for netName, n := range detail.NetworkSettings.Networks {
+		out.Networks = append(out.Networks, networkEntry{
+			Name:       netName,
+			IPAddress:  n.IPAddress,
+			Gateway:    n.Gateway,
+			MacAddress: n.MacAddress,
+		})
+	}
+
+	for _, m := range detail.Mounts {
+		out.Mounts = append(out.Mounts, mountEntry{
+			Type:        m.Type,
+			Name:        m.Name,
+			Source:      m.Source,
+			Destination: m.Destination,
+			Mode:        m.Mode,
+			RW:          m.RW,
+		})
+	}
+
+	writeJSON(w, out)
+}
+
+func (s *Server) handleRestartContainer(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := s.agent.RestartContainer(r.Context(), name); err != nil {
+		writeError(w, http.StatusBadGateway, "restart container: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
 func newRegistryID() string {
 	b := make([]byte, 8)
 	_, _ = crand.Read(b)
@@ -1690,18 +2101,20 @@ type templateRequestJSON struct {
 		Target   string `json:"target"`
 		ReadOnly bool   `json:"read_only"`
 	} `json:"volumes,omitempty"`
-	Labels    map[string]string `json:"labels,omitempty"`
-	Namespace string            `json:"namespace,omitempty"`
+	Labels           map[string]string `json:"labels,omitempty"`
+	Namespace        string            `json:"namespace,omitempty"`
+	InsecureRegistry bool              `json:"insecure_registry,omitempty"`
 }
 
 type templateJSON struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Kind        string `json:"kind"`
-	ComposeYAML string `json:"compose_yaml,omitempty"`
-	Image       string `json:"image,omitempty"`
-	CreatedAt   int64  `json:"created_at"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	Kind             string `json:"kind"`
+	ComposeYAML      string `json:"compose_yaml,omitempty"`
+	Image            string `json:"image,omitempty"`
+	InsecureRegistry bool   `json:"insecure_registry,omitempty"`
+	CreatedAt        int64  `json:"created_at"`
 }
 
 func templateToJSON(t types.WorkloadTemplate) templateJSON {
@@ -1714,9 +2127,11 @@ func templateToJSON(t types.WorkloadTemplate) templateJSON {
 	}
 	if t.Stack != nil {
 		out.ComposeYAML = t.Stack.ComposeYAML
+		out.InsecureRegistry = t.Stack.InsecureRegistry
 	}
 	if t.Container != nil {
 		out.Image = t.Container.Image
+		out.InsecureRegistry = t.Container.InsecureRegistry
 	}
 	return out
 }
@@ -1729,15 +2144,16 @@ func templateFromRequest(req templateRequestJSON) (types.WorkloadTemplate, error
 	switch req.Kind {
 	case "stack":
 		t.Kind = types.KindStack
-		t.Stack = &types.ComposeStackSpec{ComposeYAML: req.ComposeYAML}
+		t.Stack = &types.ComposeStackSpec{ComposeYAML: req.ComposeYAML, InsecureRegistry: req.InsecureRegistry}
 	case "container":
 		t.Kind = types.KindContainer
 		spec := types.ContainerSpec{
-			Image:     req.Image,
-			Command:   req.Command,
-			Env:       req.Env,
-			Labels:    req.Labels,
-			Namespace: req.Namespace,
+			Image:            req.Image,
+			Command:          req.Command,
+			Env:              req.Env,
+			Labels:           req.Labels,
+			Namespace:        req.Namespace,
+			InsecureRegistry: req.InsecureRegistry,
 		}
 		for _, p := range req.Ports {
 			spec.Ports = append(spec.Ports, types.PortMapping{ContainerPort: p.ContainerPort, Protocol: p.Protocol})
@@ -1758,6 +2174,12 @@ func (s *Server) handleListTemplates(w http.ResponseWriter, _ *http.Request) {
 	for _, t := range templates {
 		out = append(out, templateToJSON(t))
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ID < out[j].ID
+	})
 	writeJSON(w, out)
 }
 
@@ -1828,6 +2250,23 @@ func (s *Server) handleDeployTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "template not found")
 		return
 	}
+
+	// Redeploy semantics: a deployed template's workload carries the template
+	// name, so tear down any existing workload(s) with the same name before
+	// submitting the new one. RemoveWorkload is synchronous (stops + removes on
+	// the node, then deletes from Raft), so the new workload starts clean — no
+	// lingering container or port allocation from the previous deploy.
+	for _, wl := range state.Workloads {
+		if workloadName(wl) != t.Name {
+			continue
+		}
+		if _, err := s.ctrl.RemoveWorkload(r.Context(), &gen.RemoveWorkloadRequest{WorkloadId: wl.ID}); err != nil {
+			st, _ := status.FromError(err)
+			writeError(w, grpcHTTPStatus(st.Code()), "stop previous workload: "+st.Message())
+			return
+		}
+	}
+
 	var resp *gen.SubmitResponse
 	var err error
 	switch t.Kind {
@@ -1836,9 +2275,9 @@ func (s *Server) handleDeployTemplate(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "template has no stack spec")
 			return
 		}
-		resp, err = s.ctrl.SubmitStack(r.Context(), &gen.SubmitStackRequest{
-			Spec: &gen.ComposeStackSpec{Name: t.Name, ComposeYaml: t.Stack.ComposeYAML},
-		})
+		stackSpec := types.ComposeStackSpecToProto(*t.Stack)
+		stackSpec.Name = t.Name
+		resp, err = s.ctrl.SubmitStack(r.Context(), &gen.SubmitStackRequest{Spec: stackSpec})
 	case types.KindContainer:
 		if t.Container == nil {
 			writeError(w, http.StatusBadRequest, "template has no container spec")
@@ -2041,6 +2480,12 @@ func (s *Server) handleListSecrets(w http.ResponseWriter, _ *http.Request) {
 	for _, sec := range state.Secrets {
 		out = append(out, secretJSON{ID: sec.ID, Name: sec.Name, CreatedAt: sec.CreatedAt.Unix()})
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ID < out[j].ID
+	})
 	writeJSON(w, out)
 }
 
@@ -2057,18 +2502,27 @@ func (s *Server) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and value are required")
 		return
 	}
-	encrypted, err := orcrypto.Encrypt(s.secretsKey, []byte(req.Value))
+	bao, err := s.openBaoClient()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "encrypt: "+err.Error())
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if err := bao.Health(r.Context()); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "openbao unreachable: "+err.Error())
 		return
 	}
 	sec := types.Secret{
-		ID:             newSecretID(),
-		Name:           req.Name,
-		EncryptedValue: encrypted,
-		CreatedAt:      time.Now().UTC(),
+		ID:        newSecretID(),
+		Name:      req.Name,
+		BaoPath:   "orchestrator/" + req.Name,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := bao.Write(r.Context(), sec.BaoPath, req.Value); err != nil {
+		writeError(w, http.StatusInternalServerError, "write to openbao: "+err.Error())
+		return
 	}
 	if err := s.peer.ApplySecret(sec); err != nil {
+		_ = bao.Delete(r.Context(), sec.BaoPath)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -2077,9 +2531,634 @@ func (s *Server) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	state := s.peer.State()
+	sec, ok := state.Secrets[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "secret not found")
+		return
+	}
+	if bao, err := s.openBaoClient(); err == nil {
+		_ = bao.Delete(r.Context(), sec.BaoPath)
+	}
 	if err := s.peer.RemoveSecret(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, map[string]bool{"accepted": true})
+}
+
+// openBaoClient returns a baoclient.Client from current Raft config, or an error
+// if OpenBao has not been configured.
+func (s *Server) openBaoClient() (*baoclient.Client, error) {
+	cfg := s.peer.State().OpenBaoConfig
+	if cfg == nil || cfg.Address == "" {
+		return nil, fmt.Errorf("OpenBao is not configured — add connection details on the Secrets page")
+	}
+	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
+	return baoclient.New(cfg.Address, cfg.Token, cfg.Mount, caBundle, cfg.InsecureSkipVerify), nil
+}
+
+// ── OpenBao API handlers ───────────────────────────────────────────────────────
+
+type openBaoStatusJSON struct {
+	Configured         bool   `json:"configured"`
+	Address            string `json:"address,omitempty"`
+	Mount              string `json:"mount,omitempty"`
+	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+	Connected          bool   `json:"connected"`
+	Error              string `json:"error,omitempty"`
+}
+
+func (s *Server) handleOpenBaoStatus(w http.ResponseWriter, r *http.Request) {
+	cfg := s.peer.State().OpenBaoConfig
+	if cfg == nil || cfg.Address == "" {
+		writeJSON(w, openBaoStatusJSON{Configured: false})
+		return
+	}
+	out := openBaoStatusJSON{
+		Configured:         true,
+		Address:            cfg.Address,
+		Mount:              cfg.Mount,
+		InsecureSkipVerify: cfg.InsecureSkipVerify,
+	}
+	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
+	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount, caBundle, cfg.InsecureSkipVerify)
+	if err := bao.Health(r.Context()); err != nil {
+		out.Error = err.Error()
+	} else {
+		out.Connected = true
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleSetOpenBaoConfig(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Address            string `json:"address"`
+		Token              string `json:"token"`
+		Mount              string `json:"mount"`
+		InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Address == "" {
+		writeError(w, http.StatusBadRequest, "address is required")
+		return
+	}
+	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
+	bao := baoclient.New(req.Address, req.Token, req.Mount, caBundle, req.InsecureSkipVerify)
+	if err := bao.Health(r.Context()); err != nil {
+		writeError(w, http.StatusBadGateway, "health check failed: "+err.Error())
+		return
+	}
+	cfg := types.OpenBaoConfig{
+		Address:            req.Address,
+		Token:              req.Token,
+		Mount:              req.Mount,
+		InsecureSkipVerify: req.InsecureSkipVerify,
+	}
+	if err := s.peer.SetOpenBaoConfig(cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"accepted": true})
+}
+
+// ── Trusted CA API handlers ────────────────────────────────────────────────────
+
+type trustedCAJSON struct {
+	ID                  string `json:"id"`
+	Label               string `json:"label"`
+	PEM                 string `json:"pem"`
+	AppliesToOpenBao    bool   `json:"appliesToOpenBao"`
+	AppliesToRegistries bool   `json:"appliesToRegistries"`
+	NotAfter            int64  `json:"notAfter,omitempty"`
+	Expired             bool   `json:"expired"`
+	CreatedAt           int64  `json:"createdAt"`
+}
+
+func trustedCAToJSON(ca types.TrustedCA) trustedCAJSON {
+	out := trustedCAJSON{
+		ID:                  ca.ID,
+		Label:               ca.Label,
+		PEM:                 ca.PEM,
+		AppliesToOpenBao:    ca.AppliesToOpenBao,
+		AppliesToRegistries: ca.AppliesToRegistries,
+		Expired:             ca.Expired(),
+		CreatedAt:           ca.CreatedAt.Unix(),
+	}
+	if cert, err := ca.ParseCert(); err == nil {
+		out.NotAfter = cert.NotAfter.Unix()
+	}
+	return out
+}
+
+func newTrustedCAID() string {
+	b := make([]byte, 8)
+	_, _ = crand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
+
+func (s *Server) handleListTrustedCAs(w http.ResponseWriter, _ *http.Request) {
+	state := s.peer.State()
+	out := make([]trustedCAJSON, 0, len(state.TrustedCAs))
+	for _, ca := range state.TrustedCAs {
+		out = append(out, trustedCAToJSON(ca))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Label != out[j].Label {
+			return out[i].Label < out[j].Label
+		}
+		return out[i].ID < out[j].ID
+	})
+	writeJSON(w, out)
+}
+
+func (s *Server) handleCreateTrustedCA(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Label               string `json:"label"`
+		PEM                 string `json:"pem"`
+		AppliesToOpenBao    bool   `json:"appliesToOpenBao"`
+		AppliesToRegistries bool   `json:"appliesToRegistries"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Label == "" || req.PEM == "" {
+		writeError(w, http.StatusBadRequest, "label and pem are required")
+		return
+	}
+	ca := types.TrustedCA{
+		ID:                  newTrustedCAID(),
+		Label:               req.Label,
+		PEM:                 req.PEM,
+		AppliesToOpenBao:    req.AppliesToOpenBao,
+		AppliesToRegistries: req.AppliesToRegistries,
+		CreatedAt:           time.Now().UTC(),
+	}
+	if _, err := ca.ParseCert(); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid PEM certificate: "+err.Error())
+		return
+	}
+	if err := s.peer.ApplyTrustedCA(ca); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, trustedCAToJSON(ca))
+}
+
+func (s *Server) handleUpdateTrustedCA(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Label               string `json:"label"`
+		PEM                 string `json:"pem"`
+		AppliesToOpenBao    bool   `json:"appliesToOpenBao"`
+		AppliesToRegistries bool   `json:"appliesToRegistries"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	state := s.peer.State()
+	existing, ok := state.TrustedCAs[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "trusted CA not found")
+		return
+	}
+
+	updated := types.TrustedCA{
+		ID:                  existing.ID,
+		Label:               existing.Label,
+		PEM:                 existing.PEM,
+		AppliesToOpenBao:    req.AppliesToOpenBao,
+		AppliesToRegistries: req.AppliesToRegistries,
+		CreatedAt:           existing.CreatedAt,
+	}
+	if req.Label != "" {
+		updated.Label = req.Label
+	}
+	// Only replace the certificate if a new one is provided; blank keeps the existing one.
+	if req.PEM != "" {
+		updated.PEM = req.PEM
+	}
+	if _, err := updated.ParseCert(); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid PEM certificate: "+err.Error())
+		return
+	}
+
+	if err := s.peer.ApplyTrustedCA(updated); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, trustedCAToJSON(updated))
+}
+
+func (s *Server) handleDeleteTrustedCA(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.peer.RemoveTrustedCA(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"accepted": true})
+}
+
+func (s *Server) handleAdminCompact(w http.ResponseWriter, _ *http.Request) {
+	if err := s.peer.ForceSnapshot(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"accepted": true})
+}
+
+// ── System services ───────────────────────────────────────────────────────────
+
+// systemServiceNames lists the containers the orchestrator manages internally.
+var systemServiceNames = []string{"ingressd", "meshrouterd"}
+
+type systemServiceInfo struct {
+	Name         string `json:"name"`
+	Role         string `json:"role"`
+	Kind         string `json:"kind"`         // "container" | "process"
+	Status       string `json:"status"`       // "running" | "stopped" | "not found" | "unknown"
+	Controllable bool   `json:"controllable"` // false for host processes
+}
+
+func (s *Server) handleSystemServices(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	out := make([]systemServiceInfo, 0, 3)
+
+	roles := map[string]string{
+		"ingressd":    "HTTP/TCP ingress (HAProxy wrapper)",
+		"meshrouterd": "WireGuard mesh router",
+	}
+	for _, name := range systemServiceNames {
+		info := systemServiceInfo{
+			Name:         name,
+			Role:         roles[name],
+			Kind:         "container",
+			Status:       "unknown",
+			Controllable: true,
+		}
+		detail, err := s.agent.InspectContainer(ctx, name)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "No such") {
+				info.Status = "not found"
+			}
+		} else {
+			if strings.EqualFold(detail.State.Status, "running") {
+				info.Status = "running"
+			} else {
+				info.Status = "stopped"
+			}
+		}
+		out = append(out, info)
+	}
+
+	// proxyd runs as a host process; detect via /proc/*/comm.
+	proxydInfo := systemServiceInfo{
+		Name:         "proxyd",
+		Role:         "TCP proxy + DNS (svc.local / mesh zones)",
+		Kind:         "process",
+		Controllable: false,
+	}
+	if isHostProcessRunning("proxyd") {
+		proxydInfo.Status = "running"
+	} else {
+		proxydInfo.Status = "stopped"
+	}
+	out = append(out, proxydInfo)
+
+	writeJSON(w, out)
+}
+
+func (s *Server) handleSystemServiceStart(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !isSystemService(name) {
+		writeError(w, http.StatusBadRequest, "unknown system service")
+		return
+	}
+	if err := s.agent.StartContainer(r.Context(), name); err != nil {
+		writeError(w, http.StatusBadGateway, "start "+name+": "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleSystemServiceStop(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !isSystemService(name) {
+		writeError(w, http.StatusBadRequest, "unknown system service")
+		return
+	}
+	if err := s.agent.StopContainer(r.Context(), name); err != nil {
+		writeError(w, http.StatusBadGateway, "stop "+name+": "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func isSystemService(name string) bool {
+	for _, n := range systemServiceNames {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+func isHostProcessRunning(name string) bool {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile("/proc/" + e.Name() + "/comm")
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(string(data)) == name {
+			return true
+		}
+	}
+	return false
+}
+
+// ── Version ───────────────────────────────────────────────────────────────────
+
+func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, map[string]string{"version": s.version})
+}
+
+// ── Export / Import ───────────────────────────────────────────────────────────
+
+func (s *Server) handleExport(w http.ResponseWriter, _ *http.Request) {
+	bundle := export.FromState(s.peer.State())
+	data, err := bundle.Marshal()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "marshal: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/yaml")
+	w.Header().Set("Content-Disposition", `attachment; filename="cluster-export.yaml"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+type importReport struct {
+	Imported map[string]int `json:"imported"`
+	Skipped  []string       `json:"skipped,omitempty"`
+	Errors   []string       `json:"errors,omitempty"`
+}
+
+func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
+	overwrite := r.URL.Query().Get("overwrite") == "true"
+	data, err := io.ReadAll(io.LimitReader(r.Body, 10<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "read body: "+err.Error())
+		return
+	}
+	bundle, err := export.Unmarshal(data)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !s.peer.IsLeader() {
+		writeError(w, http.StatusServiceUnavailable, "not the leader")
+		return
+	}
+	report := s.applyBundle(r.Context(), bundle, overwrite)
+	writeJSON(w, report)
+}
+
+func (s *Server) applyBundle(ctx context.Context, b *export.Bundle, overwrite bool) importReport {
+	report := importReport{Imported: map[string]int{
+		"workloads": 0, "domains": 0, "ingress_rules": 0,
+		"services": 0, "secrets": 0, "registries": 0, "templates": 0,
+	}}
+	state := s.peer.State()
+
+	// ── 1. Domains ────────────────────────────────────────────────────────────
+	importedDomainIDs := make(map[string]string) // domain name → ID on this cluster
+	for _, existing := range state.Domains {
+		importedDomainIDs[existing.Name] = existing.ID // pre-seed with existing
+	}
+	for _, de := range b.Domains {
+		if existingID, ok := importedDomainIDs[de.Name]; ok && !overwrite {
+			report.Skipped = append(report.Skipped, "domain "+de.Name+" already exists")
+			importedDomainIDs[de.Name] = existingID
+			continue
+		}
+		id := newDomainID()
+		if existingID, ok := importedDomainIDs[de.Name]; ok && overwrite {
+			id = existingID // keep stable ID on overwrite
+		}
+		d := types.Domain{
+			ID:        id,
+			Name:      de.Name,
+			TLSCert:   de.TLSCert,
+			TLSKey:    de.TLSKey,
+			CSR:       de.CSR,
+			Enabled:   de.Enabled,
+			CreatedAt: time.Now(),
+		}
+		if err := s.peer.ApplyDomain(d); err != nil {
+			report.Errors = append(report.Errors, "domain "+de.Name+": "+err.Error())
+			continue
+		}
+		importedDomainIDs[de.Name] = id
+		report.Imported["domains"]++
+	}
+
+	// ── 2. Workloads ──────────────────────────────────────────────────────────
+	existingWorkloadNames := make(map[string]bool)
+	for _, wl := range state.Workloads {
+		existingWorkloadNames[wl.Name()] = true
+	}
+	for _, we := range b.Workloads {
+		name := ""
+		if we.Container != nil {
+			name = we.Container.Name
+		} else if we.Stack != nil {
+			name = we.Stack.Name
+		}
+		if existingWorkloadNames[name] && !overwrite {
+			report.Skipped = append(report.Skipped, "workload "+name+" already exists")
+			continue
+		}
+		var submitErr error
+		if we.Kind == "container" && we.Container != nil {
+			ports := make([]*gen.PortMapping, len(we.Container.Ports))
+			for i, p := range we.Container.Ports {
+				ports[i] = &gen.PortMapping{ContainerPort: p.ContainerPort, Protocol: p.Protocol}
+			}
+			vols := make([]*gen.VolumeMount, len(we.Container.Volumes))
+			for i, v := range we.Container.Volumes {
+				vols[i] = &gen.VolumeMount{Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly}
+			}
+			_, submitErr = s.ctrl.SubmitContainer(ctx, &gen.SubmitContainerRequest{
+				Spec: &gen.ContainerSpec{
+					Name:       we.Container.Name,
+					Image:      we.Container.Image,
+					Command:    we.Container.Command,
+					Env:        we.Container.Env,
+					Ports:      ports,
+					Volumes:    vols,
+					Labels:     we.Container.Labels,
+					Namespace:  we.Container.Namespace,
+					SecretRefs: we.Container.SecretRefs,
+					Replicas:   int32(we.Container.Replicas),
+				},
+			})
+		} else if we.Kind == "stack" && we.Stack != nil {
+			_, submitErr = s.ctrl.SubmitStack(ctx, &gen.SubmitStackRequest{
+				Spec: &gen.ComposeStackSpec{
+					Name:       we.Stack.Name,
+					ComposeYaml: we.Stack.ComposeYAML,
+					SecretRefs: we.Stack.SecretRefs,
+					Replicas:   int32(we.Stack.Replicas),
+				},
+			})
+		}
+		if submitErr != nil {
+			report.Errors = append(report.Errors, "workload "+name+": "+submitErr.Error())
+			continue
+		}
+		report.Imported["workloads"]++
+	}
+
+	// ── 3. Services ───────────────────────────────────────────────────────────
+	existingSvcNames := make(map[string]bool)
+	for _, svc := range state.Services {
+		existingSvcNames[svc.Name] = true
+	}
+	for _, se := range b.Services {
+		if existingSvcNames[se.Name] && !overwrite {
+			report.Skipped = append(report.Skipped, "service "+se.Name+" already exists")
+			continue
+		}
+		_, err := s.ctrl.CreateService(ctx, &gen.CreateServiceRequest{
+			Name:          se.Name,
+			ContainerFqdn: se.ContainerFQDN,
+			ContainerPort: se.ContainerPort,
+		})
+		if err != nil {
+			report.Errors = append(report.Errors, "service "+se.Name+": "+err.Error())
+			continue
+		}
+		report.Imported["services"]++
+	}
+
+	// ── 4. Ingress rules ──────────────────────────────────────────────────────
+	for _, ie := range b.IngressRules {
+		domainID, ok := importedDomainIDs[ie.DomainName]
+		if !ok {
+			report.Errors = append(report.Errors, "ingress for "+ie.DomainName+": domain not found")
+			continue
+		}
+		host := ie.Host
+		if host == "" {
+			host = ie.DomainName
+		}
+		rule := types.IngressRule{
+			ID:            newIngressID(),
+			DomainID:      domainID,
+			Host:          host,
+			PathPrefix:    ie.PathPrefix,
+			StripPrefix:   ie.StripPrefix,
+			ContainerFQDN: ie.ContainerFQDN,
+			ContainerPort: ie.ContainerPort,
+			CreatedAt:     time.Now(),
+		}
+		if err := s.peer.ApplyIngress(rule); err != nil {
+			report.Errors = append(report.Errors, "ingress "+ie.DomainName+ie.PathPrefix+": "+err.Error())
+			continue
+		}
+		report.Imported["ingress_rules"]++
+	}
+
+	// ── 5. Secrets (ref only — values live in OpenBao) ────────────────────────
+	existingSecretNames := make(map[string]bool)
+	for _, sec := range state.Secrets {
+		existingSecretNames[sec.Name] = true
+	}
+	for _, se := range b.Secrets {
+		if existingSecretNames[se.Name] && !overwrite {
+			report.Skipped = append(report.Skipped, "secret "+se.Name+" already exists")
+			continue
+		}
+		sec := types.Secret{
+			ID:        newSecretID(),
+			Name:      se.Name,
+			BaoPath:   se.BaoPath,
+			CreatedAt: time.Now(),
+		}
+		if err := s.peer.ApplySecret(sec); err != nil {
+			report.Errors = append(report.Errors, "secret "+se.Name+": "+err.Error())
+			continue
+		}
+		report.Imported["secrets"]++
+	}
+
+	// ── 6. Registries ─────────────────────────────────────────────────────────
+	existingRegNames := make(map[string]bool)
+	for _, reg := range state.Registries {
+		existingRegNames[reg.Name] = true
+	}
+	for _, re := range b.Registries {
+		if existingRegNames[re.Name] && !overwrite {
+			report.Skipped = append(report.Skipped, "registry "+re.Name+" already exists")
+			continue
+		}
+		reg := types.Registry{
+			ID:        newRegistryID(),
+			Name:      re.Name,
+			URL:       re.URL,
+			Username:  re.Username,
+			Password:  re.Password,
+			CreatedAt: time.Now(),
+		}
+		if err := s.peer.ApplyRegistry(reg); err != nil {
+			report.Errors = append(report.Errors, "registry "+re.Name+": "+err.Error())
+			continue
+		}
+		report.Imported["registries"]++
+	}
+
+	// ── 7. Templates ──────────────────────────────────────────────────────────
+	existingTplNames := make(map[string]bool)
+	for _, t := range state.Templates {
+		existingTplNames[t.Name] = true
+	}
+	for _, te := range b.Templates {
+		if existingTplNames[te.Name] && !overwrite {
+			report.Skipped = append(report.Skipped, "template "+te.Name+" already exists")
+			continue
+		}
+		t := types.WorkloadTemplate{
+			ID:          newTemplateID(),
+			Name:        te.Name,
+			Description: te.Description,
+			CreatedAt:   time.Now(),
+		}
+		if te.Kind == "container" && te.Container != nil {
+			t.Kind = types.KindContainer
+			t.Container = te.Container
+		} else if te.Kind == "stack" && te.Stack != nil {
+			t.Kind = types.KindStack
+			t.Stack = te.Stack
+		}
+		if err := s.peer.ApplyTemplate(t); err != nil {
+			report.Errors = append(report.Errors, "template "+te.Name+": "+err.Error())
+			continue
+		}
+		report.Imported["templates"]++
+	}
+
+	return report
 }

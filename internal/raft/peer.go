@@ -10,6 +10,7 @@ import (
 
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
+	"go.etcd.io/bbolt"
 
 	"github.com/eghansah/orchestrator/pkg/types"
 )
@@ -42,7 +43,10 @@ func NewPeer(cfg Config) (*Peer, error) {
 	rc.LocalID = raft.ServerID(cfg.NodeID)
 
 	boltPath := filepath.Join(cfg.DataDir, "raft.db")
-	boltStore, err := raftboltdb.NewBoltStore(boltPath)
+	boltStore, err := raftboltdb.New(raftboltdb.Options{
+		Path:        boltPath,
+		BoltOptions: &bbolt.Options{Timeout: 2 * time.Second},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("open bolt store: %w", err)
 	}
@@ -193,7 +197,7 @@ func (p *Peer) RemoveTemplate(id string) error {
 	return p.apply(cmdRemoveTemplate, id)
 }
 
-// ApplySecret writes an encrypted secret into the Raft log.
+// ApplySecret writes a secret reference (OpenBao path) into the Raft log.
 func (p *Peer) ApplySecret(s types.Secret) error {
 	return p.apply(cmdApplySecret, s)
 }
@@ -201,6 +205,33 @@ func (p *Peer) ApplySecret(s types.Secret) error {
 // RemoveSecret removes a secret from the Raft log.
 func (p *Peer) RemoveSecret(id string) error {
 	return p.apply(cmdRemoveSecret, id)
+}
+
+// SetOpenBaoConfig stores the OpenBao connection config in the Raft log.
+func (p *Peer) SetOpenBaoConfig(cfg types.OpenBaoConfig) error {
+	return p.apply(cmdSetOpenBaoConfig, cfg)
+}
+
+// ApplyTrustedCA writes a trusted CA certificate into the Raft log.
+func (p *Peer) ApplyTrustedCA(ca types.TrustedCA) error {
+	return p.apply(cmdApplyTrustedCA, ca)
+}
+
+// RemoveTrustedCA removes a trusted CA certificate from the Raft log.
+func (p *Peer) RemoveTrustedCA(id string) error {
+	return p.apply(cmdRemoveTrustedCA, id)
+}
+
+// ForceSnapshot takes an immediate Raft snapshot and compacts the log up to
+// the snapshot index, removing historical log entries that contained ciphertext.
+func (p *Peer) ForceSnapshot() error {
+	return p.raft.Snapshot().Error()
+}
+
+// Shutdown gracefully stops the Raft instance, closing the TCP transport and
+// the BoltDB store. Must be called before process exit to release the file lock.
+func (p *Peer) Shutdown() error {
+	return p.raft.Shutdown().Error()
 }
 
 func (p *Peer) apply(t cmdType, payload any) error {

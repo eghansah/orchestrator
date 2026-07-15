@@ -43,10 +43,10 @@ func serviceListCmd(server string, args []string) {
 	}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(tw, "ID\tNAME\tSYSTEM PORT\tWORKLOAD NAME\tTARGET PORT\tAGE")
+	fmt.Fprintln(tw, "ID\tNAME\tSYSTEM PORT\tCONTAINER FQDN\tCONTAINER PORT\tAGE")
 	for _, s := range resp.Services {
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%d\t%s\n",
-			s.Id, s.Name, s.SystemPort, s.WorkloadName, s.TargetPort, fmtAge(s.CreatedAt),
+			s.Id, s.Name, s.SystemPort, s.ContainerFqdn, s.ContainerPort, fmtAge(s.CreatedAt),
 		)
 	}
 	_ = tw.Flush()
@@ -55,16 +55,16 @@ func serviceListCmd(server string, args []string) {
 func serviceCreateCmd(server string, args []string) {
 	fs := flag.NewFlagSet("service create", flag.ExitOnError)
 	name := fs.String("name", "", "service name (DNS label, e.g. \"api\")")
-	workload := fs.String("workload", "", "workload name to route to (Container.Name or Stack.Name)")
+	fqdn := fs.String("fqdn", "", "container FQDN: \"workload\" or \"service.workload\"")
 	port := fs.Uint("port", 0, "container port to proxy to")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: ctl service create --name NAME --workload WORKLOAD_NAME --port PORT")
+		fmt.Fprintln(os.Stderr, "Usage: ctl service create --name NAME --fqdn FQDN --port PORT")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
 
-	if *name == "" || *workload == "" || *port == 0 {
-		fmt.Fprintln(os.Stderr, "error: --name, --workload, and --port are required")
+	if *name == "" || *fqdn == "" || *port == 0 {
+		fmt.Fprintln(os.Stderr, "error: --name, --fqdn, and --port are required")
 		fs.Usage()
 		os.Exit(1)
 	}
@@ -75,9 +75,9 @@ func serviceCreateCmd(server string, args []string) {
 	defer cancel()
 
 	resp, err := client.CreateService(c, &gen.CreateServiceRequest{
-		Name:         *name,
-		WorkloadName: *workload,
-		TargetPort:   uint32(*port),
+		Name:          *name,
+		ContainerFqdn: *fqdn,
+		ContainerPort: uint32(*port),
 	})
 	if err != nil {
 		die("create service: %v", err)
@@ -85,7 +85,7 @@ func serviceCreateCmd(server string, args []string) {
 	if !resp.Accepted {
 		die("rejected: %s", resp.Reason)
 	}
-	fmt.Printf("created service %s (system port %d)\n", resp.ServiceId, resp.SystemPort)
+	fmt.Printf("created TCP service %s (system port %d)\n", resp.ServiceId, resp.SystemPort)
 }
 
 func serviceDeleteCmd(server string, args []string) {

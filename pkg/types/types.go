@@ -1,6 +1,12 @@
 package types
 
-import "time"
+import (
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"strings"
+	"time"
+)
 
 type WorkloadPhase int32
 
@@ -38,33 +44,37 @@ const (
 )
 
 type ContainerSpec struct {
-	Name       string
-	Image      string
-	Command    []string
-	Env        []string          // KEY=VALUE pairs
-	Ports      []PortMapping
-	Volumes    []VolumeMount
-	Labels     map[string]string
-	Namespace  string            // nerdctl namespace; defaults to "orchestrator"
-	SecretRefs map[string]string // env_var_name → secret_name; resolved at placement
+	Name             string            `yaml:"name"`
+	Image            string            `yaml:"image"`
+	Command          []string          `yaml:"command,omitempty"`
+	Env              []string          `yaml:"env,omitempty"`        // KEY=VALUE pairs
+	Ports            []PortMapping     `yaml:"ports,omitempty"`
+	Volumes          []VolumeMount     `yaml:"volumes,omitempty"`
+	Labels           map[string]string `yaml:"labels,omitempty"`
+	Namespace        string            `yaml:"namespace,omitempty"`  // nerdctl namespace; defaults to "orchestrator"
+	SecretRefs       map[string]string `yaml:"secret_refs,omitempty"` // env_var_name → secret_name; resolved at placement
+	Replicas         int               `yaml:"replicas,omitempty"`   // desired replica count; 0 or 1 = single instance
+	InsecureRegistry bool              `yaml:"insecure_registry,omitempty"` // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
 }
 
 type ComposeStackSpec struct {
-	Name        string
-	ComposeYAML string            // inline compose file content
-	SecretRefs  map[string]string // env_var_name → secret_name; resolved at placement
-	ResolvedEnv []string          // KEY=VALUE pairs injected from secrets at placement; not persisted in Raft
+	Name             string            `yaml:"name"`
+	ComposeYAML      string            `yaml:"compose_yaml"`          // inline compose file content
+	SecretRefs       map[string]string `yaml:"secret_refs,omitempty"` // env_var_name → secret_name; resolved at placement
+	ResolvedEnv      []string          `yaml:"-"`                     // runtime only; never exported
+	Replicas         int               `yaml:"replicas,omitempty"`    // desired replica count; 0 or 1 = single instance
+	InsecureRegistry bool              `yaml:"insecure_registry,omitempty"` // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
 }
 
 type PortMapping struct {
-	ContainerPort uint32
-	Protocol      string // "tcp" | "udp"
+	ContainerPort uint32 `yaml:"container_port"`
+	Protocol      string `yaml:"protocol"` // "tcp" | "udp"
 }
 
 type VolumeMount struct {
-	Source   string
-	Target   string
-	ReadOnly bool
+	Source   string `yaml:"source"`
+	Target   string `yaml:"target"`
+	ReadOnly bool   `yaml:"read_only,omitempty"`
 }
 
 // PortAllocation records the host port auto-assigned for one container port.
@@ -83,6 +93,7 @@ type Workload struct {
 	NodeID          string // empty = unscheduled
 	CreatedAt       time.Time
 	PortAllocations []PortAllocation // auto-assigned host ports (containers only)
+	GroupName       string // non-empty on replica instances; equals the parent workload name
 }
 
 // Name returns the stable workload name from its spec.
@@ -119,27 +130,45 @@ type Node struct {
 	LastSeenAt time.Time
 	TLSCert    []byte // DER-encoded self-signed cert for mTLS key pinning
 	DataIP     string // routable IP for container traffic (ingress backend)
+
+	// Mesh overlay fields. The node publishes its own MeshPubKey/MeshEndpoint
+	// (its WireGuard public key and reachable UDP endpoint); the leader assigns
+	// MeshSubnet/MeshAddr from the cluster mesh CIDR and keeps them stable across
+	// re-registration. The private key never leaves the node and is never stored
+	// here. See docs/mesh-network.md.
+	MeshPubKey   string // WireGuard public key (base64)
+	MeshEndpoint string // host:port for WireGuard (UDP, port >= 1024)
+	MeshSubnet   string // leader-assigned /24 for this node's containers, e.g. "100.64.3.0/24"
+	MeshAddr     string // this node's own address on the mesh (first host of MeshSubnet)
 }
 
+// IngressRule is an HTTP/HTTPS routing rule. ContainerFQDN identifies the target
+// container (e.g. "ecouniversal" or "backend.myapp") and ContainerPort is the
+// port it listens on. SystemPort is auto-assigned from the ingress pool (43000–45767)
+// and used by proxyd and ingressd to route traffic — no TCP Service required.
 type IngressRule struct {
-	ID          string
-	DomainID    string // required; host is derived from the linked Domain
-	Host        string // matched against Host header; empty = match all
-	PathPrefix  string // matched against URL path prefix; empty = "/"
-	ServiceName string // routes to this named Service
-	CreatedAt   time.Time
+	ID            string
+	DomainID      string // required; host is derived from the linked Domain
+	Host          string // matched against Host header; empty = match all
+	PathPrefix    string // matched against URL path prefix; empty = "/"
+	StripPrefix   bool   // strip PathPrefix before forwarding to the backend
+	ContainerFQDN string // target container: "workload" or "service.workload"
+	ContainerPort uint32 // port the container listens on
+	SystemPort    uint32 // auto-assigned from ingress port pool (43000–45767)
+	CreatedAt     time.Time
 }
 
-// Service is a named TCP endpoint backed by a workload. The system auto-assigns
-// a host port in the service pool (40000–42767). Containers resolve the service
-// via DNS <name>.svc.local and connect on SystemPort.
+// Service is a named TCP endpoint. ContainerFQDN identifies the target container
+// (e.g. "ecouniversal" or "backend.myapp") and ContainerPort is the port it listens
+// on. SystemPort is auto-assigned from the service pool (40000–42767); proxyd
+// listens on nodeDataIP:SystemPort and forwards to the container.
 type Service struct {
-	ID           string
-	Name         string    // short DNS label, e.g. "api"
-	WorkloadName string    // stable workload name (Container.Name or Stack.Name)
-	TargetPort   uint32    // container port to proxy to
-	SystemPort   uint32    // auto-assigned host port
-	CreatedAt    time.Time
+	ID            string
+	Name          string    // short DNS label, e.g. "api"
+	ContainerFQDN string    // target container: "workload" or "service.workload"
+	ContainerPort uint32    // port the container listens on
+	SystemPort    uint32    // auto-assigned host port
+	CreatedAt     time.Time
 }
 
 // Domain is a named TLS-enabled virtual host. The ingress uses the stored
@@ -164,14 +193,83 @@ type Registry struct {
 	CreatedAt time.Time
 }
 
-// Secret is a named encrypted value stored in cluster state. The EncryptedValue
-// field holds AES-256-GCM ciphertext; the plaintext is only materialised on the
-// leader at placement time and injected into the container's environment.
+// Secret is a named secret stored in the cluster's OpenBao instance.
+// BaoPath is the KV v2 path within the configured mount (e.g. "orchestrator/db-pass").
+// The plaintext value is fetched from OpenBao at placement time and injected as an env var.
 type Secret struct {
-	ID             string
-	Name           string    // unique cluster-wide label
-	EncryptedValue []byte    // AES-256-GCM ciphertext produced by pkg/crypto
-	CreatedAt      time.Time
+	ID        string
+	Name      string    // unique cluster-wide label
+	BaoPath   string    // KV v2 path within OpenBaoConfig.Mount
+	CreatedAt time.Time
+}
+
+// OpenBaoConfig holds the connection parameters for the cluster's OpenBao instance.
+// All nodes read this from Raft state to resolve secrets at placement time.
+type OpenBaoConfig struct {
+	Address            string // e.g. "https://bao.example.com:8200"
+	Token              string // service token scoped to KV read/write on <mount>/data/orchestrator/*
+	Mount              string // KV v2 mount path; defaults to "secret" when empty
+	InsecureSkipVerify bool   // skip TLS certificate verification entirely (testing only)
+}
+
+// TrustedCA is a cluster-wide CA certificate that can be used to verify TLS
+// connections to internally-signed services. Each entry holds exactly one CA
+// certificate (add multiple entries for multiple CAs) and is scoped by the
+// two Applies flags to one or both consumers: the OpenBao connection and/or
+// container/compose registry image pulls.
+type TrustedCA struct {
+	ID                  string
+	Label               string // display name, e.g. "Internal Corp CA"
+	PEM                 string // a single CA certificate in PEM format
+	AppliesToOpenBao    bool   // trust this CA when verifying the OpenBao connection
+	AppliesToRegistries bool   // trust this CA when verifying container/compose image registries
+	CreatedAt           time.Time
+}
+
+// ParseCert decodes the CA's PEM block and parses it as an X.509 certificate.
+func (ca TrustedCA) ParseCert() (*x509.Certificate, error) {
+	block, _ := pem.Decode([]byte(ca.PEM))
+	if block == nil {
+		return nil, errors.New("no PEM block found")
+	}
+	return x509.ParseCertificate(block.Bytes)
+}
+
+// Expired reports whether the CA certificate is outside its validity window,
+// or can't be parsed at all (treated as untrusted rather than silently used).
+func (ca TrustedCA) Expired() bool {
+	cert, err := ca.ParseCert()
+	if err != nil {
+		return true
+	}
+	now := time.Now()
+	return now.Before(cert.NotBefore) || now.After(cert.NotAfter)
+}
+
+// OpenBaoTrustBundle concatenates the PEM of every non-expired CA flagged
+// AppliesToOpenBao, for use as the RootCAs pool verifying the OpenBao
+// connection.
+func OpenBaoTrustBundle(cas map[string]TrustedCA) string {
+	return trustBundle(cas, func(c TrustedCA) bool { return c.AppliesToOpenBao })
+}
+
+// RegistryTrustBundle concatenates the PEM of every non-expired CA flagged
+// AppliesToRegistries, for use when verifying container/compose image
+// registries.
+func RegistryTrustBundle(cas map[string]TrustedCA) string {
+	return trustBundle(cas, func(c TrustedCA) bool { return c.AppliesToRegistries })
+}
+
+func trustBundle(cas map[string]TrustedCA, match func(TrustedCA) bool) string {
+	var sb strings.Builder
+	for _, c := range cas {
+		if !match(c) || c.Expired() {
+			continue
+		}
+		sb.WriteString(c.PEM)
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
 
 // WorkloadTemplate is a saved workload definition that can be redeployed.
@@ -202,6 +300,7 @@ type ActualContainer struct {
 	Name        string
 	Status      string    // nerdctl status string (e.g. "Up 5 minutes", "Exited (1)")
 	StartedAt   time.Time // zero if not running
+	MeshIP      string    // container's IP on mesh0; empty if not on mesh or not yet assigned
 }
 
 type ActualStack struct {

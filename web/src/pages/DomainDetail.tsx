@@ -13,13 +13,11 @@ import {
   Header,
   Input,
   Modal,
-  Select,
-  SelectProps,
   SpaceBetween,
   Table,
   Textarea,
 } from "@cloudscape-design/components";
-import { api, Domain, IngressRule, Service, CreateDomainRequest, CSRSubject } from "../api";
+import { api, Domain, IngressRule, CreateDomainRequest, CSRSubject } from "../api";
 import { formatAge } from "../api";
 
 type ModalMode = "edit" | "credentials" | "import" | "add-route" | "delete-confirm" | "regen-csr";
@@ -48,7 +46,6 @@ function downloadCSR(domain: Domain) {
 
 export default function DomainDetail({ domainId, onNavigate }: Props) {
   const [domain, setDomain] = useState<Domain | null>(null);
-  const [services, setServices] = useState<Service[]>([]);
   const [rules, setRules] = useState<IngressRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
@@ -57,7 +54,8 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
   const [editForm, setEditForm] = useState<CreateDomainRequest>({ name: "", tls_cert: "", tls_key: "" });
   const [importCert, setImportCert] = useState("");
   const [routePathPrefix, setRoutePathPrefix] = useState("");
-  const [routeServiceOption, setRouteServiceOption] = useState<SelectProps.Option | null>(null);
+  const [routeContainerFQDN, setRouteContainerFQDN] = useState("");
+  const [routeContainerPort, setRouteContainerPort] = useState("");
   const [csrForm, setCsrForm] = useState<CSRSubject>({});
 
   function addFlash(type: FlashbarProps.Type, msg: string) {
@@ -70,15 +68,13 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
 
   const load = useCallback(async () => {
     try {
-      const [allDomains, allRules, allServices] = await Promise.all([
+      const [allDomains, allRules] = await Promise.all([
         api.listDomains(),
         api.listIngress(),
-        api.listServices(),
       ]);
       const d = (allDomains ?? []).find((x) => x.id === domainId) ?? null;
       setDomain(d);
       setRules((allRules ?? []).filter((r) => r.domain_id === domainId));
-      setServices(allServices ?? []);
     } catch (e) {
       addFlash("error", String(e));
     } finally {
@@ -93,7 +89,8 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
     setGenerated(null);
     setImportCert("");
     setRoutePathPrefix("");
-    setRouteServiceOption(null);
+    setRouteContainerFQDN("");
+    setRouteContainerPort("");
     setCsrForm({});
   }
 
@@ -177,15 +174,21 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
   }
 
   async function handleAddRoute() {
-    if (!domain || !routeServiceOption?.value) {
-      addFlash("error", "Service is required");
+    const port = parseInt(routeContainerPort, 10);
+    if (!domain || !routeContainerFQDN) {
+      addFlash("error", "Container FQDN is required");
+      return;
+    }
+    if (isNaN(port) || port <= 0) {
+      addFlash("error", "A valid container port is required");
       return;
     }
     try {
       await api.createIngress({
         domain_id: domain.id,
         path_prefix: routePathPrefix.trim() || "/",
-        service_name: routeServiceOption.value,
+        container_fqdn: routeContainerFQDN,
+        container_port: port,
       });
       addFlash("success", "Route added");
       closeModal();
@@ -204,11 +207,6 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
     }
   }
 
-  const serviceOptions: SelectProps.Option[] = services.map((s) => ({
-    value: s.name,
-    label: s.name,
-    description: `→ ${s.workload_name}:${s.target_port}`,
-  }));
 
   const modalTitle =
     mode === "credentials" ? "Credentials generated" :
@@ -338,7 +336,6 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
                 actions={
                   <Button
                     variant="primary"
-                    disabled={services.length === 0}
                     onClick={() => setMode("add-route")}
                   >
                     Add route
@@ -350,7 +347,8 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
             }
             columnDefinitions={[
               { id: "path", header: "Path prefix", cell: (r) => r.path_prefix || "/" },
-              { id: "service", header: "Service", cell: (r) => r.service_name },
+              { id: "container", header: "Container", cell: (r) => `${r.container_fqdn}:${r.container_port}` },
+              { id: "system_port", header: "System port", cell: (r) => r.system_port },
               {
                 id: "actions",
                 header: "",
@@ -362,11 +360,7 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
               },
             ]}
             items={rules}
-            empty={
-              services.length === 0
-                ? "No services defined — create a service first, then add a route."
-                : "No routes — click Add route to connect a service to this domain."
-            }
+            empty="No routes — click Add route to connect a container to this domain."
           />
 
           {/* ── Danger zone ───────────────────────────────────────────── */}
@@ -511,7 +505,7 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
             <SpaceBetween size="m">
               <FormField
                 label="Path prefix"
-                description="Requests whose path starts with this prefix are routed to the service. Leave empty or use / to match all paths."
+                description="Requests whose path starts with this prefix are routed to the container. Leave empty or use / to match all paths."
               >
                 <Input
                   value={routePathPrefix}
@@ -519,12 +513,19 @@ export default function DomainDetail({ domainId, onNavigate }: Props) {
                   placeholder="/"
                 />
               </FormField>
-              <FormField label="Service" constraintText="Required">
-                <Select
-                  options={serviceOptions}
-                  selectedOption={routeServiceOption}
-                  onChange={(e) => setRouteServiceOption(e.detail.selectedOption)}
-                  placeholder="Select a service"
+              <FormField label="Container FQDN" description='e.g. "ecouniversal" or "backend.myapp"' constraintText="Required">
+                <Input
+                  value={routeContainerFQDN}
+                  onChange={(e) => setRouteContainerFQDN(e.detail.value)}
+                  placeholder="ecouniversal"
+                />
+              </FormField>
+              <FormField label="Container port" description="Port the container listens on" constraintText="Required">
+                <Input
+                  type="number"
+                  value={routeContainerPort}
+                  onChange={(e) => setRouteContainerPort(e.detail.value)}
+                  placeholder="8080"
                 />
               </FormField>
             </SpaceBetween>

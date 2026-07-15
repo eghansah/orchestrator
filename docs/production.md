@@ -7,9 +7,18 @@ The orchestrator is a usermode-only distributed container runtime. Every node ru
 **What it does:**
 - Schedules containers and Compose stacks across a cluster via `nerdctl` (rootless)
 - Maintains desired state in a replicated Raft log — cluster survives leader failover
-- Routes inbound HTTP traffic to containers via a built-in ingress proxy
-- Provides named TCP service endpoints with DNS resolution (`api.svc.local`)
-- Cross-node container traffic tunnels through mTLS gRPC — nothing is exposed on the LAN except the gRPC port and the ingress proxy
+- Routes inbound HTTP/HTTPS traffic via `ingressd` + HAProxy (L7, TLS termination, host/path routing)
+- Provides named TCP service endpoints with DNS resolution (`api.svc.local`) via `proxyd`
+- Cross-node container traffic tunnels through mTLS gRPC — nothing is exposed on the LAN except the gRPC port and the ingress ports
+
+**Companion daemons** (run alongside each orchestrator node):
+
+| Daemon | Config file written by orchestrator | Role |
+|---|---|---|
+| `proxyd` | `<data-dir>/proxy/config.json` | TCP proxy for named services + `svc.local` DNS |
+| `ingressd` (container) | `<data-dir>/ingress/config.json` | Drives HAProxy for HTTP/HTTPS ingress; holds TLS certs |
+
+The orchestrator rewrites both config files every 2 seconds when cluster state changes. Both daemons watch for file changes (via `inotify`) and apply updates with zero downtime — `proxyd` rebinds TCP listeners; `ingressd` generates a new `haproxy.cfg` and does a graceful HAProxy reload (`-sf`).
 
 **What it does not do:**
 - No Kubernetes compatibility layer
@@ -50,11 +59,15 @@ git clone https://github.com/eghansah/orchestrator
 cd orchestrator
 
 go build -o bin/orchestrator ./cmd/orchestrator
-go build -o bin/ctl ./cmd/ctl
+go build -o bin/ctl          ./cmd/ctl
+go build -o bin/ingressd     ./cmd/ingressd
+
+# Build the ingressd container image (on each node)
+nerdctl build -t ingressd:latest -f cmd/ingressd/Dockerfile .
 
 # Copy binaries to each node
-scp bin/orchestrator user@node2:~/bin/
-scp bin/ctl          user@node2:~/bin/
+scp bin/orchestrator bin/ingressd user@node2:~/bin/
+scp bin/ctl                        user@node2:~/bin/
 ```
 
 ---
@@ -201,12 +214,67 @@ journalctl --user -u orchestrator -f
 | 7946 | TCP (gRPC/mTLS) | ctl-to-node and node-to-node RPC |
 | 7947 | TCP | Raft consensus transport |
 | 7948 | HTTP | Web console |
-| 8080 | HTTP | Ingress proxy (inbound user traffic) |
-| 5353 | UDP+TCP | DNS server for `svc.local` (optional) |
+| 80 | TCP | Public HTTP — host HAProxy (root); forwards to ingressd |
+| 443 | TCP | Public HTTPS — host HAProxy (root); TCP passthrough to ingressd |
+| 8080 | TCP | ingressd container HTTP bind (loopback; host HAProxy forwards here) |
+| 8443 | TCP | ingressd container HTTPS bind (loopback; host HAProxy forwards here) |
+| 5353 | UDP+TCP | `proxyd` DNS server for `svc.local` (optional) |
 | 30000–32767 | TCP/UDP | Auto-assigned container host ports (loopback only) |
-| 40000–42767 | TCP | Auto-assigned service endpoint ports |
+| 40000–42767 | TCP | Auto-assigned service endpoint ports (`proxyd` binds these) |
 
-All container ports bind on `127.0.0.1` only — they are not reachable from the network. External access goes through the ingress proxy (HTTP) or the service layer (TCP).
+All container ports and service ports bind on `127.0.0.1` only. External user traffic enters exclusively via the host HAProxy on ports 80/443.
+
+---
+
+## proxyd flag reference
+
+`proxyd` is a standalone binary that runs on each node. It watches `<data-dir>/proxy/config.json` and reacts within milliseconds to config changes.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--config` | *(required)* | Path to `proxy/config.json` written by the orchestrator |
+| `--node-id` | *(required)* | This node's ID — used to filter which service entries to bind locally |
+
+proxyd manages:
+- One TCP listener per local service at `<data-ip>:<system-port>` → proxied to `127.0.0.1:<allocated-port>`
+- A UDP+TCP DNS server on `--dns-addr` answering `*.svc.local` A and SRV queries
+
+---
+
+## ingressd flag reference
+
+`ingressd` runs as the entrypoint of a container that also contains HAProxy. It watches `<data-dir>/ingress/config.json` and manages the HAProxy child process.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--config` | *(required)* | Path to `ingress/config.json` written by the orchestrator |
+| `--haproxy-bin` | `haproxy` | Path to the HAProxy binary |
+| `--haproxy-cfg` | `<config-dir>/haproxy.cfg` | Path where ingressd writes the generated HAProxy config |
+| `--certs-dir` | `<config-dir>/certs` | Directory for per-domain PEM files (cert + key concatenated) |
+| `--http-addr` | `:80` | HAProxy HTTP bind address inside the container |
+| `--https-addr` | `:443` | HAProxy HTTPS bind address inside the container (empty = disabled) |
+| `--proxy-protocol` | false | Accept PROXY protocol v1/v2 headers; use when the host HAProxy sends `send-proxy` |
+
+### How ingressd manages HAProxy
+
+ingressd is the container entrypoint (PID 1). It starts HAProxy as a child process (no daemon mode). On config change:
+
+1. Cert files are written to `--certs-dir` (one `.pem` per domain: cert + key concatenated).
+2. A new `haproxy.cfg` is generated and written atomically.
+3. If the config is unchanged (SHA-256 match), the reload is skipped.
+4. Otherwise a new HAProxy process is started with `-sf <old-pid>` — HAProxy's graceful reload. The old process finishes draining active connections, then exits.
+
+SIGTERM/SIGINT forwarded to ingressd are passed to the HAProxy child so it drains cleanly before the container stops.
+
+### TLS / HTTPS
+
+Domains with TLS certs stored in cluster state (via `ctl domain` or the web console) are written as `<id>.pem` files in `--certs-dir`. HAProxy loads all `.pem` files from the directory and performs SNI-based certificate selection automatically.
+
+```bash
+# Ingress with TLS — domain cert must exist in cluster state
+ctl domain create --name api.example.com --cert cert.pem --key key.pem
+ctl ingress create --host api.example.com --path / --service api
+```
 
 ---
 
@@ -438,3 +506,40 @@ nerdctl --namespace orchestrator exec CONTAINER_NAME -- cat /etc/resolv.conf
 **Join token rejected**
 
 The joining node's `--join-token` does not match the cluster's stored token. Read the correct token from `<data-dir>/join-token` on the bootstrap node.
+
+**proxyd listener not starting for a service**
+
+Check that the service workload is in `running` phase (`ctl ps`) and that `<data-dir>/proxy/config.json` contains an entry for it. proxyd only binds ports for entries whose `node_id` matches its `--node-id` flag.
+
+```bash
+# Inspect the live proxy config
+cat ~/.local/share/orchestrator/proxy/config.json | jq .
+```
+
+**ingressd container keeps restarting**
+
+Check ingressd logs for HAProxy startup errors:
+```bash
+nerdctl logs ingressd
+```
+
+Common causes:
+- `haproxy.cfg` is malformed (should not happen — file a bug)
+- `--certs-dir` is not writable from inside the container (check volume mount permissions)
+- HAProxy binary not found (the container image must be rebuilt if `haproxy` was not installed)
+
+**HTTPS returns a certificate error**
+
+The domain's TLS cert must be stored in cluster state and the ingress rule must reference the domain. Check:
+```bash
+ctl domain list      # confirm cert is present and enabled
+ctl ingress list     # confirm the rule has the correct domain ID
+```
+
+Also verify `<data-dir>/ingress/certs/<rule-id>.pem` exists inside the container (or on the mounted volume).
+
+**Real client IP shows as 127.0.0.1 in container logs**
+
+The host HAProxy is forwarding without PROXY protocol. Either:
+- Add `send-proxy` to the host HAProxy backend stanzas **and** restart `ingressd` with `--proxy-protocol`
+- Or accept that `X-Forwarded-For` reflects the host HAProxy's IP rather than the real client (harmless for most use cases)

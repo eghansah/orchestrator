@@ -6,10 +6,21 @@ A usermode-only distributed container runtime for Linux. Every node runs the sam
 
 - Schedule containers and Compose stacks across a cluster
 - Raft consensus — cluster survives leader failover automatically
-- HTTP ingress proxy with host/path routing
-- Internal service discovery: `api.svc.local` DNS + TCP proxy
+- HAProxy-backed ingress with host/path routing, TLS termination, and HTTPS
+- Internal service discovery: `api.svc.local` DNS + TCP proxy (`proxyd`)
 - mTLS between all nodes, bearer-token auth for operators
 - Web console at `:7948`
+
+## Companion daemons
+
+Two lightweight sidecar processes run alongside the orchestrator on each node:
+
+| Binary | Role |
+|---|---|
+| `proxyd` | TCP proxy for named services + `svc.local` DNS resolver. Reads `<data-dir>/proxy/config.json` written by the orchestrator. |
+| `ingressd` | HAProxy supervisor for L7 HTTP/HTTPS ingress. Reads `<data-dir>/ingress/config.json` and drives a real HAProxy process inside a container. |
+
+Both are file-watching daemons — the orchestrator writes their config files and they reload automatically with zero downtime.
 
 ## Quick start (single node)
 
@@ -17,6 +28,7 @@ A usermode-only distributed container runtime for Linux. Every node runs the sam
 # Build
 go build -o bin/orchestrator ./cmd/orchestrator
 go build -o bin/ctl         ./cmd/ctl
+go build -o bin/ingressd    ./cmd/ingressd
 
 # Bootstrap a single-node cluster
 ./bin/orchestrator \
@@ -46,7 +58,7 @@ export ORCHESTRATOR_TOKEN=$(cat ~/.local/share/orchestrator/admin-token)
 
 ## Multi-node cluster
 
-See **[docs/deploy.md](docs/deploy.md)** for a full step-by-step guide.
+See **[docs/deploy.md](docs/deploy.md)** for a full step-by-step guide. For nodes with no internet access at all, see **[docs/install.md](docs/install.md)** instead.
 
 ## CLI quick reference
 
@@ -74,7 +86,8 @@ ctl service list
 
 | Document | Contents |
 |---|---|
-| [docs/deploy.md](docs/deploy.md) | Step-by-step cluster deployment |
+| [docs/deploy.md](docs/deploy.md) | Step-by-step cluster deployment including proxyd and ingressd |
+| [docs/install.md](docs/install.md) | Air-gapped install: build an offline bundle, run install.sh on nodes with no internet access |
 | [docs/production.md](docs/production.md) | Full flag reference, security, operations playbook, troubleshooting |
 
 ## Requirements

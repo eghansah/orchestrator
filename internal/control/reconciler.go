@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -46,15 +47,60 @@ func (r *Reconciler) reconcile(ctx context.Context) {
 	for _, wl := range state.Workloads {
 		switch wl.Phase {
 		case types.PhasePending, types.PhaseFailed:
-			r.tryPlace(ctx, wl)
+			if wl.GroupName != "" {
+				// replica instance — place normally
+				r.tryPlace(ctx, wl, nil)
+			} else if replicas(wl) > 1 {
+				// parent workload with replicas — fan out
+				r.tryFanOut(ctx, wl)
+			} else {
+				r.tryPlace(ctx, wl, nil)
+			}
 		case types.PhaseRunning:
 			r.checkRunning(wl, actual)
 		}
 	}
 }
 
-func (r *Reconciler) tryPlace(ctx context.Context, wl types.Workload) {
-	nodeID, addr, certDER, err := r.ctrl.pickNode()
+// tryFanOut creates N replica child workloads for a parent with Replicas > 1,
+// spreading them across different nodes. The parent transitions to PhaseRunning
+// as a template marker once all replicas are submitted (individual replica
+// phases are tracked independently).
+func (r *Reconciler) tryFanOut(ctx context.Context, parent types.Workload) {
+	n := replicas(parent)
+	groupName := parent.Name()
+	if groupName == "" {
+		groupName = parent.ID
+	}
+
+	used := map[string]bool{}
+	for i := range n {
+		nodeID, _, _, err := r.ctrl.pickNodeExcluding(used)
+		if err != nil {
+			slog.Warn("reconciler: fan-out ran out of healthy nodes",
+				"workload", parent.ID, "replica", i, "err", err)
+			break
+		}
+		used[nodeID] = true
+
+		child := replicaChild(parent, i, groupName)
+		child.NodeID = nodeID
+		child.Phase = types.PhasePending
+		if err := r.ctrl.peer.ApplyWorkload(child); err != nil {
+			slog.Warn("reconciler: apply replica child failed",
+				"workload", parent.ID, "replica", i, "err", err)
+		}
+	}
+
+	// Mark parent as Running so it is not re-processed on the next cycle.
+	parent.Phase = types.PhaseRunning
+	if err := r.ctrl.peer.ApplyWorkload(parent); err != nil {
+		slog.Warn("reconciler: apply parent running failed", "workload", parent.ID, "err", err)
+	}
+}
+
+func (r *Reconciler) tryPlace(ctx context.Context, wl types.Workload, excluded map[string]bool) {
+	nodeID, addr, certDER, err := r.ctrl.pickNodeExcluding(excluded)
 	if err != nil {
 		slog.Warn("reconciler: no healthy node", "workload", wl.ID, "err", err)
 		return
@@ -87,6 +133,38 @@ func (r *Reconciler) tryPlace(ctx context.Context, wl types.Workload) {
 		return
 	}
 	slog.Info("reconciler: workload placed", "workload", wl.ID, "node", nodeID)
+}
+
+// replicas returns the desired replica count for a workload (minimum 1).
+func replicas(wl types.Workload) int {
+	if wl.Container != nil && wl.Container.Replicas > 1 {
+		return wl.Container.Replicas
+	}
+	if wl.Stack != nil && wl.Stack.Replicas > 1 {
+		return wl.Stack.Replicas
+	}
+	return 1
+}
+
+// replicaChild clones parent into a new leaf Workload with a disambiguated name
+// and the given group name linking it back to the parent.
+func replicaChild(parent types.Workload, index int, groupName string) types.Workload {
+	child := parent
+	child.ID = fmt.Sprintf("%s-r%d", parent.ID, index)
+	child.GroupName = groupName
+	if parent.Container != nil {
+		spec := *parent.Container
+		spec.Name = fmt.Sprintf("%s-%d", parent.Container.Name, index)
+		spec.Replicas = 1
+		child.Container = &spec
+	}
+	if parent.Stack != nil {
+		spec := *parent.Stack
+		spec.Name = fmt.Sprintf("%s-%d", parent.Stack.Name, index)
+		spec.Replicas = 1
+		child.Stack = &spec
+	}
+	return child
 }
 
 func (r *Reconciler) checkRunning(wl types.Workload, actual map[string]types.ActualWorkloadState) {

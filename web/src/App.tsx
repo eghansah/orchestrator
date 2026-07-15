@@ -22,34 +22,85 @@ import DomainDetail from "./pages/DomainDetail";
 import Users from "./pages/Users";
 import Registries from "./pages/Registries";
 import Secrets from "./pages/Secrets";
+import TrustedCAs from "./pages/TrustedCAs";
 import WorkflowBuilder from "./pages/WorkflowBuilder";
 import WorkloadDetail from "./pages/WorkloadDetail";
 import NodeDetail from "./pages/NodeDetail";
 import Containers from "./pages/Containers";
 import Templates from "./pages/Templates";
+import ServiceDetail from "./pages/ServiceDetail";
+import Docs from "./pages/Docs";
+import Networks from "./pages/Networks";
+import NetworkDetail from "./pages/NetworkDetail";
+import Volumes from "./pages/Volumes";
+import VolumeDetail from "./pages/VolumeDetail";
+import ContainerDetail from "./pages/ContainerDetail";
+import IngressDetail from "./pages/IngressDetail";
+import SystemServices from "./pages/SystemServices";
+import Changelog from "./pages/Changelog";
+import ExportImport from "./pages/ExportImport";
 
-type Page = "overview" | "workloads" | "containers" | "templates" | "nodes" | "ingress" | "services" | "domains" | "users" | string;
+type Page = "overview" | "workloads" | "containers" | "templates" | "nodes" | "web-services" | "tcp-services" | "domains" | "users" | "docs" | "trusted-cas" | string;
 
-const NAV_ITEMS: SideNavigationProps.Item[] = [
+function buildNavItems(version: string): SideNavigationProps.Item[] {
+  return [
   { type: "link", text: "Overview", href: "#overview" },
-  { type: "link", text: "Workloads", href: "#workloads" },
-  { type: "link", text: "Containers", href: "#containers" },
-  { type: "link", text: "Templates", href: "#templates" },
+  {
+    type: "section",
+    text: "Workloads",
+    defaultExpanded: true,
+    items: [
+      { type: "link", text: "Workloads", href: "#workloads" },
+      { type: "link", text: "Containers", href: "#containers" },
+      { type: "link", text: "Templates", href: "#templates" },
+      { type: "link", text: "Workflow Builder (experimental)", href: "#workflow-builder" },
+    ],
+  },
   { type: "link", text: "Nodes", href: "#nodes" },
-  { type: "link", text: "Ingress", href: "#ingress" },
-  { type: "link", text: "Domains", href: "#domains" },
-  { type: "link", text: "Services", href: "#services" },
-  { type: "link", text: "Users", href: "#users" },
-  { type: "link", text: "Registries", href: "#registries" },
-  { type: "link", text: "Secrets", href: "#secrets" },
-  { type: "link", text: "Workflow Builder", href: "#workflow-builder" },
+  {
+    type: "section",
+    text: "Networking",
+    defaultExpanded: true,
+    items: [
+      { type: "link", text: "Domains", href: "#domains" },
+      { type: "link", text: "Web Services", href: "#web-services" },
+      { type: "link", text: "TCP Services", href: "#tcp-services" },
+      { type: "link", text: "Networks", href: "#networks" },
+    ],
+  },
+  {
+    type: "section",
+    text: "Storage",
+    defaultExpanded: true,
+    items: [
+      { type: "link", text: "Volumes", href: "#volumes" },
+    ],
+  },
+  {
+    type: "section",
+    text: "Administration",
+    defaultExpanded: true,
+    items: [
+      { type: "link", text: "Users", href: "#users" },
+      { type: "link", text: "Registries", href: "#registries" },
+      { type: "link", text: "Secrets", href: "#secrets" },
+      { type: "link", text: "Trusted CAs", href: "#trusted-cas" },
+      { type: "link", text: "System Services", href: "#system-services" },
+      { type: "link", text: "Export / Import", href: "#export-import" },
+    ],
+  },
   { type: "divider" },
+  { type: "link", text: "Documentation", href: "#docs" },
+  { type: "link", text: "Changelog", href: "#changelog" },
   { type: "link", text: "Sign out", href: "#signout" },
+  { type: "divider" },
+  { type: "link", text: version ? `Version ${version}` : "Version —", href: "#changelog" },
 ];
+}
 
 type LoginStage = "credentials" | "mfa_setup" | "mfa_required";
 
-function LoginForm({ onAuthed }: { onAuthed: () => void }) {
+function LoginForm({ onAuthed, version }: { onAuthed: () => void; version: string }) {
   const [stage, setStage] = useState<LoginStage>("credentials");
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
@@ -102,8 +153,15 @@ function LoginForm({ onAuthed }: { onAuthed: () => void }) {
   }
 
   const wrapper = (content: React.ReactNode) => (
-    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", height: "100vh", gap: 12 }}>
       <div style={{ width: 420 }}>{content}</div>
+      {version && (
+        <TextContent>
+          <p style={{ color: "var(--color-text-body-secondary, #5f6b7a)", fontSize: 12, margin: 0 }}>
+            {version}
+          </p>
+        </TextContent>
+      )}
     </div>
   );
 
@@ -197,14 +255,16 @@ function LoginForm({ onAuthed }: { onAuthed: () => void }) {
 export default function App() {
   const [authed, setAuthed] = useState(hasToken());
   const [activePage, setActivePage] = useState<Page>("overview");
+  const [version, setVersion] = useState("");
   const { state, error, loading, refetch } = useClusterState();
 
   useEffect(() => {
     setAuthErrorHandler(() => setAuthed(false));
+    api.getVersion().then((v) => setVersion(v.version)).catch(() => {});
   }, []);
 
   if (!authed) {
-    return <LoginForm onAuthed={() => setAuthed(true)} />;
+    return <LoginForm onAuthed={() => setAuthed(true)} version={version} />;
   }
 
   async function handleSignOut() {
@@ -222,19 +282,36 @@ export default function App() {
     <NodeDetail nodeId={activePage.slice("node-".length)} {...navProps} />
   ) : activePage.startsWith("domain-") ? (
     <DomainDetail domainId={activePage.slice("domain-".length)} onNavigate={setActivePage} />
+  ) : activePage.startsWith("service-") ? (
+    <ServiceDetail serviceId={activePage.slice("service-".length)} onNavigate={setActivePage} />
+  ) : activePage.startsWith("container-") ? (
+    <ContainerDetail containerName={activePage.slice("container-".length)} onNavigate={setActivePage} />
+  ) : activePage.startsWith("ingress-") ? (
+    <IngressDetail ruleId={activePage.slice("ingress-".length)} onNavigate={setActivePage} />
+  ) : activePage.startsWith("network-") ? (
+    <NetworkDetail networkName={activePage.slice("network-".length)} onNavigate={setActivePage} />
+  ) : activePage.startsWith("volume-") ? (
+    <VolumeDetail volumeName={activePage.slice("volume-".length)} onNavigate={setActivePage} />
   ) : ({
     overview: <Overview {...sharedProps} />,
     workloads: <Workloads {...navProps} />,
-    containers: <Containers state={state} loading={loading} error={error} refetch={refetch} />,
+    containers: <Containers state={state} loading={loading} error={error} refetch={refetch} onNavigate={setActivePage} />,
     templates: <Templates {...navProps} />,
     nodes: <Nodes {...navProps} />,
-    ingress: <Ingress />,
+    "web-services": <Ingress onNavigate={setActivePage} />,
+    "tcp-services": <Services onNavigate={setActivePage} />,
     domains: <Domains onNavigate={setActivePage} />,
-    services: <Services />,
     users: <Users />,
     registries: <Registries state={state} loading={loading} refetch={refetch} />,
     secrets: <Secrets state={state} loading={loading} refetch={refetch} />,
+    "trusted-cas": <TrustedCAs state={state} loading={loading} refetch={refetch} />,
     "workflow-builder": <WorkflowBuilder onNavigate={setActivePage} />,
+    docs: <Docs />,
+    networks: <Networks onNavigate={setActivePage} />,
+    volumes: <Volumes onNavigate={setActivePage} />,
+    "system-services": <SystemServices />,
+    "export-import": <ExportImport />,
+    changelog: <Changelog />,
   } as Record<string, React.ReactNode>)[activePage];
 
   return (
@@ -242,7 +319,7 @@ export default function App() {
       navigation={
         <SideNavigation
           header={{ text: "Orchestrator", href: "#overview" }}
-          items={NAV_ITEMS}
+          items={buildNavItems(version)}
           activeHref={`#${activePage}`}
           onFollow={(e) => {
             e.preventDefault();

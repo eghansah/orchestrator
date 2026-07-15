@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
+import Checkbox from "@cloudscape-design/components/checkbox";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import Flashbar, { FlashbarProps } from "@cloudscape-design/components/flashbar";
 import FormField from "@cloudscape-design/components/form-field";
@@ -27,9 +28,20 @@ const KIND_OPTIONS = [
   { value: "container", label: "Container" },
 ];
 
-const emptyForm = (): CreateTemplateRequest => ({ name: "", description: "", kind: "stack", compose_yaml: "", image: "" });
+const emptyForm = (): CreateTemplateRequest => ({ name: "", description: "", kind: "stack", compose_yaml: "", image: "", insecure_registry: false });
 
-export default function Templates({ state: _state, loading, error, refetch, onNavigate: _nav }: Props) {
+// Phases that mean a deployed workload is still live; in any of these the
+// template's Deploy button becomes Redeploy (which replaces the workload).
+const ACTIVE_PHASES = new Set(["pending", "scheduled", "running"]);
+
+export default function Templates({ state, loading, error, refetch, onNavigate: _nav }: Props) {
+  // A template's deployed workload carries the template's name. Map name →
+  // whether a live workload exists, so each row can pick Deploy vs Redeploy.
+  const deployedNames = new Set(
+    (state?.workloads ?? [])
+      .filter((wl) => ACTIVE_PHASES.has(wl.phase))
+      .map((wl) => wl.name),
+  );
   const [templates, setTemplates] = useState<WorkloadTemplate[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
@@ -74,6 +86,7 @@ export default function Templates({ state: _state, loading, error, refetch, onNa
       kind: t.kind,
       compose_yaml: t.compose_yaml ?? "",
       image: t.image ?? "",
+      insecure_registry: t.insecure_registry ?? false,
     });
     setEditTarget(t);
     setShowNew(true);
@@ -116,13 +129,14 @@ export default function Templates({ state: _state, loading, error, refetch, onNa
   }
 
   async function handleDeploy(t: WorkloadTemplate) {
+    const redeploy = deployedNames.has(t.name);
     setDeploying(t.id);
     try {
       const res = await api.deployTemplate(t.id);
       if (!res.accepted) {
-        addFlash("error", `Deploy rejected: ${res.reason ?? "unknown"}`);
+        addFlash("error", `${redeploy ? "Redeploy" : "Deploy"} rejected: ${res.reason ?? "unknown"}`);
       } else {
-        addFlash("success", `Deployed as workload ${res.workload_id}`);
+        addFlash("success", `${redeploy ? "Redeployed" : "Deployed"} as workload ${res.workload_id}`);
         refetch();
       }
     } catch (e) {
@@ -173,7 +187,7 @@ export default function Templates({ state: _state, loading, error, refetch, onNa
                     loading={deploying === t.id}
                     onClick={() => handleDeploy(t)}
                   >
-                    Deploy
+                    {deployedNames.has(t.name) ? "Redeploy" : "Deploy"}
                   </Button>
                   <Button variant="inline-link" onClick={() => openEdit(t)}>Edit</Button>
                   <Button variant="inline-link" onClick={() => setDeleteTarget(t)}>Delete</Button>
@@ -231,6 +245,15 @@ export default function Templates({ state: _state, loading, error, refetch, onNa
               <Input value={form.image ?? ""} onChange={(e) => setForm((f) => ({ ...f, image: e.detail.value }))} placeholder="nginx:latest" />
             </FormField>
           )}
+          <Checkbox
+            checked={form.insecure_registry ?? false}
+            onChange={(e) => setForm((f) => ({ ...f, insecure_registry: e.detail.checked }))}
+          >
+            Insecure registry
+            <Box variant="small" color="text-body-secondary">
+              Allow pulling from a plain-HTTP or self-signed registry (passes --insecure-registry to nerdctl)
+            </Box>
+          </Checkbox>
         </SpaceBetween>
       </Modal>
 

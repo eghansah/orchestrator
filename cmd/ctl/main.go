@@ -16,6 +16,7 @@ import (
 )
 
 const defaultServer = "localhost:7946"
+const defaultWebBase = "http://localhost:7948"
 
 var (
 	dialTimeout = 10 * time.Second
@@ -32,13 +33,17 @@ func (t tokenCreds) RequireTransportSecurity() bool { return true }
 
 func main() {
 	server := defaultServer
+	webBase := defaultWebBase
 	args := os.Args[1:]
 
-	// Consume --server and --token before the subcommand.
+	// Consume --server, --web, and --token before the subcommand.
 	for len(args) >= 1 {
 		switch {
 		case (args[0] == "--server" || args[0] == "-server") && len(args) >= 2:
 			server = args[1]
+			args = args[2:]
+		case (args[0] == "--web" || args[0] == "-web") && len(args) >= 2:
+			webBase = args[1]
 			args = args[2:]
 		case (args[0] == "--token" || args[0] == "-token") && len(args) >= 2:
 			adminToken = args[1]
@@ -79,6 +84,10 @@ doneFlags:
 		serviceCmd(server, rest)
 	case "secret":
 		secretCmd(server, rest)
+	case "export":
+		exportCmd(webBase, rest)
+	case "import":
+		importCmd(webBase, rest)
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -92,7 +101,7 @@ func printUsage() {
 	fmt.Print(`ctl — orchestrator CLI
 
 Usage:
-  ctl [--server HOST:PORT] COMMAND [flags]
+  ctl [--server HOST:PORT] [--web URL] COMMAND [flags]
 
 Commands:
   run     Submit a container workload
@@ -105,9 +114,12 @@ Commands:
   ingress Manage ingress routing rules
   service Manage named service endpoints (DNS + TCP proxy)
   secret  Manage cluster secrets
+  export  Download a portable YAML cluster configuration bundle
+  import  Apply a YAML cluster configuration bundle
 
 Flags:
   --server HOST:PORT   orchestrator gRPC address (default: localhost:7946)
+  --web URL            web console base URL for export/import (default: http://localhost:7948)
   --token TOKEN        admin token (default: ORCHESTRATOR_TOKEN env or ~/.config/orchestrator/token)
 
 Run 'ctl COMMAND --help' for per-command flags.

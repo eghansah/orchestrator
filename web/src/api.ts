@@ -67,6 +67,7 @@ export interface ClusterState {
   container_stats: ContainerStats[];
   registries: Registry[];
   secrets: Secret[];
+  trusted_cas: TrustedCA[];
 }
 
 export interface MutationResult {
@@ -108,29 +109,32 @@ export interface IngressRule {
   domain_id: string;
   host: string;
   path_prefix: string;
-  service_name: string;
+  container_fqdn: string;
+  container_port: number;
+  system_port: number;
   created_at: number; // unix seconds
 }
 
 export interface CreateIngressRequest {
   domain_id: string;
   path_prefix: string;
-  service_name: string;
+  container_fqdn: string;
+  container_port: number;
 }
 
 export interface Service {
   id: string;
   name: string;
-  workload_name: string;
-  target_port: number;
+  container_fqdn: string;
+  container_port: number;
   system_port: number;
   created_at: number; // unix seconds
 }
 
 export interface CreateServiceRequest {
   name: string;
-  workload_name: string;
-  target_port: number;
+  container_fqdn: string;
+  container_port: number;
 }
 
 export interface Domain {
@@ -182,6 +186,7 @@ export interface WorkloadTemplate {
   kind: "container" | "stack";
   compose_yaml?: string;
   image?: string;
+  insecure_registry?: boolean;
   created_at: number; // unix seconds
 }
 
@@ -197,6 +202,7 @@ export interface CreateTemplateRequest {
   volumes?: { source: string; target: string; read_only: boolean }[];
   labels?: Record<string, string>;
   namespace?: string;
+  insecure_registry?: boolean;
 }
 
 export interface Registry {
@@ -220,9 +226,127 @@ export interface Secret {
   created_at: number; // unix seconds
 }
 
+export interface TrustedCA {
+  id: string;
+  label: string;
+  pem: string;
+  appliesToOpenBao: boolean;
+  appliesToRegistries: boolean;
+  notAfter?: number; // unix seconds
+  expired: boolean;
+  createdAt: number; // unix seconds
+}
+
+export interface CreateTrustedCARequest {
+  label: string;
+  pem: string;
+  appliesToOpenBao: boolean;
+  appliesToRegistries: boolean;
+}
+
+export interface UpdateTrustedCARequest {
+  label: string;
+  pem: string; // blank keeps the existing certificate
+  appliesToOpenBao: boolean;
+  appliesToRegistries: boolean;
+}
+
 export interface CreateSecretRequest {
   name: string;
   value: string;
+}
+
+export interface VersionInfo {
+  version: string;
+}
+
+export interface ImportReport {
+  imported: Record<string, number>;
+  skipped?: string[];
+  errors?: string[];
+}
+
+export interface OpenBaoStatus {
+  configured: boolean;
+  address?: string;
+  mount?: string;
+  insecureSkipVerify: boolean;
+  connected: boolean;
+  error?: string;
+}
+
+export interface SetOpenBaoConfigRequest {
+  address: string;
+  token: string;
+  mount: string;
+  insecureSkipVerify: boolean;
+}
+
+export interface ContainerInspectResult {
+  id: string;
+  name: string;
+  status: string;
+  running: boolean;
+  pid: number;
+  started_at: string;
+  image: string;
+  env: string[];
+  port_bindings: Record<string, { host_ip: string; host_port: string }[]>;
+  networks: { name: string; ip_address: string; gateway: string; mac_address: string }[];
+  mounts: { type: string; name: string; source: string; destination: string; mode: string; rw: boolean }[];
+}
+
+export interface NetworkListEntry {
+  network_id: string;
+  name: string;
+  driver: string;
+  ipv4: string;
+  labels: string;
+}
+
+export interface NetworkInspectResult {
+  name: string;
+  id: string;
+  driver: string;
+  subnet: string;
+  gateway: string;
+  containers: { name: string; ipv4_address: string }[];
+  labels: Record<string, string>;
+}
+
+export interface VolumeListEntry {
+  name: string;
+  driver: string;
+  mountpoint: string;
+  labels: string;
+}
+
+export interface VolumeInspectResult {
+  name: string;
+  driver: string;
+  mountpoint: string;
+  labels: Record<string, string>;
+  scope: string;
+}
+
+export interface ChangelogSection {
+  title: string;
+  items: string[];
+}
+
+export interface ChangelogRelease {
+  version: string;
+  date: string;
+  summary: string;
+  sections: ChangelogSection[];
+}
+
+export interface SystemServiceInfo {
+  name: string;
+  role: string;
+  kind: "container" | "process";
+  status: "running" | "stopped" | "not found" | "unknown";
+  controllable: boolean;
 }
 
 // ── Auth token ────────────────────────────────────────────────────────────────
@@ -257,15 +381,28 @@ function getBasePath(): string {
 
 // ── REST client ───────────────────────────────────────────────────────────────
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+interface RequestOptions {
+  body?: string;
+  contentType?: string;
+}
+
+async function request<T>(method: string, path: string, jsonBody?: unknown, opts?: RequestOptions): Promise<T> {
   const headers: Record<string, string> = {};
-  if (body) headers["Content-Type"] = "application/json";
   if (_token) headers["Authorization"] = `Bearer ${_token}`;
+
+  let rawBody: string | undefined;
+  if (opts?.body !== undefined) {
+    rawBody = opts.body;
+    headers["Content-Type"] = opts.contentType ?? "text/plain";
+  } else if (jsonBody !== undefined) {
+    rawBody = JSON.stringify(jsonBody);
+    headers["Content-Type"] = "application/json";
+  }
 
   const res = await fetch(getBasePath() + path, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: rawBody,
   });
 
   if (res.status === 401) {
@@ -303,6 +440,7 @@ export const api = {
     return data as { token: string };
   },
   logout: () => request<{ ok: boolean }>("POST", "/api/auth/logout"),
+  getVersion: () => request<VersionInfo>("GET", "/api/version"),
   getState: () => request<ClusterState>("GET", "/api/state"),
   getWorkload: (id: string) => request<WorkloadSpec>("GET", `/api/workloads/${id}`),
   submitContainer: (req: RunRequest) =>
@@ -315,22 +453,24 @@ export const api = {
     request<MutationResult>("POST", `/api/nodes/${id}/drain`),
   listIngress: () => request<IngressRule[]>("GET", "/api/ingress"),
   createIngress: (req: CreateIngressRequest) =>
-    request<{ rule_id: string; accepted: boolean }>(
+    request<{ rule_id: string; system_port: number; accepted: boolean }>(
       "POST",
       "/api/ingress",
       req
     ),
+  updateIngress: (id: string, req: CreateIngressRequest) =>
+    request<IngressRule>("POST", `/api/ingress/${id}/update`, req),
   deleteIngress: (id: string) =>
     request<MutationResult>("POST", `/api/ingress/${id}/delete`),
   listServices: () => request<Service[]>("GET", "/api/services"),
   createService: (req: CreateServiceRequest) =>
-    request<{ service_id: string; system_port: number; accepted: boolean; reason?: string; warning?: string }>(
+    request<{ service_id: string; system_port: number; accepted: boolean; reason?: string }>(
       "POST",
       "/api/services",
       req
     ),
   updateService: (id: string, req: CreateServiceRequest) =>
-    request<Service & { warning?: string }>("POST", `/api/services/${id}/update`, req),
+    request<Service>("POST", `/api/services/${id}/update`, req),
   deleteService: (id: string) =>
     request<MutationResult>("POST", `/api/services/${id}/delete`),
   listDomains: () => request<Domain[]>("GET", "/api/domains"),
@@ -371,6 +511,10 @@ export const api = {
     request<{ accepted: boolean; workload_id?: string; reason?: string }>("POST", `/api/templates/${id}/deploy`),
   getContainerLogs: (name: string, tail = 200) =>
     request<{ logs: string }>("GET", `/api/containers/${encodeURIComponent(name)}/logs?tail=${tail}`),
+  inspectContainer: (name: string) =>
+    request<ContainerInspectResult>("GET", `/api/containers/${encodeURIComponent(name)}/inspect`),
+  restartContainer: (name: string) =>
+    request<{ ok: boolean }>("POST", `/api/containers/${encodeURIComponent(name)}/restart`),
   getRegistryCatalog: (id: string, search?: string) =>
     request<{ repos: string[] }>(
       "GET",
@@ -391,6 +535,44 @@ export const api = {
     request<Secret>("POST", "/api/secrets", req),
   deleteSecret: (id: string) =>
     request<{ accepted: boolean }>("POST", `/api/secrets/${id}/delete`),
+  getOpenBaoStatus: () => request<OpenBaoStatus>("GET", "/api/openbao/status"),
+  setOpenBaoConfig: (req: SetOpenBaoConfigRequest) =>
+    request<{ accepted: boolean }>("POST", "/api/openbao/config", req),
+  listTrustedCAs: () => request<TrustedCA[]>("GET", "/api/trusted-cas"),
+  createTrustedCA: (req: CreateTrustedCARequest) =>
+    request<TrustedCA>("POST", "/api/trusted-cas", req),
+  updateTrustedCA: (id: string, req: UpdateTrustedCARequest) =>
+    request<TrustedCA>("POST", `/api/trusted-cas/${id}/update`, req),
+  deleteTrustedCA: (id: string) =>
+    request<{ accepted: boolean }>("POST", `/api/trusted-cas/${id}/delete`),
+  adminCompact: () => request<{ accepted: boolean }>("POST", "/api/admin/compact"),
+  listNetworks: () => request<NetworkListEntry[]>("GET", "/api/networks"),
+  inspectNetwork: (name: string) =>
+    request<NetworkInspectResult>("GET", `/api/networks/${encodeURIComponent(name)}/inspect`),
+  listVolumes: () => request<VolumeListEntry[]>("GET", "/api/volumes"),
+  inspectVolume: (name: string) =>
+    request<VolumeInspectResult>("GET", `/api/volumes/${encodeURIComponent(name)}/inspect`),
+  getChangelog: () => request<ChangelogRelease[]>("GET", "/api/system/changelog"),
+  listSystemServices: () => request<SystemServiceInfo[]>("GET", "/api/system/services"),
+  startSystemService: (name: string) =>
+    request<{ ok: boolean }>("POST", `/api/system/services/${encodeURIComponent(name)}/start`),
+  stopSystemService: (name: string) =>
+    request<{ ok: boolean }>("POST", `/api/system/services/${encodeURIComponent(name)}/stop`),
+  exportCluster: async (): Promise<Blob> => {
+    const resp = await fetch(getBasePath() + "/api/export", {
+      headers: { Authorization: `Bearer ${_token}` },
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`HTTP ${resp.status}: ${text}`);
+    }
+    return resp.blob();
+  },
+  importCluster: (yamlText: string, overwrite: boolean) =>
+    request<ImportReport>("POST", `/api/import${overwrite ? "?overwrite=true" : ""}`, undefined, {
+      body: yamlText,
+      contentType: "application/yaml",
+    }),
 };
 
 // ── useClusterState hook ──────────────────────────────────────────────────────

@@ -60,6 +60,10 @@ message HeartbeatRequest {
   string join_token    = 6; // cluster join secret; must match leader's --join-token
   bytes  tls_cert      = 7; // DER-encoded self-signed cert; stored for mTLS key pinning
   string data_ip       = 8; // routable IP for container traffic (ingress backend)
+  // Mesh overlay self-published facts (see docs/mesh-network.md). The leader
+  // assigns the subnet/addr in cluster state; the node only publishes these two.
+  string mesh_pub_key  = 9;  // WireGuard public key (base64)
+  string mesh_endpoint = 10; // reachable WireGuard UDP endpoint (host:port)
 }
 
 message HeartbeatResponse {

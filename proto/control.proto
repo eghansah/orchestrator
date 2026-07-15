@@ -49,14 +49,20 @@ service ControlService {
   // ListService returns all services.
   rpc ListService(ListServiceRequest) returns (ListServiceResponse);
 
-  // CreateSecret stores a new named secret (value encrypted before Raft).
+  // CreateSecret stores a new named secret in OpenBao and records its path in Raft.
   rpc CreateSecret(CreateSecretRequest) returns (CreateSecretResponse);
 
-  // DeleteSecret removes a named secret.
+  // DeleteSecret removes a secret from OpenBao and from Raft.
   rpc DeleteSecret(DeleteSecretRequest) returns (DeleteSecretResponse);
 
-  // ListSecrets returns all secret metadata (never the encrypted or plaintext values).
+  // ListSecrets returns all secret metadata (never plaintext values).
   rpc ListSecrets(ListSecretsRequest) returns (ListSecretsResponse);
+
+  // SetOpenBaoConfig stores the OpenBao connection configuration in cluster state.
+  rpc SetOpenBaoConfig(SetOpenBaoConfigRequest) returns (SetOpenBaoConfigResponse);
+
+  // GetOpenBaoStatus returns the current configuration and a live connection health check.
+  rpc GetOpenBaoStatus(GetOpenBaoStatusRequest) returns (GetOpenBaoStatusResponse);
 }
 
 message SubmitContainerRequest {
@@ -106,15 +112,18 @@ message GetClusterStateResponse {
 }
 
 message CreateIngressRequest {
-  string host         = 1; // Host header to match; empty = match all
-  string path_prefix  = 2; // URL path prefix; empty = "/"
-  string service_name = 3; // target service name
+  string host           = 1; // Host header to match; empty = match all
+  string path_prefix    = 2; // URL path prefix; empty = "/"
+  string container_fqdn = 3; // target container: "workload" or "service.workload"
+  uint32 container_port = 4; // port the container listens on
+  bool   strip_prefix   = 5; // strip path_prefix before forwarding to backend
 }
 
 message CreateIngressResponse {
-  string rule_id  = 1;
-  bool   accepted = 2;
-  string reason   = 3;
+  string rule_id    = 1;
+  bool   accepted   = 2;
+  string reason     = 3;
+  uint32 system_port = 4; // auto-assigned ingress port
 }
 
 message DeleteIngressRequest {
@@ -133,9 +142,9 @@ message ListIngressResponse {
 }
 
 message CreateServiceRequest {
-  string name          = 1; // short DNS label, e.g. "api"
-  string workload_name = 2; // stable workload name (Container.Name or Stack.Name)
-  uint32 target_port   = 3; // container port to proxy to
+  string name           = 1; // short DNS label, e.g. "api"
+  string container_fqdn = 2; // target container: "workload" or "service.workload"
+  uint32 container_port = 3; // port the container listens on
 }
 
 message CreateServiceResponse {
@@ -160,9 +169,36 @@ message ListServiceResponse {
   repeated Service services = 1;
 }
 
+message SetOpenBaoConfigRequest {
+  reserved 4;
+  reserved "ca_cert"; // superseded by the cluster-wide TrustedCA store (web UI only, no proto)
+  string address = 1;
+  string token   = 2;
+  string mount   = 3; // KV v2 mount path (default "secret")
+  bool insecure_skip_verify = 5; // skip TLS certificate verification entirely (testing only)
+}
+
+message SetOpenBaoConfigResponse {
+  bool   accepted = 1;
+  string reason   = 2;
+}
+
+message GetOpenBaoStatusRequest {}
+
+message GetOpenBaoStatusResponse {
+  reserved 6;
+  reserved "ca_cert"; // superseded by the cluster-wide TrustedCA store (web UI only, no proto)
+  bool   configured = 1; // true when an address has been stored
+  string address    = 2;
+  string mount      = 3;
+  bool   connected  = 4; // live health probe result
+  string error      = 5; // non-empty when connected=false
+  bool   insecure_skip_verify = 7;
+}
+
 message CreateSecretRequest {
   string name  = 1; // unique cluster-wide label
-  string value = 2; // plaintext; encrypted by the server before Raft
+  string value = 2; // plaintext; written to OpenBao, never stored in Raft
 }
 
 message CreateSecretResponse {
