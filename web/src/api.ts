@@ -282,6 +282,17 @@ export interface SetOpenBaoConfigRequest {
   insecureSkipVerify: boolean;
 }
 
+export interface BaoSealStatus {
+  configured: boolean;
+  reachable: boolean;
+  error?: string;
+  initialized: boolean;
+  sealed: boolean;
+  progress: number;
+  threshold: number;
+  shares: number;
+}
+
 export interface ContainerInspectResult {
   id: string;
   name: string;
@@ -538,6 +549,9 @@ export const api = {
   getOpenBaoStatus: () => request<OpenBaoStatus>("GET", "/api/openbao/status"),
   setOpenBaoConfig: (req: SetOpenBaoConfigRequest) =>
     request<{ accepted: boolean }>("POST", "/api/openbao/config", req),
+  getBaoSealStatus: () => request<BaoSealStatus>("GET", "/api/openbao/seal-status"),
+  unsealBao: (key: string) =>
+    request<BaoSealStatus>("POST", "/api/openbao/unseal", { key }),
   listTrustedCAs: () => request<TrustedCA[]>("GET", "/api/trusted-cas"),
   createTrustedCA: (req: CreateTrustedCARequest) =>
     request<TrustedCA>("POST", "/api/trusted-cas", req),

@@ -37,6 +37,8 @@ const (
 	ControlService_ListSecrets_FullMethodName      = "/orchestrator.ControlService/ListSecrets"
 	ControlService_SetOpenBaoConfig_FullMethodName = "/orchestrator.ControlService/SetOpenBaoConfig"
 	ControlService_GetOpenBaoStatus_FullMethodName = "/orchestrator.ControlService/GetOpenBaoStatus"
+	ControlService_GetBaoSealStatus_FullMethodName = "/orchestrator.ControlService/GetBaoSealStatus"
+	ControlService_UnsealBao_FullMethodName        = "/orchestrator.ControlService/UnsealBao"
 )
 
 // ControlServiceClient is the client API for ControlService service.
@@ -83,6 +85,12 @@ type ControlServiceClient interface {
 	SetOpenBaoConfig(ctx context.Context, in *SetOpenBaoConfigRequest, opts ...grpc.CallOption) (*SetOpenBaoConfigResponse, error)
 	// GetOpenBaoStatus returns the current configuration and a live connection health check.
 	GetOpenBaoStatus(ctx context.Context, in *GetOpenBaoStatusRequest, opts ...grpc.CallOption) (*GetOpenBaoStatusResponse, error)
+	// GetBaoSealStatus returns OpenBao's initialization/seal state and Shamir
+	// unseal progress. Unlike GetOpenBaoStatus this works while OpenBao is sealed.
+	GetBaoSealStatus(ctx context.Context, in *GetBaoSealStatusRequest, opts ...grpc.CallOption) (*GetBaoSealStatusResponse, error)
+	// UnsealBao submits one Shamir unseal key share to OpenBao. Call it once
+	// per key share until the returned status reports sealed = false.
+	UnsealBao(ctx context.Context, in *UnsealBaoRequest, opts ...grpc.CallOption) (*UnsealBaoResponse, error)
 }
 
 type controlServiceClient struct {
@@ -273,6 +281,26 @@ func (c *controlServiceClient) GetOpenBaoStatus(ctx context.Context, in *GetOpen
 	return out, nil
 }
 
+func (c *controlServiceClient) GetBaoSealStatus(ctx context.Context, in *GetBaoSealStatusRequest, opts ...grpc.CallOption) (*GetBaoSealStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetBaoSealStatusResponse)
+	err := c.cc.Invoke(ctx, ControlService_GetBaoSealStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlServiceClient) UnsealBao(ctx context.Context, in *UnsealBaoRequest, opts ...grpc.CallOption) (*UnsealBaoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UnsealBaoResponse)
+	err := c.cc.Invoke(ctx, ControlService_UnsealBao_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ControlServiceServer is the server API for ControlService service.
 // All implementations must embed UnimplementedControlServiceServer
 // for forward compatibility.
@@ -317,6 +345,12 @@ type ControlServiceServer interface {
 	SetOpenBaoConfig(context.Context, *SetOpenBaoConfigRequest) (*SetOpenBaoConfigResponse, error)
 	// GetOpenBaoStatus returns the current configuration and a live connection health check.
 	GetOpenBaoStatus(context.Context, *GetOpenBaoStatusRequest) (*GetOpenBaoStatusResponse, error)
+	// GetBaoSealStatus returns OpenBao's initialization/seal state and Shamir
+	// unseal progress. Unlike GetOpenBaoStatus this works while OpenBao is sealed.
+	GetBaoSealStatus(context.Context, *GetBaoSealStatusRequest) (*GetBaoSealStatusResponse, error)
+	// UnsealBao submits one Shamir unseal key share to OpenBao. Call it once
+	// per key share until the returned status reports sealed = false.
+	UnsealBao(context.Context, *UnsealBaoRequest) (*UnsealBaoResponse, error)
 	mustEmbedUnimplementedControlServiceServer()
 }
 
@@ -380,6 +414,12 @@ func (UnimplementedControlServiceServer) SetOpenBaoConfig(context.Context, *SetO
 }
 func (UnimplementedControlServiceServer) GetOpenBaoStatus(context.Context, *GetOpenBaoStatusRequest) (*GetOpenBaoStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetOpenBaoStatus not implemented")
+}
+func (UnimplementedControlServiceServer) GetBaoSealStatus(context.Context, *GetBaoSealStatusRequest) (*GetBaoSealStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetBaoSealStatus not implemented")
+}
+func (UnimplementedControlServiceServer) UnsealBao(context.Context, *UnsealBaoRequest) (*UnsealBaoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UnsealBao not implemented")
 }
 func (UnimplementedControlServiceServer) mustEmbedUnimplementedControlServiceServer() {}
 func (UnimplementedControlServiceServer) testEmbeddedByValue()                        {}
@@ -726,6 +766,42 @@ func _ControlService_GetOpenBaoStatus_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlService_GetBaoSealStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetBaoSealStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).GetBaoSealStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_GetBaoSealStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).GetBaoSealStatus(ctx, req.(*GetBaoSealStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlService_UnsealBao_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnsealBaoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).UnsealBao(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_UnsealBao_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).UnsealBao(ctx, req.(*UnsealBaoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ControlService_ServiceDesc is the grpc.ServiceDesc for ControlService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -804,6 +880,14 @@ var ControlService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetOpenBaoStatus",
 			Handler:    _ControlService_GetOpenBaoStatus_Handler,
+		},
+		{
+			MethodName: "GetBaoSealStatus",
+			Handler:    _ControlService_GetBaoSealStatus_Handler,
+		},
+		{
+			MethodName: "UnsealBao",
+			Handler:    _ControlService_UnsealBao_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

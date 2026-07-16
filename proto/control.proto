@@ -63,6 +63,14 @@ service ControlService {
 
   // GetOpenBaoStatus returns the current configuration and a live connection health check.
   rpc GetOpenBaoStatus(GetOpenBaoStatusRequest) returns (GetOpenBaoStatusResponse);
+
+  // GetBaoSealStatus returns OpenBao's initialization/seal state and Shamir
+  // unseal progress. Unlike GetOpenBaoStatus this works while OpenBao is sealed.
+  rpc GetBaoSealStatus(GetBaoSealStatusRequest) returns (GetBaoSealStatusResponse);
+
+  // UnsealBao submits one Shamir unseal key share to OpenBao. Call it once
+  // per key share until the returned status reports sealed = false.
+  rpc UnsealBao(UnsealBaoRequest) returns (UnsealBaoResponse);
 }
 
 message SubmitContainerRequest {
@@ -194,6 +202,31 @@ message GetOpenBaoStatusResponse {
   bool   connected  = 4; // live health probe result
   string error      = 5; // non-empty when connected=false
   bool   insecure_skip_verify = 7;
+}
+
+message GetBaoSealStatusRequest {}
+
+message GetBaoSealStatusResponse {
+  bool   configured  = 1; // true when an address has been stored
+  bool   reachable   = 2; // false when the seal-status probe itself failed
+  string error       = 3; // non-empty when reachable=false
+  bool   initialized = 4;
+  bool   sealed      = 5;
+  int32  progress    = 6; // key shares submitted so far
+  int32  threshold   = 7; // key shares required to unseal
+  int32  shares      = 8; // total key shares OpenBao was initialized with
+}
+
+message UnsealBaoRequest {
+  string key = 1; // one Shamir unseal key share
+}
+
+message UnsealBaoResponse {
+  bool   accepted  = 1;
+  string reason    = 2; // non-empty on rejection or error
+  bool   sealed    = 3;
+  int32  progress  = 4;
+  int32  threshold = 5;
 }
 
 message CreateSecretRequest {

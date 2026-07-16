@@ -15,7 +15,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Table from "@cloudscape-design/components/table";
 import Textarea from "@cloudscape-design/components/textarea";
-import { api, ClusterState, OpenBaoStatus, Secret, formatAge } from "../api";
+import { api, BaoSealStatus, ClusterState, OpenBaoStatus, Secret, formatAge } from "../api";
 
 interface Props {
   state: ClusterState | null;
@@ -44,6 +44,12 @@ export default function Secrets({ state, loading, refetch }: Props) {
   });
   const [baoSaving, setBaoSaving] = useState(false);
 
+  // OpenBao seal status + unseal
+  const [sealStatus, setSealStatus] = useState<BaoSealStatus | null>(null);
+  const [sealLoading, setSealLoading] = useState(true);
+  const [unsealKey, setUnsealKey] = useState("");
+  const [unsealing, setUnsealing] = useState(false);
+
   function addFlash(type: FlashbarProps.Type, msg: string) {
     const id = String(Date.now());
     setFlash((f) => [
@@ -61,9 +67,42 @@ export default function Secrets({ state, loading, refetch }: Props) {
       .finally(() => setBaoLoading(false));
   }
 
+  function loadSealStatus() {
+    setSealLoading(true);
+    api
+      .getBaoSealStatus()
+      .then(setSealStatus)
+      .catch(() => setSealStatus(null))
+      .finally(() => setSealLoading(false));
+  }
+
   useEffect(() => {
     loadBaoStatus();
+    loadSealStatus();
   }, []);
+
+  async function handleUnseal() {
+    if (!unsealKey) {
+      addFlash("error", "Key is required");
+      return;
+    }
+    setUnsealing(true);
+    try {
+      const st = await api.unsealBao(unsealKey);
+      setSealStatus(st);
+      setUnsealKey("");
+      if (st.sealed) {
+        addFlash("success", `Key accepted — progress ${st.progress}/${st.threshold}`);
+      } else {
+        addFlash("success", "OpenBao unsealed");
+        loadBaoStatus();
+      }
+    } catch (e) {
+      addFlash("error", String(e));
+    } finally {
+      setUnsealing(false);
+    }
+  }
 
   async function handleSaveBaoConfig() {
     if (!baoForm.address) {
@@ -132,7 +171,7 @@ export default function Secrets({ state, loading, refetch }: Props) {
   return (
     <ContentLayout
       header={
-        <Header variant="h1" actions={<Button iconName="refresh" onClick={() => { refetch(); loadBaoStatus(); }}>Refresh</Button>}>
+        <Header variant="h1" actions={<Button iconName="refresh" onClick={() => { refetch(); loadBaoStatus(); loadSealStatus(); }}>Refresh</Button>}>
           Secrets
         </Header>
       }
@@ -182,6 +221,62 @@ export default function Secrets({ state, loading, refetch }: Props) {
             </Box>
           )}
         </Container>
+
+        {/* OpenBao unseal card */}
+        {sealStatus?.configured && (
+          <Container
+            header={
+              <Header
+                variant="h2"
+                description="Submit Shamir unseal key shares one at a time. OpenBao must be unsealed before secrets can be read or written."
+              >
+                Unseal OpenBao
+              </Header>
+            }
+          >
+            <SpaceBetween size="m">
+              <ColumnLayout columns={2} variant="text-grid">
+                <div>
+                  <Box variant="awsui-key-label">Seal status</Box>
+                  <div>
+                    {sealLoading ? (
+                      <StatusIndicator type="loading">Checking…</StatusIndicator>
+                    ) : !sealStatus.reachable ? (
+                      <StatusIndicator type="error">Unreachable — {sealStatus.error}</StatusIndicator>
+                    ) : sealStatus.sealed ? (
+                      <StatusIndicator type="warning">Sealed</StatusIndicator>
+                    ) : (
+                      <StatusIndicator type="success">Unsealed</StatusIndicator>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <Box variant="awsui-key-label">Progress</Box>
+                  <Box>
+                    {sealStatus.reachable && sealStatus.threshold > 0
+                      ? `${sealStatus.progress}/${sealStatus.threshold} key shares (of ${sealStatus.shares} total)`
+                      : "—"}
+                  </Box>
+                </div>
+              </ColumnLayout>
+              {sealStatus.reachable && sealStatus.sealed && (
+                <FormField label="Unseal key share" description="Submit one key share per call until the threshold is met.">
+                  <SpaceBetween direction="horizontal" size="xs">
+                    <Input
+                      type="password"
+                      value={unsealKey}
+                      onChange={(e) => setUnsealKey(e.detail.value)}
+                      placeholder="unseal key share"
+                    />
+                    <Button variant="primary" loading={unsealing} onClick={handleUnseal}>
+                      Submit key
+                    </Button>
+                  </SpaceBetween>
+                </FormField>
+              )}
+            </SpaceBetween>
+          </Container>
+        )}
 
         {/* Secrets table */}
         <Container>

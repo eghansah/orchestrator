@@ -84,6 +84,8 @@ doneFlags:
 		serviceCmd(server, rest)
 	case "secret":
 		secretCmd(server, rest)
+	case "bao":
+		baoCmd(server, rest)
 	case "export":
 		exportCmd(webBase, rest)
 	case "import":
@@ -114,6 +116,7 @@ Commands:
   ingress Manage ingress routing rules
   service Manage named service endpoints (DNS + TCP proxy)
   secret  Manage cluster secrets
+  bao     Check OpenBao seal status and submit unseal key shares
   export  Download a portable YAML cluster configuration bundle
   import  Apply a YAML cluster configuration bundle
 

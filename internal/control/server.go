@@ -566,6 +566,56 @@ func (s *Server) GetOpenBaoStatus(ctx context.Context, _ *gen.GetOpenBaoStatusRe
 	return resp, nil
 }
 
+// GetBaoSealStatus reports OpenBao's initialization/seal state. It calls
+// /v1/sys/seal-status directly (not through baoClient's Health gate) since
+// that endpoint — unlike most others — must be readable while sealed.
+func (s *Server) GetBaoSealStatus(ctx context.Context, _ *gen.GetBaoSealStatusRequest) (*gen.GetBaoSealStatusResponse, error) {
+	cfg := s.peer.State().OpenBaoConfig
+	if cfg == nil || cfg.Address == "" {
+		return &gen.GetBaoSealStatusResponse{Configured: false}, nil
+	}
+	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
+	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount, caBundle, cfg.InsecureSkipVerify)
+	st, err := bao.SealStatus(ctx)
+	if err != nil {
+		return &gen.GetBaoSealStatusResponse{Configured: true, Error: err.Error()}, nil
+	}
+	return &gen.GetBaoSealStatusResponse{
+		Configured:  true,
+		Reachable:   true,
+		Initialized: st.Initialized,
+		Sealed:      st.Sealed,
+		Progress:    int32(st.Progress),
+		Threshold:   int32(st.Threshold),
+		Shares:      int32(st.Shares),
+	}, nil
+}
+
+// UnsealBao submits one Shamir unseal key share to OpenBao. It does not
+// require Raft leadership: it mutates OpenBao's own seal state, not cluster
+// state, and OpenBaoConfig is replicated so any node can serve it.
+func (s *Server) UnsealBao(ctx context.Context, req *gen.UnsealBaoRequest) (*gen.UnsealBaoResponse, error) {
+	if req.Key == "" {
+		return nil, status.Error(codes.InvalidArgument, "key is required")
+	}
+	cfg := s.peer.State().OpenBaoConfig
+	if cfg == nil || cfg.Address == "" {
+		return &gen.UnsealBaoResponse{Accepted: false, Reason: "OpenBao is not configured — set an address via the Secrets page or ctl"}, nil
+	}
+	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
+	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount, caBundle, cfg.InsecureSkipVerify)
+	st, err := bao.Unseal(ctx, req.Key)
+	if err != nil {
+		return &gen.UnsealBaoResponse{Accepted: false, Reason: err.Error()}, nil
+	}
+	return &gen.UnsealBaoResponse{
+		Accepted:  true,
+		Sealed:    st.Sealed,
+		Progress:  int32(st.Progress),
+		Threshold: int32(st.Threshold),
+	}, nil
+}
+
 func phaseIn(phase types.WorkloadPhase, phases []gen.WorkloadPhase) bool {
 	for _, p := range phases {
 		if types.WorkloadPhase(p) == phase {

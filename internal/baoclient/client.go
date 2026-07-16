@@ -71,6 +71,64 @@ func (c *Client) Health(ctx context.Context) error {
 	return nil
 }
 
+// SealStatus reports OpenBao's initialization and seal state, including
+// Shamir unseal progress. Unlike other endpoints, /v1/sys/seal-status
+// requires no token — it must be readable while sealed.
+type SealStatus struct {
+	Initialized bool `json:"initialized"`
+	Sealed      bool `json:"sealed"`
+	Threshold   int  `json:"t"`
+	Shares      int  `json:"n"`
+	Progress    int  `json:"progress"`
+}
+
+// SealStatus queries the current seal state.
+func (c *Client) SealStatus(ctx context.Context) (SealStatus, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.address+"/v1/sys/seal-status", nil)
+	if err != nil {
+		return SealStatus{}, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return SealStatus{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return SealStatus{}, c.apiError("seal-status", resp)
+	}
+	var out SealStatus
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return SealStatus{}, fmt.Errorf("decode response: %w", err)
+	}
+	return out, nil
+}
+
+// Unseal submits one Shamir unseal key share. OpenBao accumulates shares
+// across calls until the configured threshold is reached, at which point
+// Sealed becomes false in the returned status. Like seal-status, this
+// endpoint requires no token — submitting the key share is the credential.
+func (c *Client) Unseal(ctx context.Context, key string) (SealStatus, error) {
+	body, _ := json.Marshal(map[string]string{"key": key})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.address+"/v1/sys/unseal", bytes.NewReader(body))
+	if err != nil {
+		return SealStatus{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return SealStatus{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return SealStatus{}, c.apiError("unseal", resp)
+	}
+	var out SealStatus
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return SealStatus{}, fmt.Errorf("decode response: %w", err)
+	}
+	return out, nil
+}
+
 // Write stores value at path (relative to mount, e.g. "orchestrator/db-pass").
 func (c *Client) Write(ctx context.Context, path, value string) error {
 	body, _ := json.Marshal(map[string]any{"data": map[string]string{"value": value}})

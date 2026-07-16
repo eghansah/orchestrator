@@ -207,6 +207,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/secrets/{id}/delete", a(s.handleDeleteSecret))
 	mux.Handle("GET /api/openbao/status", a(s.handleOpenBaoStatus))
 	mux.Handle("POST /api/openbao/config", a(s.handleSetOpenBaoConfig))
+	mux.Handle("GET /api/openbao/seal-status", a(s.handleBaoSealStatus))
+	mux.Handle("POST /api/openbao/unseal", a(s.handleUnsealBao))
 	mux.Handle("GET /api/trusted-cas", a(s.handleListTrustedCAs))
 	mux.Handle("POST /api/trusted-cas", a(s.handleCreateTrustedCA))
 	mux.Handle("POST /api/trusted-cas/{id}/update", a(s.handleUpdateTrustedCA))
@@ -2623,6 +2625,77 @@ func (s *Server) handleSetOpenBaoConfig(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, map[string]bool{"accepted": true})
+}
+
+type baoSealStatusJSON struct {
+	Configured  bool   `json:"configured"`
+	Reachable   bool   `json:"reachable"`
+	Error       string `json:"error,omitempty"`
+	Initialized bool   `json:"initialized"`
+	Sealed      bool   `json:"sealed"`
+	Progress    int    `json:"progress"`
+	Threshold   int    `json:"threshold"`
+	Shares      int    `json:"shares"`
+}
+
+// handleBaoSealStatus reports OpenBao's initialization/seal state. It builds
+// its own client directly (not via openBaoClient's Health gate) since
+// /v1/sys/seal-status — unlike most endpoints — must be readable while sealed.
+func (s *Server) handleBaoSealStatus(w http.ResponseWriter, r *http.Request) {
+	cfg := s.peer.State().OpenBaoConfig
+	if cfg == nil || cfg.Address == "" {
+		writeJSON(w, baoSealStatusJSON{Configured: false})
+		return
+	}
+	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
+	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount, caBundle, cfg.InsecureSkipVerify)
+	st, err := bao.SealStatus(r.Context())
+	if err != nil {
+		writeJSON(w, baoSealStatusJSON{Configured: true, Error: err.Error()})
+		return
+	}
+	writeJSON(w, baoSealStatusJSON{
+		Configured:  true,
+		Reachable:   true,
+		Initialized: st.Initialized,
+		Sealed:      st.Sealed,
+		Progress:    st.Progress,
+		Threshold:   st.Threshold,
+		Shares:      st.Shares,
+	})
+}
+
+// handleUnsealBao submits one Shamir unseal key share to OpenBao.
+func (s *Server) handleUnsealBao(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Key == "" {
+		writeError(w, http.StatusBadRequest, "key is required")
+		return
+	}
+	bao, err := s.openBaoClient()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	st, err := bao.Unseal(r.Context(), req.Key)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, baoSealStatusJSON{
+		Configured: true,
+		Reachable:  true,
+		Sealed:     st.Sealed,
+		Progress:   st.Progress,
+		Threshold:  st.Threshold,
+		Shares:     st.Shares,
+	})
 }
 
 // ── Trusted CA API handlers ────────────────────────────────────────────────────
