@@ -16,29 +16,29 @@ import (
 type cmdType uint8
 
 const (
-	cmdApplyWorkload  cmdType = iota // add or update a workload in desired state
-	cmdRemoveWorkload                // remove a workload
-	cmdRegisterNode                  // node joined or updated
-	cmdAssignWorkload                // scheduler assigned workload to a node
-	cmdApplyIngress                  // add or update an ingress rule
-	cmdRemoveIngress                 // remove an ingress rule
-	cmdApplyService                  // add or update a service
-	cmdRemoveService                 // remove a service
-	cmdApplyDomain                   // add or update a domain (TLS cert store)
-	cmdRemoveDomain                  // remove a domain
-	cmdApplyUser                     // add or update a user account (AD allowlist entry)
-	cmdRemoveUser                    // remove a user account
-	cmdApplyRegistry                 // add or update a container registry
-	cmdRemoveRegistry                // remove a container registry
-	cmdApplyTemplate                 // add or update a workload template
-	cmdRemoveTemplate                // remove a workload template
-	cmdApplySecret                   // add or update a secret
-	cmdRemoveSecret                  // remove a secret
-	cmdSetOpenBaoConfig              // store OpenBao connection config
-	cmdApplyTrustedCA                // add or update a trusted CA certificate
-	cmdRemoveTrustedCA               // remove a trusted CA certificate
-	cmdApplyConfigValue              // add or update a config value
-	cmdRemoveConfigValue             // remove a config value
+	cmdApplyWorkload     cmdType = iota // add or update a workload in desired state
+	cmdRemoveWorkload                   // remove a workload
+	cmdRegisterNode                     // node joined or updated
+	cmdAssignWorkload                   // scheduler assigned workload to a node
+	cmdApplyIngress                     // add or update an ingress rule
+	cmdRemoveIngress                    // remove an ingress rule
+	cmdApplyService                     // add or update a service
+	cmdRemoveService                    // remove a service
+	cmdApplyDomain                      // add or update a domain (TLS cert store)
+	cmdRemoveDomain                     // remove a domain
+	cmdApplyUser                        // add or update a user account (AD allowlist entry)
+	cmdRemoveUser                       // remove a user account
+	cmdApplyRegistry                    // add or update a container registry
+	cmdRemoveRegistry                   // remove a container registry
+	cmdApplyTemplate                    // add or update a workload template
+	cmdRemoveTemplate                   // remove a workload template
+	cmdApplySecret                      // add or update a secret
+	cmdRemoveSecret                     // remove a secret
+	cmdSetOpenBaoConfig                 // store OpenBao connection config
+	cmdApplyTrustedCA                   // add or update a trusted CA certificate
+	cmdRemoveTrustedCA                  // remove a trusted CA certificate
+	cmdApplyConfigValue                 // add or update a config value
+	cmdRemoveConfigValue                // remove a config value
 )
 
 type command struct {
@@ -63,12 +63,12 @@ const defaultMeshCIDR = "100.64.0.0/10"
 
 // ClusterState is the desired-state view maintained by the FSM.
 type ClusterState struct {
-	Workloads       map[string]types.Workload    `json:"workloads"`
-	Nodes           map[string]types.Node        `json:"nodes"`
-	IngressRules    map[string]types.IngressRule `json:"ingress_rules"`
-	Services        map[string]types.Service     `json:"services"`
-	Domains         map[string]types.Domain      `json:"domains"`
-	Users           map[string]types.User        `json:"users"`
+	Workloads       map[string]types.Workload         `json:"workloads"`
+	Nodes           map[string]types.Node             `json:"nodes"`
+	IngressRules    map[string]types.IngressRule      `json:"ingress_rules"`
+	Services        map[string]types.Service          `json:"services"`
+	Domains         map[string]types.Domain           `json:"domains"`
+	Users           map[string]types.User             `json:"users"`
 	Registries      map[string]types.Registry         `json:"registries"`
 	Templates       map[string]types.WorkloadTemplate `json:"templates"`
 	Secrets         map[string]types.Secret           `json:"secrets"`
@@ -146,8 +146,6 @@ func nextSlash24(a netip.Addr) netip.Addr {
 	v += 256
 	return netip.AddrFrom4([4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
 }
-
-
 
 type fsm struct {
 	mu    sync.RWMutex

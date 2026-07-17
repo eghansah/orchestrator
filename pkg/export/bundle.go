@@ -18,14 +18,14 @@ const apiVersion = "orchestrator/v1"
 type Bundle struct {
 	APIVersion   string          `yaml:"api_version"`
 	ExportedAt   time.Time       `yaml:"exported_at"`
-	Workloads    []WorkloadEntry  `yaml:"workloads,omitempty"`
-	Domains      []DomainEntry    `yaml:"domains,omitempty"`
-	IngressRules []IngressEntry   `yaml:"ingress_rules,omitempty"`
-	Services     []ServiceEntry   `yaml:"services,omitempty"`
-	Secrets      []SecretEntry    `yaml:"secrets,omitempty"`
-	ConfigValues []ConfigEntry    `yaml:"config_values,omitempty"`
-	Registries   []RegistryEntry  `yaml:"registries,omitempty"`
-	Templates    []TemplateEntry  `yaml:"templates,omitempty"`
+	Workloads    []WorkloadEntry `yaml:"workloads,omitempty"`
+	Domains      []DomainEntry   `yaml:"domains,omitempty"`
+	IngressRules []IngressEntry  `yaml:"ingress_rules,omitempty"`
+	Services     []ServiceEntry  `yaml:"services,omitempty"`
+	Secrets      []SecretEntry   `yaml:"secrets,omitempty"`
+	ConfigValues []ConfigEntry   `yaml:"config_values,omitempty"`
+	Registries   []RegistryEntry `yaml:"registries,omitempty"`
+	Templates    []TemplateEntry `yaml:"templates,omitempty"`
 }
 
 type WorkloadEntry struct {
@@ -43,7 +43,7 @@ type DomainEntry struct {
 }
 
 type IngressEntry struct {
-	DomainName    string `yaml:"domain_name"`               // resolved to domain ID on import
+	DomainName    string `yaml:"domain_name"` // resolved to domain ID on import
 	Host          string `yaml:"host,omitempty"`
 	PathPrefix    string `yaml:"path_prefix,omitempty"`
 	StripPrefix   bool   `yaml:"strip_prefix,omitempty"`

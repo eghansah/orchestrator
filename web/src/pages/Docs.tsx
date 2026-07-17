@@ -143,6 +143,11 @@ export default function Docs({ initialTab }: { initialTab?: string }) {
             content: <DocContent name="openbao-setup" />,
           },
           {
+            id: "templates-secrets-config",
+            label: "Secrets & Config in Templates",
+            content: <DocContent name="templates-secrets-config" />,
+          },
+          {
             id: "changelog",
             label: "Changelog",
             content: <DocContent name="changelog" />,

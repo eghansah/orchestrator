@@ -8,6 +8,7 @@ import Flashbar, { FlashbarProps } from "@cloudscape-design/components/flashbar"
 import FormField from "@cloudscape-design/components/form-field";
 import Header from "@cloudscape-design/components/header";
 import Input from "@cloudscape-design/components/input";
+import Link from "@cloudscape-design/components/link";
 import Modal from "@cloudscape-design/components/modal";
 import Select from "@cloudscape-design/components/select";
 import SpaceBetween from "@cloudscape-design/components/space-between";
@@ -48,7 +49,7 @@ function entriesToRefs(entries: RefEntry[]): Record<string, string> | undefined 
 // template's Deploy button becomes Redeploy (which replaces the workload).
 const ACTIVE_PHASES = new Set(["pending", "scheduled", "running"]);
 
-export default function Templates({ state, loading, error, refetch, onNavigate: _nav }: Props) {
+export default function Templates({ state, loading, error, refetch, onNavigate }: Props) {
   // A template's deployed workload carries the template's name. Map name →
   // whether a live workload exists, so each row can pick Deploy vs Redeploy.
   const deployedNames = new Set(
@@ -178,6 +179,19 @@ export default function Templates({ state, loading, error, refetch, onNavigate: 
       header={
         <Header
           variant="h1"
+          description={
+            <>
+              Reusable container/stack definitions that can reference Secrets and Config values.{" "}
+              <Link
+                onFollow={(e) => {
+                  e.preventDefault();
+                  onNavigate("docs-templates-secrets-config");
+                }}
+              >
+                How to use Secrets and Config in templates
+              </Link>
+            </>
+          }
           actions={
             <SpaceBetween direction="horizontal" size="xs">
               <Button iconName="refresh" onClick={() => { refetch(); loadTemplates(); }}>Refresh</Button>

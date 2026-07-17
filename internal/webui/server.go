@@ -1085,10 +1085,11 @@ func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {
 // ── Docs handler ─────────────────────────────────────────────────────────────
 
 var allowedDocs = map[string]string{
-	"deploy":        "deploy.md",
-	"production":    "production.md",
-	"changelog":     "CHANGELOG.md",
-	"openbao-setup": "openbao-setup.md",
+	"deploy":                   "deploy.md",
+	"production":               "production.md",
+	"changelog":                "CHANGELOG.md",
+	"openbao-setup":            "openbao-setup.md",
+	"templates-secrets-config": "templates-secrets-config.md",
 }
 
 func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
