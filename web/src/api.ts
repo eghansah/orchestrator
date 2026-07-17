@@ -271,6 +271,8 @@ export interface OpenBaoStatus {
   address?: string;
   mount?: string;
   insecureSkipVerify: boolean;
+  roleId?: string;
+  authMount?: string;
   connected: boolean;
   error?: string;
 }
@@ -280,6 +282,9 @@ export interface SetOpenBaoConfigRequest {
   token: string;
   mount: string;
   insecureSkipVerify: boolean;
+  roleId: string;
+  secretId: string;
+  authMount: string;
 }
 
 export interface BaoSealStatus {

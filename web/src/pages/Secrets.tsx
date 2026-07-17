@@ -43,6 +43,9 @@ export default function Secrets({ state, loading, refetch, onNavigate }: Props) 
     token: "",
     mount: "secret",
     insecureSkipVerify: false,
+    roleId: "",
+    secretId: "",
+    authMount: "approle",
   });
   const [baoSaving, setBaoSaving] = useState(false);
 
@@ -118,6 +121,9 @@ export default function Secrets({ state, loading, refetch, onNavigate }: Props) 
         token: baoForm.token,
         mount: baoForm.mount || "secret",
         insecureSkipVerify: baoForm.insecureSkipVerify,
+        roleId: baoForm.roleId,
+        secretId: baoForm.secretId,
+        authMount: baoForm.authMount || "approle",
       });
       addFlash("success", "OpenBao connection saved");
       setShowBaoConfig(false);
@@ -206,6 +212,9 @@ export default function Secrets({ state, loading, refetch, onNavigate }: Props) 
                     token: "",
                     mount: baoStatus?.mount ?? "secret",
                     insecureSkipVerify: baoStatus?.insecureSkipVerify ?? false,
+                    roleId: baoStatus?.roleId ?? "",
+                    secretId: "",
+                    authMount: baoStatus?.authMount ?? "approle",
                   });
                   setShowBaoConfig(true);
                 }}>
@@ -399,12 +408,34 @@ export default function Secrets({ state, loading, refetch, onNavigate }: Props) 
                 placeholder="https://bao.example.com:8200"
               />
             </FormField>
-            <FormField label="Token" description="Service token with KV read/write on <mount>/data/orchestrator/*">
+            <FormField label="Token" description="Service token with KV read/write on <mount>/data/orchestrator/*. Ignored when Role ID is set.">
               <Input
                 type="password"
                 value={baoForm.token}
                 onChange={(e) => setBaoForm((f) => ({ ...f, token: e.detail.value }))}
                 placeholder="hvs.XXXXXXXX"
+              />
+            </FormField>
+            <FormField label="Role ID" description="AppRole role_id — leave blank to authenticate with the token above instead">
+              <Input
+                value={baoForm.roleId}
+                onChange={(e) => setBaoForm((f) => ({ ...f, roleId: e.detail.value }))}
+                placeholder="AppRole role_id"
+              />
+            </FormField>
+            <FormField label="Secret ID" description="AppRole secret_id, required when Role ID is set">
+              <Input
+                type="password"
+                value={baoForm.secretId}
+                onChange={(e) => setBaoForm((f) => ({ ...f, secretId: e.detail.value }))}
+                placeholder="AppRole secret_id"
+              />
+            </FormField>
+            <FormField label="Auth mount" description="AppRole auth mount path (default: approle)">
+              <Input
+                value={baoForm.authMount}
+                onChange={(e) => setBaoForm((f) => ({ ...f, authMount: e.detail.value }))}
+                placeholder="approle"
               />
             </FormField>
             <FormField label="Mount" description="KV v2 mount path (default: secret)">
