@@ -13,8 +13,8 @@ import (
 // rewriteComposePorts replaces short-form port declarations in a compose YAML
 // with loopback bindings using the FSM-assigned AllocatedPorts, e.g.:
 //
-//	- "8080:80"  →  - "127.0.0.1:30001:80/tcp"
-//	- "80"       →  - "127.0.0.1:30001:80/tcp"
+//   - "8080:80"  →  - "127.0.0.1:30001:80/tcp"
+//   - "80"       →  - "127.0.0.1:30001:80/tcp"
 //
 // Lines that don't match a known container port are left unchanged.
 // Long-form (target:/published:) entries are not rewritten.
@@ -126,6 +126,59 @@ func injectMeshNetwork(input, networkName string) string {
 		return input
 	}
 	return string(out)
+}
+
+// injectSecretVolumes rewrites a compose YAML so that each service named in
+// files gets a read-only bind-mount volume for its secret, pointing at the
+// already-materialized tmpfs staging file at stagingDir/<service>/<name>.
+// Entries with an empty Service are skipped (those belong to single
+// containers, which never go through compose). Returns the input unchanged
+// if there's nothing to inject or the YAML can't be parsed.
+func injectSecretVolumes(input, stagingDir string, files []types.ResolvedSecretFile) string {
+	if len(files) == 0 {
+		return input
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(input), &doc); err != nil || doc == nil {
+		return input
+	}
+	services, _ := doc["services"].(map[string]any)
+	if services == nil {
+		return input
+	}
+	modified := false
+	for _, f := range files {
+		if f.Service == "" {
+			continue
+		}
+		sv, ok := services[f.Service]
+		if !ok {
+			continue
+		}
+		svc, ok := sv.(map[string]any)
+		if !ok {
+			continue
+		}
+		mount := fmt.Sprintf("%s/%s/%s:%s:ro", stagingDir, f.Service, f.Name, f.Target)
+		svc["volumes"] = append(svcVolumeEntries(svc), mount)
+		modified = true
+	}
+	if !modified {
+		return input
+	}
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		return input
+	}
+	return string(out)
+}
+
+// svcVolumeEntries returns the existing "volumes" list of a service as
+// []any (nil if absent or not list-shaped — the orchestrator only ever
+// injects short-form bind mounts, so long-form map entries aren't expected).
+func svcVolumeEntries(svc map[string]any) []any {
+	v, _ := svc["volumes"].([]any)
+	return v
 }
 
 // ensureStringMap returns the map[string]any at parent[key], creating

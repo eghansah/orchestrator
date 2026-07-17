@@ -27,21 +27,38 @@ type Server struct {
 	nodeID   string
 	grpcAddr string // this node's own gRPC address
 	ownCert  tls.Certificate
+	bao      *baoclient.Session // caches/renews the OpenBao AppRole login (no-op for static-token configs)
 }
 
 func New(peer *internraft.Peer, nodeID, grpcAddr string, ownCert tls.Certificate) *Server {
-	return &Server{peer: peer, nodeID: nodeID, grpcAddr: grpcAddr, ownCert: ownCert}
+	return &Server{peer: peer, nodeID: nodeID, grpcAddr: grpcAddr, ownCert: ownCert, bao: &baoclient.Session{}}
 }
 
 // baoClient returns a baoclient.Client configured from the current Raft state,
-// or an error when OpenBao has not been configured yet.
-func (s *Server) baoClient() (*baoclient.Client, error) {
+// or an error when OpenBao has not been configured yet. Only the current
+// Raft leader ever reaches this (every call site is leader-gated), so AppRole
+// login/renewal via s.bao only ever happens on the leader.
+func (s *Server) baoClient(ctx context.Context) (*baoclient.Client, error) {
 	cfg := s.peer.State().OpenBaoConfig
 	if cfg == nil || cfg.Address == "" {
 		return nil, fmt.Errorf("OpenBao is not configured — set an address via the Secrets page or ctl")
 	}
 	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
-	return baoclient.New(cfg.Address, cfg.Token, cfg.Mount, caBundle, cfg.InsecureSkipVerify), nil
+	return s.bao.Client(ctx, *cfg, caBundle)
+}
+
+// BaoClient exposes baoClient to callers outside this package (e.g. the web
+// UI) that need direct OpenBao access, so AppRole session/renewal logic
+// lives in exactly one place instead of being duplicated per caller.
+func (s *Server) BaoClient(ctx context.Context) (*baoclient.Client, error) {
+	return s.baoClient(ctx)
+}
+
+// BaoSession exposes the underlying AppRole session for callers (e.g. the web
+// UI) that need to validate a not-yet-persisted OpenBaoConfig — such as
+// testing a new config before SetOpenBaoConfig commits it to Raft.
+func (s *Server) BaoSession() *baoclient.Session {
+	return s.bao
 }
 
 func newID() string {
@@ -144,13 +161,30 @@ func (s *Server) scheduleAndPlace(ctx context.Context, wl types.Workload) (*gen.
 func (s *Server) resolveSecrets(ctx context.Context, wl types.Workload) (types.Workload, error) {
 	state := s.peer.State()
 
-	bao, err := s.baoClient()
+	usesSecretVolumes := func() bool {
+		if wl.Container != nil {
+			for _, v := range wl.Container.Volumes {
+				if v.EffectiveType() == types.VolumeTypeSecret {
+					return true
+				}
+			}
+		}
+		if wl.Stack != nil && len(wl.Stack.SecretMounts) > 0 {
+			return true
+		}
+		return false
+	}
+
+	bao, err := s.baoClient(ctx)
 	if err != nil {
-		// No secret refs = no problem; the error only matters if refs exist.
+		// No secret refs/mounts = no problem; the error only matters if any exist.
 		if wl.Container != nil && len(wl.Container.SecretRefs) > 0 {
 			return wl, err
 		}
 		if wl.Stack != nil && len(wl.Stack.SecretRefs) > 0 {
+			return wl, err
+		}
+		if usesSecretVolumes() {
 			return wl, err
 		}
 		return wl, nil
@@ -199,6 +233,52 @@ func (s *Server) resolveSecrets(ctx context.Context, wl types.Workload) (types.W
 		}
 		specCopy.ResolvedEnv = resolved
 		wl.Stack = &specCopy
+	}
+
+	resolveFile := func(secretName, target string, mode uint32, service string) (types.ResolvedSecretFile, error) {
+		var found *types.Secret
+		for _, sec := range state.Secrets {
+			if sec.Name == secretName {
+				found = &sec
+				break
+			}
+		}
+		if found == nil {
+			return types.ResolvedSecretFile{}, fmt.Errorf("secret %q not found", secretName)
+		}
+		plaintext, err := bao.Read(ctx, found.BaoPath)
+		if err != nil {
+			return types.ResolvedSecretFile{}, fmt.Errorf("fetch secret %q from OpenBao: %w", secretName, err)
+		}
+		if target == "" {
+			target = "/run/secrets/" + secretName
+		}
+		if mode == 0 {
+			mode = 0400
+		}
+		return types.ResolvedSecretFile{Name: secretName, Target: target, Mode: mode, Service: service, Plaintext: plaintext}, nil
+	}
+
+	if wl.Container != nil {
+		for _, v := range wl.Container.Volumes {
+			if v.EffectiveType() != types.VolumeTypeSecret {
+				continue
+			}
+			rf, err := resolveFile(v.Source, v.Target, v.Mode, "")
+			if err != nil {
+				return wl, err
+			}
+			wl.ResolvedSecretFiles = append(wl.ResolvedSecretFiles, rf)
+		}
+	}
+	if wl.Stack != nil {
+		for _, m := range wl.Stack.SecretMounts {
+			rf, err := resolveFile(m.SecretName, m.Target, m.Mode, m.Service)
+			if err != nil {
+				return wl, err
+			}
+			wl.ResolvedSecretFiles = append(wl.ResolvedSecretFiles, rf)
+		}
 	}
 	return wl, nil
 }
@@ -464,7 +544,7 @@ func (s *Server) CreateSecret(ctx context.Context, req *gen.CreateSecretRequest)
 	if err := s.requireLeader(); err != nil {
 		return nil, err
 	}
-	bao, err := s.baoClient()
+	bao, err := s.baoClient(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "openbao not configured: %v", err)
 	}
@@ -474,7 +554,7 @@ func (s *Server) CreateSecret(ctx context.Context, req *gen.CreateSecretRequest)
 	sec := types.Secret{
 		ID:        newID(),
 		Name:      req.Name,
-		BaoPath:   "orchestrator/" + req.Name,
+		BaoPath:   types.SecretPathPrefix + req.Name,
 		CreatedAt: time.Now(),
 	}
 	if err := bao.Write(ctx, sec.BaoPath, req.Value); err != nil {
@@ -500,7 +580,7 @@ func (s *Server) DeleteSecret(ctx context.Context, req *gen.DeleteSecretRequest)
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "secret %q not found", req.SecretId)
 	}
-	if bao, err := s.baoClient(); err == nil {
+	if bao, err := s.baoClient(ctx); err == nil {
 		_ = bao.Delete(ctx, sec.BaoPath) // best-effort; don't block Raft removal on OpenBao errors
 	}
 	if err := s.peer.RemoveSecret(req.SecretId); err != nil {
@@ -532,12 +612,21 @@ func (s *Server) SetOpenBaoConfig(ctx context.Context, req *gen.SetOpenBaoConfig
 		Token:              req.Token,
 		Mount:              req.Mount,
 		InsecureSkipVerify: req.InsecureSkipVerify,
+		RoleID:             req.RoleId,
+		SecretID:           req.SecretId,
+		AuthMount:          req.AuthMount,
 	}
-	// Validate the connection before persisting.
+	// Validate the connection (and, for AppRole, the login itself) before persisting.
 	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
-	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount, caBundle, cfg.InsecureSkipVerify)
+	bao, err := s.bao.Client(ctx, cfg, caBundle)
+	if err != nil {
+		return &gen.SetOpenBaoConfigResponse{Accepted: false, Reason: "login failed: " + err.Error()}, nil
+	}
 	if err := bao.Health(ctx); err != nil {
 		return &gen.SetOpenBaoConfigResponse{Accepted: false, Reason: "health check failed: " + err.Error()}, nil
+	}
+	if err := bao.CheckSecretAccess(ctx, types.SecretPathPrefix); err != nil {
+		return &gen.SetOpenBaoConfigResponse{Accepted: false, Reason: err.Error()}, nil
 	}
 	if err := s.peer.SetOpenBaoConfig(cfg); err != nil {
 		return nil, status.Errorf(codes.Internal, "store openbao config: %v", err)
@@ -555,9 +644,14 @@ func (s *Server) GetOpenBaoStatus(ctx context.Context, _ *gen.GetOpenBaoStatusRe
 		Address:            cfg.Address,
 		Mount:              cfg.Mount,
 		InsecureSkipVerify: cfg.InsecureSkipVerify,
+		RoleId:             cfg.RoleID,
+		AuthMount:          cfg.AuthMount,
 	}
-	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
-	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount, caBundle, cfg.InsecureSkipVerify)
+	bao, err := s.baoClient(ctx)
+	if err != nil {
+		resp.Error = err.Error()
+		return resp, nil
+	}
 	if err := bao.Health(ctx); err != nil {
 		resp.Error = err.Error()
 	} else {

@@ -181,9 +181,12 @@ message SetOpenBaoConfigRequest {
   reserved 4;
   reserved "ca_cert"; // superseded by the cluster-wide TrustedCA store (web UI only, no proto)
   string address = 1;
-  string token   = 2;
+  string token   = 2; // used when role_id is empty
   string mount   = 3; // KV v2 mount path (default "secret")
   bool insecure_skip_verify = 5; // skip TLS certificate verification entirely (testing only)
+  string role_id    = 6; // AppRole role_id; when set, AppRole login is used instead of token
+  string secret_id  = 7; // AppRole secret_id
+  string auth_mount = 8; // AppRole auth backend mount path (default "approle")
 }
 
 message SetOpenBaoConfigResponse {
@@ -202,6 +205,9 @@ message GetOpenBaoStatusResponse {
   bool   connected  = 4; // live health probe result
   string error      = 5; // non-empty when connected=false
   bool   insecure_skip_verify = 7;
+  string role_id    = 8; // AppRole role_id; empty when using static-token auth
+  string auth_mount = 9; // AppRole auth backend mount path
+  // secret_id is intentionally never returned — it's a credential, not status.
 }
 
 message GetBaoSealStatusRequest {}

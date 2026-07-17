@@ -1157,9 +1157,12 @@ func (x *ListServiceResponse) GetServices() []*Service {
 type SetOpenBaoConfigRequest struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	Address            string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
-	Token              string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	Token              string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`                                                        // used when role_id is empty
 	Mount              string                 `protobuf:"bytes,3,opt,name=mount,proto3" json:"mount,omitempty"`                                                        // KV v2 mount path (default "secret")
 	InsecureSkipVerify bool                   `protobuf:"varint,5,opt,name=insecure_skip_verify,json=insecureSkipVerify,proto3" json:"insecure_skip_verify,omitempty"` // skip TLS certificate verification entirely (testing only)
+	RoleId             string                 `protobuf:"bytes,6,opt,name=role_id,json=roleId,proto3" json:"role_id,omitempty"`                                        // AppRole role_id; when set, AppRole login is used instead of token
+	SecretId           string                 `protobuf:"bytes,7,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`                                  // AppRole secret_id
+	AuthMount          string                 `protobuf:"bytes,8,opt,name=auth_mount,json=authMount,proto3" json:"auth_mount,omitempty"`                               // AppRole auth backend mount path (default "approle")
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1220,6 +1223,27 @@ func (x *SetOpenBaoConfigRequest) GetInsecureSkipVerify() bool {
 		return x.InsecureSkipVerify
 	}
 	return false
+}
+
+func (x *SetOpenBaoConfigRequest) GetRoleId() string {
+	if x != nil {
+		return x.RoleId
+	}
+	return ""
+}
+
+func (x *SetOpenBaoConfigRequest) GetSecretId() string {
+	if x != nil {
+		return x.SecretId
+	}
+	return ""
+}
+
+func (x *SetOpenBaoConfigRequest) GetAuthMount() string {
+	if x != nil {
+		return x.AuthMount
+	}
+	return ""
 }
 
 type SetOpenBaoConfigResponse struct {
@@ -1318,6 +1342,8 @@ type GetOpenBaoStatusResponse struct {
 	Connected          bool                   `protobuf:"varint,4,opt,name=connected,proto3" json:"connected,omitempty"` // live health probe result
 	Error              string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`          // non-empty when connected=false
 	InsecureSkipVerify bool                   `protobuf:"varint,7,opt,name=insecure_skip_verify,json=insecureSkipVerify,proto3" json:"insecure_skip_verify,omitempty"`
+	RoleId             string                 `protobuf:"bytes,8,opt,name=role_id,json=roleId,proto3" json:"role_id,omitempty"`          // AppRole role_id; empty when using static-token auth
+	AuthMount          string                 `protobuf:"bytes,9,opt,name=auth_mount,json=authMount,proto3" json:"auth_mount,omitempty"` // AppRole auth backend mount path
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1392,6 +1418,20 @@ func (x *GetOpenBaoStatusResponse) GetInsecureSkipVerify() bool {
 		return x.InsecureSkipVerify
 	}
 	return false
+}
+
+func (x *GetOpenBaoStatusResponse) GetRoleId() string {
+	if x != nil {
+		return x.RoleId
+	}
+	return ""
+}
+
+func (x *GetOpenBaoStatusResponse) GetAuthMount() string {
+	if x != nil {
+		return x.AuthMount
+	}
+	return ""
 }
 
 type GetBaoSealStatusRequest struct {
@@ -2009,16 +2049,20 @@ const file_control_proto_rawDesc = "" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x14\n" +
 	"\x12ListServiceRequest\"H\n" +
 	"\x13ListServiceResponse\x121\n" +
-	"\bservices\x18\x01 \x03(\v2\x15.orchestrator.ServiceR\bservices\"\xa0\x01\n" +
+	"\bservices\x18\x01 \x03(\v2\x15.orchestrator.ServiceR\bservices\"\xf5\x01\n" +
 	"\x17SetOpenBaoConfigRequest\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12\x14\n" +
 	"\x05mount\x18\x03 \x01(\tR\x05mount\x120\n" +
-	"\x14insecure_skip_verify\x18\x05 \x01(\bR\x12insecureSkipVerifyJ\x04\b\x04\x10\x05R\aca_cert\"N\n" +
+	"\x14insecure_skip_verify\x18\x05 \x01(\bR\x12insecureSkipVerify\x12\x17\n" +
+	"\arole_id\x18\x06 \x01(\tR\x06roleId\x12\x1b\n" +
+	"\tsecret_id\x18\a \x01(\tR\bsecretId\x12\x1d\n" +
+	"\n" +
+	"auth_mount\x18\b \x01(\tR\tauthMountJ\x04\b\x04\x10\x05R\aca_cert\"N\n" +
 	"\x18SetOpenBaoConfigResponse\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x19\n" +
-	"\x17GetOpenBaoStatusRequest\"\xdf\x01\n" +
+	"\x17GetOpenBaoStatusRequest\"\x97\x02\n" +
 	"\x18GetOpenBaoStatusResponse\x12\x1e\n" +
 	"\n" +
 	"configured\x18\x01 \x01(\bR\n" +
@@ -2027,7 +2071,10 @@ const file_control_proto_rawDesc = "" +
 	"\x05mount\x18\x03 \x01(\tR\x05mount\x12\x1c\n" +
 	"\tconnected\x18\x04 \x01(\bR\tconnected\x12\x14\n" +
 	"\x05error\x18\x05 \x01(\tR\x05error\x120\n" +
-	"\x14insecure_skip_verify\x18\a \x01(\bR\x12insecureSkipVerifyJ\x04\b\x06\x10\aR\aca_cert\"\x19\n" +
+	"\x14insecure_skip_verify\x18\a \x01(\bR\x12insecureSkipVerify\x12\x17\n" +
+	"\arole_id\x18\b \x01(\tR\x06roleId\x12\x1d\n" +
+	"\n" +
+	"auth_mount\x18\t \x01(\tR\tauthMountJ\x04\b\x06\x10\aR\aca_cert\"\x19\n" +
 	"\x17GetBaoSealStatusRequest\"\xfa\x01\n" +
 	"\x18GetBaoSealStatusResponse\x12\x1e\n" +
 	"\n" +

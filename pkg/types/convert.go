@@ -18,12 +18,22 @@ func WorkloadToProto(w Workload) *gen.Workload {
 		pw.Spec = &gen.Workload_Container{Container: ContainerSpecToProto(*w.Container)}
 	} else if w.Stack != nil {
 		pw.Spec = &gen.Workload_Stack{Stack: ComposeStackSpecToProto(*w.Stack)}
+		pw.ResolvedEnv = w.Stack.ResolvedEnv
 	}
 	for _, pa := range w.PortAllocations {
 		pw.PortAllocations = append(pw.PortAllocations, &gen.PortAllocation{
 			ContainerPort: pa.ContainerPort,
 			AllocatedPort: pa.AllocatedPort,
 			Protocol:      pa.Protocol,
+		})
+	}
+	for _, rf := range w.ResolvedSecretFiles {
+		pw.ResolvedSecretFiles = append(pw.ResolvedSecretFiles, &gen.ResolvedSecretFile{
+			Name:      rf.Name,
+			Target:    rf.Target,
+			Mode:      rf.Mode,
+			Service:   rf.Service,
+			Plaintext: rf.Plaintext,
 		})
 	}
 	return pw
@@ -44,6 +54,7 @@ func WorkloadFromProto(pw *gen.Workload) Workload {
 		w.Container = &spec
 	case *gen.Workload_Stack:
 		spec := ComposeStackSpecFromProto(s.Stack)
+		spec.ResolvedEnv = pw.ResolvedEnv
 		w.Kind = KindStack
 		w.Stack = &spec
 	}
@@ -52,6 +63,15 @@ func WorkloadFromProto(pw *gen.Workload) Workload {
 			ContainerPort: pa.ContainerPort,
 			AllocatedPort: pa.AllocatedPort,
 			Protocol:      pa.Protocol,
+		})
+	}
+	for _, rf := range pw.ResolvedSecretFiles {
+		w.ResolvedSecretFiles = append(w.ResolvedSecretFiles, ResolvedSecretFile{
+			Name:      rf.Name,
+			Target:    rf.Target,
+			Mode:      rf.Mode,
+			Service:   rf.Service,
+			Plaintext: rf.Plaintext,
 		})
 	}
 	return w
@@ -67,7 +87,7 @@ func ContainerSpecToProto(s ContainerSpec) *gen.ContainerSpec {
 	}
 	vols := make([]*gen.VolumeMount, len(s.Volumes))
 	for i, v := range s.Volumes {
-		vols[i] = &gen.VolumeMount{Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly}
+		vols[i] = &gen.VolumeMount{Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly, Type: string(v.Type), Mode: v.Mode}
 	}
 	return &gen.ContainerSpec{
 		Name:             s.Name,
@@ -91,7 +111,7 @@ func ContainerSpecFromProto(ps *gen.ContainerSpec) ContainerSpec {
 	}
 	vols := make([]VolumeMount, len(ps.Volumes))
 	for i, v := range ps.Volumes {
-		vols[i] = VolumeMount{Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly}
+		vols[i] = VolumeMount{Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly, Type: VolumeType(v.Type), Mode: v.Mode}
 	}
 	return ContainerSpec{
 		Name:             ps.Name,
@@ -109,22 +129,32 @@ func ContainerSpecFromProto(ps *gen.ContainerSpec) ContainerSpec {
 }
 
 func ComposeStackSpecToProto(s ComposeStackSpec) *gen.ComposeStackSpec {
+	mounts := make([]*gen.ComposeSecretMount, len(s.SecretMounts))
+	for i, m := range s.SecretMounts {
+		mounts[i] = &gen.ComposeSecretMount{Service: m.Service, SecretName: m.SecretName, Target: m.Target, Mode: m.Mode}
+	}
 	return &gen.ComposeStackSpec{
 		Name:             s.Name,
 		ComposeYaml:      s.ComposeYAML,
 		SecretRefs:       s.SecretRefs,
 		Replicas:         int32(s.Replicas),
 		InsecureRegistry: s.InsecureRegistry,
+		SecretMounts:     mounts,
 	}
 }
 
 func ComposeStackSpecFromProto(ps *gen.ComposeStackSpec) ComposeStackSpec {
+	mounts := make([]ComposeSecretMount, len(ps.SecretMounts))
+	for i, m := range ps.SecretMounts {
+		mounts[i] = ComposeSecretMount{Service: m.Service, SecretName: m.SecretName, Target: m.Target, Mode: m.Mode}
+	}
 	return ComposeStackSpec{
 		Name:             ps.Name,
 		ComposeYAML:      ps.ComposeYaml,
 		SecretRefs:       ps.SecretRefs,
 		Replicas:         int(ps.Replicas),
 		InsecureRegistry: ps.InsecureRegistry,
+		SecretMounts:     mounts,
 	}
 }
 
@@ -152,6 +182,9 @@ func OpenBaoConfigToProto(c OpenBaoConfig) *gen.OpenBaoConfig {
 		Token:              c.Token,
 		Mount:              c.Mount,
 		InsecureSkipVerify: c.InsecureSkipVerify,
+		RoleId:             c.RoleID,
+		SecretId:           c.SecretID,
+		AuthMount:          c.AuthMount,
 	}
 }
 
@@ -164,6 +197,9 @@ func OpenBaoConfigFromProto(p *gen.OpenBaoConfig) OpenBaoConfig {
 		Token:              p.Token,
 		Mount:              p.Mount,
 		InsecureSkipVerify: p.InsecureSkipVerify,
+		RoleID:             p.RoleId,
+		SecretID:           p.SecretId,
+		AuthMount:          p.AuthMount,
 	}
 }
 

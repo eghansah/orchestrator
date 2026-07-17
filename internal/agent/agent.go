@@ -239,12 +239,12 @@ func (a *Agent) PlaceWorkload(ctx context.Context, req *gen.PlaceWorkloadRequest
 		if wl.Container == nil {
 			return nil, status.Error(codes.InvalidArgument, "container spec is required")
 		}
-		runErr = a.nc.RunContainer(ctx, wl.ID, *wl.Container, wl.PortAllocations, registryCABundle)
+		runErr = a.nc.RunContainer(ctx, wl.ID, *wl.Container, wl.PortAllocations, registryCABundle, wl.ResolvedSecretFiles)
 	case types.KindStack:
 		if wl.Stack == nil {
 			return nil, status.Error(codes.InvalidArgument, "stack spec is required")
 		}
-		runErr = a.nc.ComposeUp(ctx, wl.ID, *wl.Stack, wl.PortAllocations, registryCABundle)
+		runErr = a.nc.ComposeUp(ctx, wl.ID, *wl.Stack, wl.PortAllocations, registryCABundle, wl.ResolvedSecretFiles)
 	default:
 		return nil, status.Error(codes.InvalidArgument, "unknown workload kind")
 	}

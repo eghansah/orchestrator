@@ -292,6 +292,8 @@ export default function App() {
     <NetworkDetail networkName={activePage.slice("network-".length)} onNavigate={setActivePage} />
   ) : activePage.startsWith("volume-") ? (
     <VolumeDetail volumeName={activePage.slice("volume-".length)} onNavigate={setActivePage} />
+  ) : activePage.startsWith("docs-") ? (
+    <Docs initialTab={activePage.slice("docs-".length)} />
   ) : ({
     overview: <Overview {...sharedProps} />,
     workloads: <Workloads {...navProps} />,
@@ -303,7 +305,7 @@ export default function App() {
     domains: <Domains onNavigate={setActivePage} />,
     users: <Users />,
     registries: <Registries state={state} loading={loading} refetch={refetch} />,
-    secrets: <Secrets state={state} loading={loading} refetch={refetch} />,
+    secrets: <Secrets state={state} loading={loading} refetch={refetch} onNavigate={setActivePage} />,
     "trusted-cas": <TrustedCAs state={state} loading={loading} refetch={refetch} />,
     "workflow-builder": <WorkflowBuilder onNavigate={setActivePage} />,
     docs: <Docs />,

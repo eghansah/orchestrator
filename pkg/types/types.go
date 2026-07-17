@@ -47,23 +47,34 @@ type ContainerSpec struct {
 	Name             string            `yaml:"name"`
 	Image            string            `yaml:"image"`
 	Command          []string          `yaml:"command,omitempty"`
-	Env              []string          `yaml:"env,omitempty"`        // KEY=VALUE pairs
+	Env              []string          `yaml:"env,omitempty"` // KEY=VALUE pairs
 	Ports            []PortMapping     `yaml:"ports,omitempty"`
 	Volumes          []VolumeMount     `yaml:"volumes,omitempty"`
 	Labels           map[string]string `yaml:"labels,omitempty"`
-	Namespace        string            `yaml:"namespace,omitempty"`  // nerdctl namespace; defaults to "orchestrator"
-	SecretRefs       map[string]string `yaml:"secret_refs,omitempty"` // env_var_name → secret_name; resolved at placement
-	Replicas         int               `yaml:"replicas,omitempty"`   // desired replica count; 0 or 1 = single instance
+	Namespace        string            `yaml:"namespace,omitempty"`         // nerdctl namespace; defaults to "orchestrator"
+	SecretRefs       map[string]string `yaml:"secret_refs,omitempty"`       // env_var_name → secret_name; resolved at placement
+	Replicas         int               `yaml:"replicas,omitempty"`          // desired replica count; 0 or 1 = single instance
 	InsecureRegistry bool              `yaml:"insecure_registry,omitempty"` // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
 }
 
 type ComposeStackSpec struct {
-	Name             string            `yaml:"name"`
-	ComposeYAML      string            `yaml:"compose_yaml"`          // inline compose file content
-	SecretRefs       map[string]string `yaml:"secret_refs,omitempty"` // env_var_name → secret_name; resolved at placement
-	ResolvedEnv      []string          `yaml:"-"`                     // runtime only; never exported
-	Replicas         int               `yaml:"replicas,omitempty"`    // desired replica count; 0 or 1 = single instance
-	InsecureRegistry bool              `yaml:"insecure_registry,omitempty"` // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
+	Name             string               `yaml:"name"`
+	ComposeYAML      string               `yaml:"compose_yaml"`                // inline compose file content
+	SecretRefs       map[string]string    `yaml:"secret_refs,omitempty"`       // env_var_name → secret_name; resolved at placement
+	SecretMounts     []ComposeSecretMount `yaml:"secret_mounts,omitempty"`     // per-service file-mounted secrets; resolved at placement
+	ResolvedEnv      []string             `yaml:"-"`                           // runtime only; never exported
+	Replicas         int                  `yaml:"replicas,omitempty"`          // desired replica count; 0 or 1 = single instance
+	InsecureRegistry bool                 `yaml:"insecure_registry,omitempty"` // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
+}
+
+// ComposeSecretMount declares that Service should get SecretName mounted as a
+// file at Target (default "/run/secrets/<SecretName>" when empty) inside a
+// compose stack. Resolved into a ResolvedSecretFile at placement time.
+type ComposeSecretMount struct {
+	Service    string `yaml:"service"`
+	SecretName string `yaml:"secret_name"`
+	Target     string `yaml:"target,omitempty"`
+	Mode       uint32 `yaml:"mode,omitempty"` // file perm bits; default 0400
 }
 
 type PortMapping struct {
@@ -71,10 +82,54 @@ type PortMapping struct {
 	Protocol      string `yaml:"protocol"` // "tcp" | "udp"
 }
 
+// VolumeType discriminates what VolumeMount.Source refers to. The zero value
+// ("") is treated as VolumeTypeBind for backward compatibility with specs
+// that predate this field.
+type VolumeType string
+
+const (
+	VolumeTypeBind   VolumeType = "bind"   // Source is a host path (or named-volume name), same as historical behavior
+	VolumeTypeVolume VolumeType = "volume" // Source is an explicit named nerdctl volume
+	VolumeTypeSecret VolumeType = "secret" // Source is a secret name, resolved from OpenBao at placement time
+)
+
 type VolumeMount struct {
-	Source   string `yaml:"source"`
-	Target   string `yaml:"target"`
-	ReadOnly bool   `yaml:"read_only,omitempty"`
+	Type     VolumeType `yaml:"type,omitempty"`
+	Source   string     `yaml:"source"` // host path / volume name, or secret name when Type == VolumeTypeSecret
+	Target   string     `yaml:"target"` // defaults to "/run/secrets/<Source>" when Type == VolumeTypeSecret and empty
+	ReadOnly bool       `yaml:"read_only,omitempty"`
+	Mode     uint32     `yaml:"mode,omitempty"` // file perm bits, meaningful only when Type == VolumeTypeSecret; default 0400
+}
+
+// EffectiveType returns v.Type, treating the zero value as VolumeTypeBind so
+// specs written before this field existed keep their original behavior.
+func (v VolumeMount) EffectiveType() VolumeType {
+	if v.Type == "" {
+		return VolumeTypeBind
+	}
+	return v.Type
+}
+
+// SecretTarget returns v.Target, defaulting to "/run/secrets/<Source>" (the
+// Docker Swarm convention) when unset. Only meaningful when
+// v.EffectiveType() == VolumeTypeSecret.
+func (v VolumeMount) SecretTarget() string {
+	if v.Target != "" {
+		return v.Target
+	}
+	return "/run/secrets/" + v.Source
+}
+
+// ResolvedSecretFile carries one secret's plaintext, resolved from OpenBao at
+// placement time, from the leader to the target node over the placement RPC.
+// It lives only on Workload (never on ContainerSpec/ComposeStackSpec, which
+// are Raft-persisted) so plaintext never enters the durable log.
+type ResolvedSecretFile struct {
+	Name      string // secret name (== VolumeMount.Source / ComposeSecretMount.SecretName)
+	Target    string // in-container path
+	Mode      uint32
+	Service   string // compose service name; empty for single containers
+	Plaintext string
 }
 
 // PortAllocation records the host port auto-assigned for one container port.
@@ -93,7 +148,12 @@ type Workload struct {
 	NodeID          string // empty = unscheduled
 	CreatedAt       time.Time
 	PortAllocations []PortAllocation // auto-assigned host ports (containers only)
-	GroupName       string // non-empty on replica instances; equals the parent workload name
+	GroupName       string           // non-empty on replica instances; equals the parent workload name
+
+	// ResolvedSecretFiles carries plaintext for Type==secret VolumeMount/
+	// ComposeSecretMount entries, populated at placement time. Present only
+	// on the leader→agent placement RPC payload; never Raft-persisted.
+	ResolvedSecretFiles []ResolvedSecretFile
 }
 
 // Name returns the stable workload name from its spec.
@@ -164,10 +224,10 @@ type IngressRule struct {
 // listens on nodeDataIP:SystemPort and forwards to the container.
 type Service struct {
 	ID            string
-	Name          string    // short DNS label, e.g. "api"
-	ContainerFQDN string    // target container: "workload" or "service.workload"
-	ContainerPort uint32    // port the container listens on
-	SystemPort    uint32    // auto-assigned host port
+	Name          string // short DNS label, e.g. "api"
+	ContainerFQDN string // target container: "workload" or "service.workload"
+	ContainerPort uint32 // port the container listens on
+	SystemPort    uint32 // auto-assigned host port
 	CreatedAt     time.Time
 }
 
@@ -175,11 +235,11 @@ type Service struct {
 // certificate to terminate HTTPS connections whose SNI matches Name.
 type Domain struct {
 	ID        string
-	Name      string    // unique hostname, e.g. "api.example.com"
-	TLSCert   string    // PEM-encoded certificate
-	TLSKey    string    // PEM-encoded private key
-	CSR       string    // PEM-encoded certificate signing request; empty on old records
-	Enabled   bool      // when false the ingress ignores this domain's cert
+	Name      string // unique hostname, e.g. "api.example.com"
+	TLSCert   string // PEM-encoded certificate
+	TLSKey    string // PEM-encoded private key
+	CSR       string // PEM-encoded certificate signing request; empty on old records
+	Enabled   bool   // when false the ingress ignores this domain's cert
 	CreatedAt time.Time
 }
 
@@ -193,21 +253,34 @@ type Registry struct {
 	CreatedAt time.Time
 }
 
+// SecretPathPrefix is prepended to every secret's name to form its BaoPath.
+const SecretPathPrefix = "orchestrator/"
+
 // Secret is a named secret stored in the cluster's OpenBao instance.
 // BaoPath is the KV v2 path within the configured mount (e.g. "orchestrator/db-pass").
 // The plaintext value is fetched from OpenBao at placement time and injected as an env var.
 type Secret struct {
 	ID        string
-	Name      string    // unique cluster-wide label
-	BaoPath   string    // KV v2 path within OpenBaoConfig.Mount
+	Name      string // unique cluster-wide label
+	BaoPath   string // KV v2 path within OpenBaoConfig.Mount
 	CreatedAt time.Time
 }
 
 // OpenBaoConfig holds the connection parameters for the cluster's OpenBao instance.
 // All nodes read this from Raft state to resolve secrets at placement time.
+//
+// Two auth methods are supported: static token (legacy/default, when RoleID
+// is empty) and AppRole (when RoleID is set — Token is ignored in that case).
+// AppRole credentials are replicated via Raft exactly like Token was before,
+// so this doesn't change the cluster's existing trust boundary (every Raft
+// member already saw the plaintext OpenBao credential); it only swaps a
+// long-lived static token for a short-lived, renewable login.
 type OpenBaoConfig struct {
 	Address            string // e.g. "https://bao.example.com:8200"
-	Token              string // service token scoped to KV read/write on <mount>/data/orchestrator/*
+	Token              string // service token scoped to KV read/write on <mount>/data/orchestrator/*; used when RoleID is empty
+	RoleID             string // AppRole role_id; when set, AppRole login is used instead of Token
+	SecretID           string // AppRole secret_id
+	AuthMount          string // AppRole auth backend mount path; defaults to "approle" when empty
 	Mount              string // KV v2 mount path; defaults to "secret" when empty
 	InsecureSkipVerify bool   // skip TLS certificate verification entirely (testing only)
 }
@@ -287,7 +360,7 @@ type WorkloadTemplate struct {
 // the user store is an allowlist of AD usernames that are permitted to log in.
 type User struct {
 	ID         string
-	Username   string    // AD username used for LDAP bind
+	Username   string // AD username used for LDAP bind
 	Enabled    bool
 	CreatedAt  time.Time
 	MFASecret  string // base32 TOTP secret; empty = not enrolled

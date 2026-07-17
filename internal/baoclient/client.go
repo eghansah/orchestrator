@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -129,6 +130,84 @@ func (c *Client) Unseal(ctx context.Context, key string) (SealStatus, error) {
 	return out, nil
 }
 
+// LoginAppRole exchanges an AppRole role_id/secret_id pair for a client
+// token via POST /v1/auth/<authMount>/login. Unlike every other call in this
+// package, no token is sent — the role_id/secret_id pair is itself the
+// credential. authMount defaults to "approle" when empty.
+func LoginAppRole(ctx context.Context, address, authMount, caCert string, insecureSkipVerify bool, roleID, secretID string) (token string, leaseDuration time.Duration, renewable bool, err error) {
+	if authMount == "" {
+		authMount = "approle"
+	}
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	if insecureSkipVerify || caCert != "" {
+		tlsConfig := &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec
+		if !insecureSkipVerify && caCert != "" {
+			pool := x509.NewCertPool()
+			if pool.AppendCertsFromPEM([]byte(caCert)) {
+				tlsConfig.RootCAs = pool
+			}
+		}
+		httpClient.Transport = &http.Transport{TLSClientConfig: tlsConfig}
+	}
+	body, _ := json.Marshal(map[string]string{"role_id": roleID, "secret_id": secretID})
+	url := strings.TrimRight(address, "/") + "/v1/auth/" + authMount + "/login"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return "", 0, false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", 0, false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return "", 0, false, fmt.Errorf("openbao approle login: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	var out struct {
+		Auth struct {
+			ClientToken   string `json:"client_token"`
+			LeaseDuration int    `json:"lease_duration"`
+			Renewable     bool   `json:"renewable"`
+		} `json:"auth"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", 0, false, fmt.Errorf("decode response: %w", err)
+	}
+	if out.Auth.ClientToken == "" {
+		return "", 0, false, fmt.Errorf("openbao approle login: no client_token in response")
+	}
+	return out.Auth.ClientToken, time.Duration(out.Auth.LeaseDuration) * time.Second, out.Auth.Renewable, nil
+}
+
+// RenewSelf extends the client's current token via POST /v1/auth/token/renew-self,
+// returning the new expiry time.
+func (c *Client) RenewSelf(ctx context.Context) (time.Time, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.address+"/v1/auth/token/renew-self", nil)
+	if err != nil {
+		return time.Time{}, err
+	}
+	req.Header.Set("X-Vault-Token", c.token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return time.Time{}, c.apiError("renew-self", resp)
+	}
+	var out struct {
+		Auth struct {
+			LeaseDuration int `json:"lease_duration"`
+		} `json:"auth"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return time.Time{}, fmt.Errorf("decode response: %w", err)
+	}
+	return time.Now().Add(time.Duration(out.Auth.LeaseDuration) * time.Second), nil
+}
+
 // Write stores value at path (relative to mount, e.g. "orchestrator/db-pass").
 func (c *Client) Write(ctx context.Context, path, value string) error {
 	body, _ := json.Marshal(map[string]any{"data": map[string]string{"value": value}})
@@ -198,6 +277,107 @@ func (c *Client) Delete(ctx context.Context, path string) error {
 		return c.apiError("delete", resp)
 	}
 	return nil
+}
+
+// CapabilitiesSelf reports the capabilities the client's own token holds on
+// path (e.g. "secret/data/orchestrator/foo"), via the unprivileged
+// sys/capabilities-self endpoint. Unlike a write/read probe, this requires
+// no side effects and works even for a path that doesn't exist yet — OpenBao
+// evaluates glob policies against the literal path regardless.
+func (c *Client) CapabilitiesSelf(ctx context.Context, path string) ([]string, error) {
+	body, _ := json.Marshal(map[string]any{"paths": []string{path}})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.address+"/v1/sys/capabilities-self", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Vault-Token", c.token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.apiError("capabilities-self", resp)
+	}
+	var out map[string]json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	// The response keys the result by the queried path; "capabilities" is a
+	// convenience alias present when a single path was queried.
+	raw, ok := out[path]
+	if !ok {
+		raw, ok = out["capabilities"]
+	}
+	if !ok {
+		return nil, fmt.Errorf("capabilities-self: no capabilities returned for %q", path)
+	}
+	var caps []string
+	if err := json.Unmarshal(raw, &caps); err != nil {
+		return nil, fmt.Errorf("decode capabilities: %w", err)
+	}
+	return caps, nil
+}
+
+// CheckSecretAccess verifies the token has the capabilities the orchestrator
+// needs to manage secrets under pathPrefix (e.g. "orchestrator/"): create and
+// update on the KV data path (writes), read on the data path, and delete on
+// the KV metadata path. It probes a synthetic, never-written path under the
+// prefix — policies are evaluated by glob match, not existence — so this is
+// safe to call before any real secret exists.
+//
+// On denial, the returned error names the missing capability and the policy
+// path that needs to grant it, so the caller can act on it directly.
+func (c *Client) CheckSecretAccess(ctx context.Context, pathPrefix string) error {
+	probe := strings.TrimSuffix(pathPrefix, "/") + "/.capability-check"
+	dataPath := fmt.Sprintf("%s/data/%s", c.mount, probe)
+	metaPath := fmt.Sprintf("%s/metadata/%s", c.mount, probe)
+
+	dataCaps, err := c.CapabilitiesSelf(ctx, dataPath)
+	if err != nil {
+		return fmt.Errorf("check write access: %w", err)
+	}
+	if !hasCapability(dataCaps, "create", "update") {
+		return fmt.Errorf(
+			"token cannot create/update secrets (checked %q, has %v) — add a policy granting"+
+				" create and update on \"%s/data/%s*\"",
+			dataPath, dataCaps, c.mount, pathPrefix)
+	}
+	if !hasCapability(dataCaps, "read") {
+		return fmt.Errorf(
+			"token cannot read secrets (checked %q, has %v) — add a policy granting"+
+				" read on \"%s/data/%s*\"",
+			dataPath, dataCaps, c.mount, pathPrefix)
+	}
+
+	metaCaps, err := c.CapabilitiesSelf(ctx, metaPath)
+	if err != nil {
+		return fmt.Errorf("check delete access: %w", err)
+	}
+	if !hasCapability(metaCaps, "delete") {
+		return fmt.Errorf(
+			"token cannot delete secrets (checked %q, has %v) — add a policy granting"+
+				" delete on \"%s/metadata/%s*\"",
+			metaPath, metaCaps, c.mount, pathPrefix)
+	}
+	return nil
+}
+
+// hasCapability reports whether caps contains any of want. Vault/OpenBao
+// resolve a denied path to exactly ["deny"], and a root token to ["root"]
+// (which trivially satisfies any want), so a plain membership check is
+// sufficient — no special-casing of "deny" is needed.
+func hasCapability(caps []string, want ...string) bool {
+	if slices.Contains(caps, "root") {
+		return true
+	}
+	for _, w := range want {
+		if slices.Contains(caps, w) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) kvDataURL(path string) string {

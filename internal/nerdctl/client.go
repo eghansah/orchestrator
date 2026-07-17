@@ -16,6 +16,7 @@ import (
 	"sync"
 	"syscall"
 
+	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v3"
 
 	"github.com/eghansah/orchestrator/pkg/types"
@@ -99,6 +100,65 @@ func detectContainerdSocket() string {
 		}
 	}
 	return ""
+}
+
+// secretsRuntimeRoot returns the tmpfs-backed root for staged secret files,
+// under XDG_RUNTIME_DIR (falling back to /run/user/<uid>) — deliberately not
+// the persistent dataDir. verifyTmpfs enforces that this is actually tmpfs
+// before anything is written there.
+func secretsRuntimeRoot() string {
+	dir := os.Getenv("XDG_RUNTIME_DIR")
+	if dir == "" {
+		dir = fmt.Sprintf("/run/user/%d", os.Getuid())
+	}
+	return filepath.Join(dir, "orchestrator", "secrets")
+}
+
+// verifyTmpfs creates dir if needed and confirms it is backed by tmpfs.
+// $XDG_RUNTIME_DIR is conventionally tmpfs (systemd guarantees this on
+// systems that set it), but that's a convention, not a contract — a
+// misconfigured or non-systemd host could point it at regular disk. Secret
+// plaintext must never be written to persistent storage, so this checks
+// rather than assumes.
+func verifyTmpfs(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create secret staging dir %s: %w", dir, err)
+	}
+	var st unix.Statfs_t
+	if err := unix.Statfs(dir, &st); err != nil {
+		return fmt.Errorf("statfs %s: %w", dir, err)
+	}
+	if int64(st.Type) != int64(unix.TMPFS_MAGIC) {
+		return fmt.Errorf("secret staging directory %s is not tmpfs; refusing to write secret plaintext to persistent disk", dir)
+	}
+	return nil
+}
+
+// stageSecretFiles writes each file's plaintext to root/<subdir(file)>/<name>,
+// after verifying root is tmpfs-backed. subdir scopes each file under its
+// owning container (single containers) or compose service (stacks) so
+// multiple secrets/services don't collide. mode defaults to 0400.
+func stageSecretFiles(root string, files []types.ResolvedSecretFile, subdir func(types.ResolvedSecretFile) string) error {
+	if len(files) == 0 {
+		return nil
+	}
+	if err := verifyTmpfs(root); err != nil {
+		return err
+	}
+	for _, f := range files {
+		dir := filepath.Join(root, subdir(f))
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("create secret dir %s: %w", dir, err)
+		}
+		mode := os.FileMode(f.Mode)
+		if mode == 0 {
+			mode = 0o400
+		}
+		if err := os.WriteFile(filepath.Join(dir, f.Name), []byte(f.Plaintext), mode); err != nil {
+			return fmt.Errorf("write secret file %s: %w", f.Name, err)
+		}
+	}
+	return nil
 }
 
 // NewClient creates a nerdctl client. address is the containerd socket path;
@@ -428,7 +488,7 @@ func (c *Client) materializeRegistryCA(hosts []string, pemBundle string) (string
 // RunContainer starts a detached container from the given spec, tagged with workloadID.
 // portAllocations maps container ports to auto-assigned host ports, always bound on
 // 127.0.0.1 so containers are only reachable via the ingress proxy.
-func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types.ContainerSpec, portAllocations []types.PortAllocation, registryCABundle string) error {
+func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types.ContainerSpec, portAllocations []types.PortAllocation, registryCABundle string, resolvedSecretFiles []types.ResolvedSecretFile) error {
 	if err := validateName(spec.Name); err != nil {
 		return err
 	}
@@ -439,7 +499,21 @@ func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types
 	_, _ = c.run(ctx, "stop", "--", spec.Name)
 	_, _ = c.run(ctx, "rm", "--", spec.Name)
 
+	var secretMounts []string
+	if len(resolvedSecretFiles) > 0 {
+		root := filepath.Join(secretsRuntimeRoot(), spec.Name)
+		if err := stageSecretFiles(root, resolvedSecretFiles, func(types.ResolvedSecretFile) string { return "" }); err != nil {
+			return fmt.Errorf("stage secret files: %w", err)
+		}
+		for _, f := range resolvedSecretFiles {
+			secretMounts = append(secretMounts, fmt.Sprintf("%s:%s:ro", filepath.Join(root, f.Name), f.Target))
+		}
+	}
+
 	args := buildRunArgs(workloadID, spec, portAllocations, c.dnsIP, c.dnsPort, c.meshNet())
+	for _, m := range secretMounts {
+		args = append(args, "-v", m)
+	}
 	insecure := spec.InsecureRegistry || isLocalhostImage(spec.Image)
 
 	hostsDir := ""
@@ -488,6 +562,9 @@ func buildRunArgs(workloadID string, spec types.ContainerSpec, portAllocations [
 		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d/%s", pa.AllocatedPort, pa.ContainerPort, proto))
 	}
 	for _, v := range spec.Volumes {
+		if v.EffectiveType() == types.VolumeTypeSecret {
+			continue // materialized separately as a staged tmpfs bind mount; see RunContainer
+		}
 		mount := fmt.Sprintf("%s:%s", v.Source, v.Target)
 		if v.ReadOnly {
 			mount += ":ro"
@@ -542,6 +619,9 @@ func (c *Client) RemoveContainer(ctx context.Context, name string) error {
 	// the network namespace is fully released, leaving the host port held.
 	_, _ = c.run(ctx, "stop", "--", name)
 	_, err := c.run(ctx, "rm", "--", name)
+	if rmErr := os.RemoveAll(filepath.Join(secretsRuntimeRoot(), name)); rmErr != nil {
+		slog.Warn("nerdctl: failed to remove secret staging dir", "container", name, "err", rmErr)
+	}
 	return err
 }
 
@@ -650,7 +730,7 @@ func (c *Client) composeDir(stackName string) (string, error) {
 // If spec.ResolvedEnv is non-empty (secrets resolved at placement time), a
 // .env file is written alongside the compose file so nerdctl compose picks
 // them up automatically.
-func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStackSpec, portAllocations []types.PortAllocation, registryCABundle string) error {
+func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStackSpec, portAllocations []types.PortAllocation, registryCABundle string, resolvedSecretFiles []types.ResolvedSecretFile) error {
 	if err := validateName(spec.Name); err != nil {
 		return err
 	}
@@ -669,6 +749,13 @@ func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStac
 	}
 	composeYAML := rewriteComposePorts(spec.ComposeYAML, portAllocations)
 	composeYAML = injectMeshNetwork(composeYAML, c.meshNet())
+	if len(resolvedSecretFiles) > 0 {
+		stagingRoot := filepath.Join(secretsRuntimeRoot(), spec.Name)
+		if err := stageSecretFiles(stagingRoot, resolvedSecretFiles, func(f types.ResolvedSecretFile) string { return f.Service }); err != nil {
+			return fmt.Errorf("stage secret files: %w", err)
+		}
+		composeYAML = injectSecretVolumes(composeYAML, stagingRoot, resolvedSecretFiles)
+	}
 	composeFile := filepath.Join(dir, "docker-compose.yml")
 	if err := os.WriteFile(composeFile, []byte(composeYAML), 0o600); err != nil {
 		return fmt.Errorf("write compose file: %w", err)
@@ -709,6 +796,15 @@ func (c *Client) ComposeDown(ctx context.Context, stackName string) error {
 	// complete before removal begins.
 	_, _ = c.run(ctx, "compose", "-f", composeFile, "--project-name", stackName, "stop")
 	_, err = c.run(ctx, "compose", "-f", composeFile, "--project-name", stackName, "down", "--remove-orphans")
+	// Always attempt cleanup, even if `down` failed, so a partially-torn-down
+	// stack never leaves docker-compose.yml, .env plaintext, or staged secret
+	// plaintext behind. down's own error (if any) is what the caller sees.
+	if rmErr := os.RemoveAll(dir); rmErr != nil {
+		slog.Warn("nerdctl: failed to remove compose dir", "stack", stackName, "err", rmErr)
+	}
+	if rmErr := os.RemoveAll(filepath.Join(secretsRuntimeRoot(), stackName)); rmErr != nil {
+		slog.Warn("nerdctl: failed to remove secret staging dir", "stack", stackName, "err", rmErr)
+	}
 	return err
 }
 

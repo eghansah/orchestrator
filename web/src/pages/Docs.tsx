@@ -112,12 +112,20 @@ function DocContent({ name }: { name: string }) {
   );
 }
 
-export default function Docs() {
+export default function Docs({ initialTab }: { initialTab?: string }) {
+  const [activeTabId, setActiveTabId] = useState(initialTab ?? "deploy");
+
+  useEffect(() => {
+    if (initialTab) setActiveTabId(initialTab);
+  }, [initialTab]);
+
   return (
     <ContentLayout
       header={<Header variant="h1" description="Deployment and operations reference for this cluster.">Documentation</Header>}
     >
       <Tabs
+        activeTabId={activeTabId}
+        onChange={(e) => setActiveTabId(e.detail.activeTabId)}
         tabs={[
           {
             id: "deploy",
@@ -128,6 +136,11 @@ export default function Docs() {
             id: "production",
             label: "Production Reference",
             content: <DocContent name="production" />,
+          },
+          {
+            id: "openbao-setup",
+            label: "OpenBao Setup",
+            content: <DocContent name="openbao-setup" />,
           },
           {
             id: "changelog",

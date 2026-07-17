@@ -10,6 +10,7 @@ import Flashbar, { FlashbarProps } from "@cloudscape-design/components/flashbar"
 import FormField from "@cloudscape-design/components/form-field";
 import Header from "@cloudscape-design/components/header";
 import Input from "@cloudscape-design/components/input";
+import Link from "@cloudscape-design/components/link";
 import Modal from "@cloudscape-design/components/modal";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
@@ -21,9 +22,10 @@ interface Props {
   state: ClusterState | null;
   loading: boolean;
   refetch: () => void;
+  onNavigate: (page: string) => void;
 }
 
-export default function Secrets({ state, loading, refetch }: Props) {
+export default function Secrets({ state, loading, refetch, onNavigate }: Props) {
   const secrets: Secret[] = state?.secrets ?? [];
 
   const [flash, setFlash] = useState<FlashbarProps.MessageDefinition[]>([]);
@@ -184,7 +186,19 @@ export default function Secrets({ state, loading, refetch }: Props) {
           header={
             <Header
               variant="h2"
-              description="Secrets are stored in OpenBao (Vault-compatible KV v2). Values are never written to cluster state."
+              description={
+                <>
+                  Secrets are stored in OpenBao (Vault-compatible KV v2). Values are never written to cluster state.{" "}
+                  <Link
+                    onFollow={(e) => {
+                      e.preventDefault();
+                      onNavigate("docs-openbao-setup");
+                    }}
+                  >
+                    Set up OpenBao for this cluster
+                  </Link>
+                </>
+              }
               actions={
                 <Button onClick={() => {
                   setBaoForm({

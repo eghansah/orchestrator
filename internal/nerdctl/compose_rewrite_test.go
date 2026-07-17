@@ -219,3 +219,101 @@ networks:
 	}
 }
 
+// parsedVolumes parses a rewritten compose YAML and returns the volume
+// entries declared for the named service.
+func parsedVolumes(t *testing.T, composeYAML, svcName string) []string {
+	t.Helper()
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(composeYAML), &doc); err != nil {
+		t.Fatalf("parse YAML: %v\n%s", err, composeYAML)
+	}
+	svcs, _ := doc["services"].(map[string]any)
+	svc, _ := svcs[svcName].(map[string]any)
+	vols, _ := svc["volumes"].([]any)
+	out := make([]string, 0, len(vols))
+	for _, v := range vols {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func TestInjectSecretVolumes_NoVolumes(t *testing.T) {
+	input := `services:
+  web:
+    image: nginx
+`
+	got := injectSecretVolumes(input, "/run/user/1000/orchestrator/secrets", nil)
+	if got != input {
+		t.Errorf("expected unchanged YAML when files is empty, got:\n%s", got)
+	}
+}
+
+func TestInjectSecretVolumes_AppendsBindMount(t *testing.T) {
+	input := `services:
+  web:
+    image: nginx
+`
+	files := []types.ResolvedSecretFile{
+		{Name: "db-pass", Target: "/run/secrets/db-pass", Service: "web", Plaintext: "hunter2"},
+	}
+	got := injectSecretVolumes(input, "/run/user/1000/orchestrator/secrets", files)
+	vols := parsedVolumes(t, got, "web")
+	want := "/run/user/1000/orchestrator/secrets/web/db-pass:/run/secrets/db-pass:ro"
+	if !slices.Contains(vols, want) {
+		t.Errorf("expected volume %q, got %v", want, vols)
+	}
+}
+
+func TestInjectSecretVolumes_PreservesExistingVolumes(t *testing.T) {
+	input := `services:
+  web:
+    image: nginx
+    volumes:
+      - "/host/data:/data"
+`
+	files := []types.ResolvedSecretFile{
+		{Name: "db-pass", Target: "/run/secrets/db-pass", Service: "web", Plaintext: "hunter2"},
+	}
+	got := injectSecretVolumes(input, "/staging", files)
+	vols := parsedVolumes(t, got, "web")
+	if !slices.Contains(vols, "/host/data:/data") {
+		t.Errorf("existing volume dropped: %v", vols)
+	}
+	if !slices.Contains(vols, "/staging/web/db-pass:/run/secrets/db-pass:ro") {
+		t.Errorf("secret volume not injected: %v", vols)
+	}
+}
+
+// TestInjectSecretVolumes_SkipsEmptyService: entries with no Service (i.e.
+// single-container mounts, which never go through compose) are ignored.
+func TestInjectSecretVolumes_SkipsEmptyService(t *testing.T) {
+	input := `services:
+  web:
+    image: nginx
+`
+	files := []types.ResolvedSecretFile{
+		{Name: "db-pass", Target: "/run/secrets/db-pass", Service: "", Plaintext: "hunter2"},
+	}
+	got := injectSecretVolumes(input, "/staging", files)
+	if got != input {
+		t.Errorf("expected unchanged YAML for entry with empty Service, got:\n%s", got)
+	}
+}
+
+// TestInjectSecretVolumes_UnknownService: an entry naming a service that
+// doesn't exist in the compose file is silently ignored rather than erroring.
+func TestInjectSecretVolumes_UnknownService(t *testing.T) {
+	input := `services:
+  web:
+    image: nginx
+`
+	files := []types.ResolvedSecretFile{
+		{Name: "db-pass", Target: "/run/secrets/db-pass", Service: "does-not-exist", Plaintext: "hunter2"},
+	}
+	got := injectSecretVolumes(input, "/staging", files)
+	if got != input {
+		t.Errorf("expected unchanged YAML for unknown service, got:\n%s", got)
+	}
+}

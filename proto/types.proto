@@ -26,6 +26,28 @@ message ComposeStackSpec {
   map<string, string> secret_refs = 3; // env_var_name → secret_name; resolved at placement
   int32  replicas    = 4; // desired replica count; 0/1 = single instance
   bool   insecure_registry = 5; // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
+  repeated ComposeSecretMount secret_mounts = 6; // per-service file-mounted secrets; resolved at placement
+}
+
+// ComposeSecretMount declares that Service should get SecretName mounted as a
+// file inside a compose stack. Resolved into a ResolvedSecretFile at placement.
+message ComposeSecretMount {
+  string service     = 1;
+  string secret_name = 2;
+  string target      = 3; // defaults to "/run/secrets/<secret_name>" when empty
+  uint32 mode         = 4; // file perm bits; default 0400
+}
+
+// ResolvedSecretFile carries one secret's plaintext, resolved from OpenBao at
+// placement time, from the leader to the target node over the placement RPC.
+// Present only on Workload (never on ContainerSpec/ComposeStackSpec, which are
+// Raft-persisted), so plaintext never enters the durable log.
+message ResolvedSecretFile {
+  string name      = 1; // secret name
+  string target    = 2; // in-container path
+  uint32 mode      = 3;
+  string service   = 4; // compose service name; empty for single containers
+  string plaintext = 5;
 }
 
 // Secret holds metadata for a named cluster secret. Values live in OpenBao;
@@ -44,9 +66,12 @@ message OpenBaoConfig {
   reserved 4;
   reserved "ca_cert"; // superseded by the cluster-wide TrustedCA store (web UI only, no proto)
   string address = 1; // e.g. "https://bao.example.com:8200"
-  string token   = 2; // service token
+  string token   = 2; // service token; used when role_id is empty
   string mount   = 3; // KV v2 mount path (default "secret")
   bool insecure_skip_verify = 5; // skip TLS certificate verification entirely (testing only)
+  string role_id    = 6; // AppRole role_id; when set, AppRole login is used instead of token
+  string secret_id  = 7; // AppRole secret_id
+  string auth_mount = 8; // AppRole auth backend mount path (default "approle")
 }
 
 message PortMapping {
@@ -56,9 +81,11 @@ message PortMapping {
 }
 
 message VolumeMount {
-  string source = 1; // host path or named volume
+  string source = 1; // host path or named volume, or secret name when type=="secret"
   string target = 2; // container path
   bool   read_only = 3;
+  string type = 4; // "" (bind, default) | "volume" | "secret"
+  uint32 mode = 5; // file perm bits; meaningful only when type=="secret"; default 0400
 }
 
 // ── Port allocation ───────────────────────────────────────────────────────────
@@ -83,6 +110,10 @@ message Workload {
   int64         created_at  = 6; // unix seconds
   repeated PortAllocation port_allocations = 7; // auto-assigned host ports
   string        group_name  = 8; // set on replica instances; links them to the parent workload name
+  repeated ResolvedSecretFile resolved_secret_files = 9; // plaintext secret-volume contents; leader→agent only, never Raft-persisted
+  repeated string resolved_env = 10; // stack env-secrets resolved to KEY=VALUE; leader→agent only, never Raft-persisted
+                                      // (fixes a pre-existing gap: ComposeStackSpec.ResolvedEnv never had a proto field,
+                                      // so stack env-secrets never reached the target node's ComposeUp)
 }
 
 enum WorkloadPhase {

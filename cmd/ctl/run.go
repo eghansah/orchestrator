@@ -13,8 +13,8 @@ import (
 // stringList implements flag.Value for repeatable flags (-e KEY=VAL -e KEY2=VAL2).
 type stringList []string
 
-func (sl *stringList) String() string        { return strings.Join(*sl, ",") }
-func (sl *stringList) Set(v string) error    { *sl = append(*sl, v); return nil }
+func (sl *stringList) String() string     { return strings.Join(*sl, ",") }
+func (sl *stringList) Set(v string) error { *sl = append(*sl, v); return nil }
 
 func runContainerCmd(server string, args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
@@ -28,6 +28,7 @@ func runContainerCmd(server string, args []string) {
 	fs.Var(&secrets, "secret", "inject secret as env var `ENV_VAR=secret_name` (repeatable)")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: ctl run --name NAME [flags] IMAGE [COMMAND...]")
+		fmt.Fprintln(os.Stderr, "  -v accepts SOURCE:TARGET[:ro] or secret:SECRET_NAME[:TARGET[:MODE]]")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
@@ -107,10 +108,11 @@ func runStackCmd(server string, args []string) {
 	fs := flag.NewFlagSet("stack", flag.ExitOnError)
 	name := fs.String("name", "", "stack name (required)")
 	file := fs.String("f", "", "path to compose file (required)")
-	var secrets stringList
+	var secrets, secretMounts stringList
 	fs.Var(&secrets, "secret", "inject secret as env var `ENV_VAR=secret_name` (repeatable)")
+	fs.Var(&secretMounts, "secret-mount", "mount secret as a file `SERVICE:secret_name[:target[:mode]]` (repeatable)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: ctl stack --name NAME -f FILE [--secret ENV_VAR=secret_name]")
+		fmt.Fprintln(os.Stderr, "Usage: ctl stack --name NAME -f FILE [--secret ENV_VAR=secret_name] [--secret-mount SERVICE:secret_name[:target[:mode]]]")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
@@ -133,9 +135,10 @@ func runStackCmd(server string, args []string) {
 
 	resp, err := client.SubmitStack(c, &gen.SubmitStackRequest{
 		Spec: &gen.ComposeStackSpec{
-			Name:        *name,
-			ComposeYaml: string(data),
-			SecretRefs:  parseSecretRefs(secrets),
+			Name:         *name,
+			ComposeYaml:  string(data),
+			SecretRefs:   parseSecretRefs(secrets),
+			SecretMounts: parseSecretMounts(secretMounts),
 		},
 	})
 	if err != nil {
@@ -179,9 +182,31 @@ func parsePorts(ports []string) ([]*gen.PortMapping, error) {
 	return out, nil
 }
 
+// parseVolumes accepts bind mounts (SOURCE:TARGET[:ro]) and, with a "secret:"
+// prefix, file-mounted secrets: secret:SECRET_NAME[:TARGET[:MODE]]. TARGET
+// defaults to /run/secrets/SECRET_NAME when omitted; MODE (octal) defaults to 0400.
 func parseVolumes(volumes []string) []*gen.VolumeMount {
 	out := make([]*gen.VolumeMount, 0, len(volumes))
 	for _, raw := range volumes {
+		if rest, ok := strings.CutPrefix(raw, "secret:"); ok {
+			parts := strings.SplitN(rest, ":", 3)
+			if len(parts) == 0 || parts[0] == "" {
+				die("invalid volume %q — want secret:SECRET_NAME[:TARGET[:MODE]]", raw)
+			}
+			vm := &gen.VolumeMount{Type: "secret", Source: parts[0]}
+			if len(parts) > 1 {
+				vm.Target = parts[1]
+			}
+			if len(parts) > 2 {
+				mode, err := strconv.ParseUint(parts[2], 8, 32)
+				if err != nil {
+					die("invalid mode in volume %q: %v", raw, err)
+				}
+				vm.Mode = uint32(mode)
+			}
+			out = append(out, vm)
+			continue
+		}
 		v, ro := raw, false
 		if strings.HasSuffix(v, ":ro") {
 			ro = true
@@ -192,6 +217,31 @@ func parseVolumes(volumes []string) []*gen.VolumeMount {
 			die("invalid volume %q — want SOURCE:TARGET[:ro]", raw)
 		}
 		out = append(out, &gen.VolumeMount{Source: halves[0], Target: halves[1], ReadOnly: ro})
+	}
+	return out
+}
+
+// parseSecretMounts converts "SERVICE:secret_name[:target[:mode]]" entries
+// (for `ctl stack --secret-mount`) into ComposeSecretMount protos.
+func parseSecretMounts(mounts []string) []*gen.ComposeSecretMount {
+	out := make([]*gen.ComposeSecretMount, 0, len(mounts))
+	for _, raw := range mounts {
+		parts := strings.SplitN(raw, ":", 4)
+		if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+			die("invalid --secret-mount %q — want SERVICE:secret_name[:target[:mode]]", raw)
+		}
+		m := &gen.ComposeSecretMount{Service: parts[0], SecretName: parts[1]}
+		if len(parts) > 2 {
+			m.Target = parts[2]
+		}
+		if len(parts) > 3 {
+			mode, err := strconv.ParseUint(parts[3], 8, 32)
+			if err != nil {
+				die("invalid mode in --secret-mount %q: %v", raw, err)
+			}
+			m.Mode = uint32(mode)
+		}
+		out = append(out, m)
 	}
 	return out
 }

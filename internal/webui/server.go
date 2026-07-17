@@ -17,9 +17,9 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"os"
 	"math/big"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,15 +44,15 @@ import (
 
 // Server serves the Cloudscape web console and JSON REST API.
 type Server struct {
-	peer          *internraft.Peer
-	ctrl          *control.Server
-	agent         *agent.Agent
-	adminToken    string // required Bearer token for /api/* routes; empty = no auth
-	webPassword   string // password for the /api/auth/login endpoint; empty = login disabled
-	prefix        string // URL path prefix, e.g. "/console" (no trailing slash, may be "")
-	disableMFA    bool   // when true, skip TOTP step and issue session on password success
-	ldap          LDAPConfig
-	version       string // stamped at build time; "dev" in local builds
+	peer        *internraft.Peer
+	ctrl        *control.Server
+	agent       *agent.Agent
+	adminToken  string // required Bearer token for /api/* routes; empty = no auth
+	webPassword string // password for the /api/auth/login endpoint; empty = login disabled
+	prefix      string // URL path prefix, e.g. "/console" (no trailing slash, may be "")
+	disableMFA  bool   // when true, skip TOTP step and issue session on password success
+	ldap        LDAPConfig
+	version     string // stamped at build time; "dev" in local builds
 
 	sessionsMu sync.RWMutex
 	sessions   map[string]time.Time // per-login token → expiry
@@ -448,8 +448,8 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		StartedAt   int64  `json:"started_at"` // unix seconds; 0 when not running
 	}
 	type actualStackJSON struct {
-		WorkloadID string               `json:"workload_id"`
-		Name       string               `json:"name"`
+		WorkloadID string                `json:"workload_id"`
+		Name       string                `json:"name"`
 		Services   []actualContainerJSON `json:"services"`
 	}
 	startedAt := func(t time.Time) int64 {
@@ -459,17 +459,17 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		return t.Unix()
 	}
 	type resp struct {
-		LeaderID         string               `json:"leader_id"`
-		IsLeader         bool                 `json:"is_leader"`
-		LeaderAddr       string               `json:"leader_addr,omitempty"`
-		Nodes            []nodeJSON           `json:"nodes"`
-		Workloads        []workloadJSON       `json:"workloads"`
+		LeaderID         string                `json:"leader_id"`
+		IsLeader         bool                  `json:"is_leader"`
+		LeaderAddr       string                `json:"leader_addr,omitempty"`
+		Nodes            []nodeJSON            `json:"nodes"`
+		Workloads        []workloadJSON        `json:"workloads"`
 		ActualContainers []actualContainerJSON `json:"actual_containers"`
-		ActualStacks     []actualStackJSON    `json:"actual_stacks"`
-		ContainerStats   []containerStatsJSON `json:"container_stats"`
-		Registries       []registryJSON       `json:"registries"`
-		Secrets          []secretJSON         `json:"secrets"`
-		TrustedCAs       []trustedCAJSON      `json:"trusted_cas"`
+		ActualStacks     []actualStackJSON     `json:"actual_stacks"`
+		ContainerStats   []containerStatsJSON  `json:"container_stats"`
+		Registries       []registryJSON        `json:"registries"`
+		Secrets          []secretJSON          `json:"secrets"`
+		TrustedCAs       []trustedCAJSON       `json:"trusted_cas"`
 	}
 
 	allStates := s.agent.AllStates()
@@ -1073,9 +1073,10 @@ func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {
 // ── Docs handler ─────────────────────────────────────────────────────────────
 
 var allowedDocs = map[string]string{
-	"deploy":     "deploy.md",
-	"production": "production.md",
-	"changelog":  "CHANGELOG.md",
+	"deploy":        "deploy.md",
+	"production":    "production.md",
+	"changelog":     "CHANGELOG.md",
+	"openbao-setup": "openbao-setup.md",
 }
 
 func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
@@ -2504,7 +2505,7 @@ func (s *Server) handleCreateSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and value are required")
 		return
 	}
-	bao, err := s.openBaoClient()
+	bao, err := s.ctrl.BaoClient(r.Context())
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
@@ -2539,7 +2540,7 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "secret not found")
 		return
 	}
-	if bao, err := s.openBaoClient(); err == nil {
+	if bao, err := s.ctrl.BaoClient(r.Context()); err == nil {
 		_ = bao.Delete(r.Context(), sec.BaoPath)
 	}
 	if err := s.peer.RemoveSecret(id); err != nil {
@@ -2549,17 +2550,6 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"accepted": true})
 }
 
-// openBaoClient returns a baoclient.Client from current Raft config, or an error
-// if OpenBao has not been configured.
-func (s *Server) openBaoClient() (*baoclient.Client, error) {
-	cfg := s.peer.State().OpenBaoConfig
-	if cfg == nil || cfg.Address == "" {
-		return nil, fmt.Errorf("OpenBao is not configured — add connection details on the Secrets page")
-	}
-	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
-	return baoclient.New(cfg.Address, cfg.Token, cfg.Mount, caBundle, cfg.InsecureSkipVerify), nil
-}
-
 // ── OpenBao API handlers ───────────────────────────────────────────────────────
 
 type openBaoStatusJSON struct {
@@ -2567,6 +2557,8 @@ type openBaoStatusJSON struct {
 	Address            string `json:"address,omitempty"`
 	Mount              string `json:"mount,omitempty"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+	RoleID             string `json:"roleId,omitempty"`
+	AuthMount          string `json:"authMount,omitempty"`
 	Connected          bool   `json:"connected"`
 	Error              string `json:"error,omitempty"`
 }
@@ -2582,9 +2574,15 @@ func (s *Server) handleOpenBaoStatus(w http.ResponseWriter, r *http.Request) {
 		Address:            cfg.Address,
 		Mount:              cfg.Mount,
 		InsecureSkipVerify: cfg.InsecureSkipVerify,
+		RoleID:             cfg.RoleID,
+		AuthMount:          cfg.AuthMount,
 	}
-	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
-	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount, caBundle, cfg.InsecureSkipVerify)
+	bao, err := s.ctrl.BaoClient(r.Context())
+	if err != nil {
+		out.Error = err.Error()
+		writeJSON(w, out)
+		return
+	}
 	if err := bao.Health(r.Context()); err != nil {
 		out.Error = err.Error()
 	} else {
@@ -2599,6 +2597,9 @@ func (s *Server) handleSetOpenBaoConfig(w http.ResponseWriter, r *http.Request) 
 		Token              string `json:"token"`
 		Mount              string `json:"mount"`
 		InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+		RoleID             string `json:"roleId"`
+		SecretID           string `json:"secretId"`
+		AuthMount          string `json:"authMount"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -2608,17 +2609,29 @@ func (s *Server) handleSetOpenBaoConfig(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "address is required")
 		return
 	}
-	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
-	bao := baoclient.New(req.Address, req.Token, req.Mount, caBundle, req.InsecureSkipVerify)
-	if err := bao.Health(r.Context()); err != nil {
-		writeError(w, http.StatusBadGateway, "health check failed: "+err.Error())
-		return
-	}
 	cfg := types.OpenBaoConfig{
 		Address:            req.Address,
 		Token:              req.Token,
 		Mount:              req.Mount,
 		InsecureSkipVerify: req.InsecureSkipVerify,
+		RoleID:             req.RoleID,
+		SecretID:           req.SecretID,
+		AuthMount:          req.AuthMount,
+	}
+	// Validate the connection (and, for AppRole, the login itself) before persisting.
+	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
+	bao, err := s.ctrl.BaoSession().Client(r.Context(), cfg, caBundle)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "login failed: "+err.Error())
+		return
+	}
+	if err := bao.Health(r.Context()); err != nil {
+		writeError(w, http.StatusBadGateway, "health check failed: "+err.Error())
+		return
+	}
+	if err := bao.CheckSecretAccess(r.Context(), types.SecretPathPrefix); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
 	}
 	if err := s.peer.SetOpenBaoConfig(cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2678,11 +2691,15 @@ func (s *Server) handleUnsealBao(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "key is required")
 		return
 	}
-	bao, err := s.openBaoClient()
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	cfg := s.peer.State().OpenBaoConfig
+	if cfg == nil || cfg.Address == "" {
+		writeError(w, http.StatusBadRequest, "OpenBao is not configured — add connection details on the Secrets page")
 		return
 	}
+	// Built directly, not via the AppRole session: /v1/sys/unseal needs no
+	// token at all, and while sealed an AppRole login would fail anyway.
+	caBundle := types.OpenBaoTrustBundle(s.peer.State().TrustedCAs)
+	bao := baoclient.New(cfg.Address, cfg.Token, cfg.Mount, caBundle, cfg.InsecureSkipVerify)
 	st, err := bao.Unseal(r.Context(), req.Key)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -3091,10 +3108,10 @@ func (s *Server) applyBundle(ctx context.Context, b *export.Bundle, overwrite bo
 		} else if we.Kind == "stack" && we.Stack != nil {
 			_, submitErr = s.ctrl.SubmitStack(ctx, &gen.SubmitStackRequest{
 				Spec: &gen.ComposeStackSpec{
-					Name:       we.Stack.Name,
+					Name:        we.Stack.Name,
 					ComposeYaml: we.Stack.ComposeYAML,
-					SecretRefs: we.Stack.SecretRefs,
-					Replicas:   int32(we.Stack.Replicas),
+					SecretRefs:  we.Stack.SecretRefs,
+					Replicas:    int32(we.Stack.Replicas),
 				},
 			})
 		}
