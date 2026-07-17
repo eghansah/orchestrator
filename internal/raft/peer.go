@@ -207,6 +207,16 @@ func (p *Peer) RemoveSecret(id string) error {
 	return p.apply(cmdRemoveSecret, id)
 }
 
+// ApplyConfigValue writes a config value into the Raft log.
+func (p *Peer) ApplyConfigValue(cv types.ConfigValue) error {
+	return p.apply(cmdApplyConfigValue, cv)
+}
+
+// RemoveConfigValue removes a config value from the Raft log.
+func (p *Peer) RemoveConfigValue(id string) error {
+	return p.apply(cmdRemoveConfigValue, id)
+}
+
 // SetOpenBaoConfig stores the OpenBao connection config in the Raft log.
 func (p *Peer) SetOpenBaoConfig(cfg types.OpenBaoConfig) error {
 	return p.apply(cmdSetOpenBaoConfig, cfg)

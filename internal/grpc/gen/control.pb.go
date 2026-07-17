@@ -1978,6 +1978,398 @@ func (x *ListSecretsResponse) GetSecrets() []*Secret {
 	return nil
 }
 
+type CreateConfigValueRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`   // unique cluster-wide label
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"` // plaintext; stored directly in Raft state
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateConfigValueRequest) Reset() {
+	*x = CreateConfigValueRequest{}
+	mi := &file_control_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateConfigValueRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateConfigValueRequest) ProtoMessage() {}
+
+func (x *CreateConfigValueRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_control_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateConfigValueRequest.ProtoReflect.Descriptor instead.
+func (*CreateConfigValueRequest) Descriptor() ([]byte, []int) {
+	return file_control_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *CreateConfigValueRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateConfigValueRequest) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+type CreateConfigValueResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ConfigId      string                 `protobuf:"bytes,1,opt,name=config_id,json=configId,proto3" json:"config_id,omitempty"`
+	Accepted      bool                   `protobuf:"varint,2,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateConfigValueResponse) Reset() {
+	*x = CreateConfigValueResponse{}
+	mi := &file_control_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateConfigValueResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateConfigValueResponse) ProtoMessage() {}
+
+func (x *CreateConfigValueResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_control_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateConfigValueResponse.ProtoReflect.Descriptor instead.
+func (*CreateConfigValueResponse) Descriptor() ([]byte, []int) {
+	return file_control_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *CreateConfigValueResponse) GetConfigId() string {
+	if x != nil {
+		return x.ConfigId
+	}
+	return ""
+}
+
+func (x *CreateConfigValueResponse) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
+func (x *CreateConfigValueResponse) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type UpdateConfigValueRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`   // existing config value's name
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"` // new plaintext value
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateConfigValueRequest) Reset() {
+	*x = UpdateConfigValueRequest{}
+	mi := &file_control_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateConfigValueRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateConfigValueRequest) ProtoMessage() {}
+
+func (x *UpdateConfigValueRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_control_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateConfigValueRequest.ProtoReflect.Descriptor instead.
+func (*UpdateConfigValueRequest) Descriptor() ([]byte, []int) {
+	return file_control_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *UpdateConfigValueRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *UpdateConfigValueRequest) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+type UpdateConfigValueResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Accepted      bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateConfigValueResponse) Reset() {
+	*x = UpdateConfigValueResponse{}
+	mi := &file_control_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateConfigValueResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateConfigValueResponse) ProtoMessage() {}
+
+func (x *UpdateConfigValueResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_control_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateConfigValueResponse.ProtoReflect.Descriptor instead.
+func (*UpdateConfigValueResponse) Descriptor() ([]byte, []int) {
+	return file_control_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *UpdateConfigValueResponse) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
+func (x *UpdateConfigValueResponse) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type DeleteConfigValueRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ConfigId      string                 `protobuf:"bytes,1,opt,name=config_id,json=configId,proto3" json:"config_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteConfigValueRequest) Reset() {
+	*x = DeleteConfigValueRequest{}
+	mi := &file_control_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteConfigValueRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteConfigValueRequest) ProtoMessage() {}
+
+func (x *DeleteConfigValueRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_control_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteConfigValueRequest.ProtoReflect.Descriptor instead.
+func (*DeleteConfigValueRequest) Descriptor() ([]byte, []int) {
+	return file_control_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *DeleteConfigValueRequest) GetConfigId() string {
+	if x != nil {
+		return x.ConfigId
+	}
+	return ""
+}
+
+type DeleteConfigValueResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Accepted      bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteConfigValueResponse) Reset() {
+	*x = DeleteConfigValueResponse{}
+	mi := &file_control_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteConfigValueResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteConfigValueResponse) ProtoMessage() {}
+
+func (x *DeleteConfigValueResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_control_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteConfigValueResponse.ProtoReflect.Descriptor instead.
+func (*DeleteConfigValueResponse) Descriptor() ([]byte, []int) {
+	return file_control_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *DeleteConfigValueResponse) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
+func (x *DeleteConfigValueResponse) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type ListConfigValuesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListConfigValuesRequest) Reset() {
+	*x = ListConfigValuesRequest{}
+	mi := &file_control_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListConfigValuesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListConfigValuesRequest) ProtoMessage() {}
+
+func (x *ListConfigValuesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_control_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListConfigValuesRequest.ProtoReflect.Descriptor instead.
+func (*ListConfigValuesRequest) Descriptor() ([]byte, []int) {
+	return file_control_proto_rawDescGZIP(), []int{43}
+}
+
+type ListConfigValuesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ConfigValues  []*ConfigValue         `protobuf:"bytes,1,rep,name=config_values,json=configValues,proto3" json:"config_values,omitempty"` // includes plaintext values
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListConfigValuesResponse) Reset() {
+	*x = ListConfigValuesResponse{}
+	mi := &file_control_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListConfigValuesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListConfigValuesResponse) ProtoMessage() {}
+
+func (x *ListConfigValuesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_control_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListConfigValuesResponse.ProtoReflect.Descriptor instead.
+func (*ListConfigValuesResponse) Descriptor() ([]byte, []int) {
+	return file_control_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *ListConfigValuesResponse) GetConfigValues() []*ConfigValue {
+	if x != nil {
+		return x.ConfigValues
+	}
+	return nil
+}
+
 var File_control_proto protoreflect.FileDescriptor
 
 const file_control_proto_rawDesc = "" +
@@ -2109,7 +2501,28 @@ const file_control_proto_rawDesc = "" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x14\n" +
 	"\x12ListSecretsRequest\"E\n" +
 	"\x13ListSecretsResponse\x12.\n" +
-	"\asecrets\x18\x01 \x03(\v2\x14.orchestrator.SecretR\asecrets2\xf2\r\n" +
+	"\asecrets\x18\x01 \x03(\v2\x14.orchestrator.SecretR\asecrets\"D\n" +
+	"\x18CreateConfigValueRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"l\n" +
+	"\x19CreateConfigValueResponse\x12\x1b\n" +
+	"\tconfig_id\x18\x01 \x01(\tR\bconfigId\x12\x1a\n" +
+	"\baccepted\x18\x02 \x01(\bR\baccepted\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\"D\n" +
+	"\x18UpdateConfigValueRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"O\n" +
+	"\x19UpdateConfigValueResponse\x12\x1a\n" +
+	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"7\n" +
+	"\x18DeleteConfigValueRequest\x12\x1b\n" +
+	"\tconfig_id\x18\x01 \x01(\tR\bconfigId\"O\n" +
+	"\x19DeleteConfigValueResponse\x12\x1a\n" +
+	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x19\n" +
+	"\x17ListConfigValuesRequest\"Z\n" +
+	"\x18ListConfigValuesResponse\x12>\n" +
+	"\rconfig_values\x18\x01 \x03(\v2\x19.orchestrator.ConfigValueR\fconfigValues2\x87\x11\n" +
 	"\x0eControlService\x12U\n" +
 	"\x0fSubmitContainer\x12$.orchestrator.SubmitContainerRequest\x1a\x1c.orchestrator.SubmitResponse\x12M\n" +
 	"\vSubmitStack\x12 .orchestrator.SubmitStackRequest\x1a\x1c.orchestrator.SubmitResponse\x12[\n" +
@@ -2126,7 +2539,11 @@ const file_control_proto_rawDesc = "" +
 	"\vListService\x12 .orchestrator.ListServiceRequest\x1a!.orchestrator.ListServiceResponse\x12U\n" +
 	"\fCreateSecret\x12!.orchestrator.CreateSecretRequest\x1a\".orchestrator.CreateSecretResponse\x12U\n" +
 	"\fDeleteSecret\x12!.orchestrator.DeleteSecretRequest\x1a\".orchestrator.DeleteSecretResponse\x12R\n" +
-	"\vListSecrets\x12 .orchestrator.ListSecretsRequest\x1a!.orchestrator.ListSecretsResponse\x12a\n" +
+	"\vListSecrets\x12 .orchestrator.ListSecretsRequest\x1a!.orchestrator.ListSecretsResponse\x12d\n" +
+	"\x11CreateConfigValue\x12&.orchestrator.CreateConfigValueRequest\x1a'.orchestrator.CreateConfigValueResponse\x12d\n" +
+	"\x11UpdateConfigValue\x12&.orchestrator.UpdateConfigValueRequest\x1a'.orchestrator.UpdateConfigValueResponse\x12d\n" +
+	"\x11DeleteConfigValue\x12&.orchestrator.DeleteConfigValueRequest\x1a'.orchestrator.DeleteConfigValueResponse\x12a\n" +
+	"\x10ListConfigValues\x12%.orchestrator.ListConfigValuesRequest\x1a&.orchestrator.ListConfigValuesResponse\x12a\n" +
 	"\x10SetOpenBaoConfig\x12%.orchestrator.SetOpenBaoConfigRequest\x1a&.orchestrator.SetOpenBaoConfigResponse\x12a\n" +
 	"\x10GetOpenBaoStatus\x12%.orchestrator.GetOpenBaoStatusRequest\x1a&.orchestrator.GetOpenBaoStatusResponse\x12a\n" +
 	"\x10GetBaoSealStatus\x12%.orchestrator.GetBaoSealStatusRequest\x1a&.orchestrator.GetBaoSealStatusResponse\x12L\n" +
@@ -2144,112 +2561,130 @@ func file_control_proto_rawDescGZIP() []byte {
 	return file_control_proto_rawDescData
 }
 
-var file_control_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
+var file_control_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
 var file_control_proto_goTypes = []any{
-	(*SubmitContainerRequest)(nil),   // 0: orchestrator.SubmitContainerRequest
-	(*SubmitStackRequest)(nil),       // 1: orchestrator.SubmitStackRequest
-	(*SubmitResponse)(nil),           // 2: orchestrator.SubmitResponse
-	(*ListWorkloadsRequest)(nil),     // 3: orchestrator.ListWorkloadsRequest
-	(*ListWorkloadsResponse)(nil),    // 4: orchestrator.ListWorkloadsResponse
-	(*ListNodesRequest)(nil),         // 5: orchestrator.ListNodesRequest
-	(*ListNodesResponse)(nil),        // 6: orchestrator.ListNodesResponse
-	(*DrainNodeRequest)(nil),         // 7: orchestrator.DrainNodeRequest
-	(*DrainNodeResponse)(nil),        // 8: orchestrator.DrainNodeResponse
-	(*GetClusterStateRequest)(nil),   // 9: orchestrator.GetClusterStateRequest
-	(*GetClusterStateResponse)(nil),  // 10: orchestrator.GetClusterStateResponse
-	(*CreateIngressRequest)(nil),     // 11: orchestrator.CreateIngressRequest
-	(*CreateIngressResponse)(nil),    // 12: orchestrator.CreateIngressResponse
-	(*DeleteIngressRequest)(nil),     // 13: orchestrator.DeleteIngressRequest
-	(*DeleteIngressResponse)(nil),    // 14: orchestrator.DeleteIngressResponse
-	(*ListIngressRequest)(nil),       // 15: orchestrator.ListIngressRequest
-	(*ListIngressResponse)(nil),      // 16: orchestrator.ListIngressResponse
-	(*CreateServiceRequest)(nil),     // 17: orchestrator.CreateServiceRequest
-	(*CreateServiceResponse)(nil),    // 18: orchestrator.CreateServiceResponse
-	(*DeleteServiceRequest)(nil),     // 19: orchestrator.DeleteServiceRequest
-	(*DeleteServiceResponse)(nil),    // 20: orchestrator.DeleteServiceResponse
-	(*ListServiceRequest)(nil),       // 21: orchestrator.ListServiceRequest
-	(*ListServiceResponse)(nil),      // 22: orchestrator.ListServiceResponse
-	(*SetOpenBaoConfigRequest)(nil),  // 23: orchestrator.SetOpenBaoConfigRequest
-	(*SetOpenBaoConfigResponse)(nil), // 24: orchestrator.SetOpenBaoConfigResponse
-	(*GetOpenBaoStatusRequest)(nil),  // 25: orchestrator.GetOpenBaoStatusRequest
-	(*GetOpenBaoStatusResponse)(nil), // 26: orchestrator.GetOpenBaoStatusResponse
-	(*GetBaoSealStatusRequest)(nil),  // 27: orchestrator.GetBaoSealStatusRequest
-	(*GetBaoSealStatusResponse)(nil), // 28: orchestrator.GetBaoSealStatusResponse
-	(*UnsealBaoRequest)(nil),         // 29: orchestrator.UnsealBaoRequest
-	(*UnsealBaoResponse)(nil),        // 30: orchestrator.UnsealBaoResponse
-	(*CreateSecretRequest)(nil),      // 31: orchestrator.CreateSecretRequest
-	(*CreateSecretResponse)(nil),     // 32: orchestrator.CreateSecretResponse
-	(*DeleteSecretRequest)(nil),      // 33: orchestrator.DeleteSecretRequest
-	(*DeleteSecretResponse)(nil),     // 34: orchestrator.DeleteSecretResponse
-	(*ListSecretsRequest)(nil),       // 35: orchestrator.ListSecretsRequest
-	(*ListSecretsResponse)(nil),      // 36: orchestrator.ListSecretsResponse
-	(*ContainerSpec)(nil),            // 37: orchestrator.ContainerSpec
-	(*ComposeStackSpec)(nil),         // 38: orchestrator.ComposeStackSpec
-	(WorkloadPhase)(0),               // 39: orchestrator.WorkloadPhase
-	(*Workload)(nil),                 // 40: orchestrator.Workload
-	(*Node)(nil),                     // 41: orchestrator.Node
-	(*IngressRule)(nil),              // 42: orchestrator.IngressRule
-	(*Service)(nil),                  // 43: orchestrator.Service
-	(*Secret)(nil),                   // 44: orchestrator.Secret
-	(*RemoveWorkloadRequest)(nil),    // 45: orchestrator.RemoveWorkloadRequest
-	(*RemoveWorkloadResponse)(nil),   // 46: orchestrator.RemoveWorkloadResponse
+	(*SubmitContainerRequest)(nil),    // 0: orchestrator.SubmitContainerRequest
+	(*SubmitStackRequest)(nil),        // 1: orchestrator.SubmitStackRequest
+	(*SubmitResponse)(nil),            // 2: orchestrator.SubmitResponse
+	(*ListWorkloadsRequest)(nil),      // 3: orchestrator.ListWorkloadsRequest
+	(*ListWorkloadsResponse)(nil),     // 4: orchestrator.ListWorkloadsResponse
+	(*ListNodesRequest)(nil),          // 5: orchestrator.ListNodesRequest
+	(*ListNodesResponse)(nil),         // 6: orchestrator.ListNodesResponse
+	(*DrainNodeRequest)(nil),          // 7: orchestrator.DrainNodeRequest
+	(*DrainNodeResponse)(nil),         // 8: orchestrator.DrainNodeResponse
+	(*GetClusterStateRequest)(nil),    // 9: orchestrator.GetClusterStateRequest
+	(*GetClusterStateResponse)(nil),   // 10: orchestrator.GetClusterStateResponse
+	(*CreateIngressRequest)(nil),      // 11: orchestrator.CreateIngressRequest
+	(*CreateIngressResponse)(nil),     // 12: orchestrator.CreateIngressResponse
+	(*DeleteIngressRequest)(nil),      // 13: orchestrator.DeleteIngressRequest
+	(*DeleteIngressResponse)(nil),     // 14: orchestrator.DeleteIngressResponse
+	(*ListIngressRequest)(nil),        // 15: orchestrator.ListIngressRequest
+	(*ListIngressResponse)(nil),       // 16: orchestrator.ListIngressResponse
+	(*CreateServiceRequest)(nil),      // 17: orchestrator.CreateServiceRequest
+	(*CreateServiceResponse)(nil),     // 18: orchestrator.CreateServiceResponse
+	(*DeleteServiceRequest)(nil),      // 19: orchestrator.DeleteServiceRequest
+	(*DeleteServiceResponse)(nil),     // 20: orchestrator.DeleteServiceResponse
+	(*ListServiceRequest)(nil),        // 21: orchestrator.ListServiceRequest
+	(*ListServiceResponse)(nil),       // 22: orchestrator.ListServiceResponse
+	(*SetOpenBaoConfigRequest)(nil),   // 23: orchestrator.SetOpenBaoConfigRequest
+	(*SetOpenBaoConfigResponse)(nil),  // 24: orchestrator.SetOpenBaoConfigResponse
+	(*GetOpenBaoStatusRequest)(nil),   // 25: orchestrator.GetOpenBaoStatusRequest
+	(*GetOpenBaoStatusResponse)(nil),  // 26: orchestrator.GetOpenBaoStatusResponse
+	(*GetBaoSealStatusRequest)(nil),   // 27: orchestrator.GetBaoSealStatusRequest
+	(*GetBaoSealStatusResponse)(nil),  // 28: orchestrator.GetBaoSealStatusResponse
+	(*UnsealBaoRequest)(nil),          // 29: orchestrator.UnsealBaoRequest
+	(*UnsealBaoResponse)(nil),         // 30: orchestrator.UnsealBaoResponse
+	(*CreateSecretRequest)(nil),       // 31: orchestrator.CreateSecretRequest
+	(*CreateSecretResponse)(nil),      // 32: orchestrator.CreateSecretResponse
+	(*DeleteSecretRequest)(nil),       // 33: orchestrator.DeleteSecretRequest
+	(*DeleteSecretResponse)(nil),      // 34: orchestrator.DeleteSecretResponse
+	(*ListSecretsRequest)(nil),        // 35: orchestrator.ListSecretsRequest
+	(*ListSecretsResponse)(nil),       // 36: orchestrator.ListSecretsResponse
+	(*CreateConfigValueRequest)(nil),  // 37: orchestrator.CreateConfigValueRequest
+	(*CreateConfigValueResponse)(nil), // 38: orchestrator.CreateConfigValueResponse
+	(*UpdateConfigValueRequest)(nil),  // 39: orchestrator.UpdateConfigValueRequest
+	(*UpdateConfigValueResponse)(nil), // 40: orchestrator.UpdateConfigValueResponse
+	(*DeleteConfigValueRequest)(nil),  // 41: orchestrator.DeleteConfigValueRequest
+	(*DeleteConfigValueResponse)(nil), // 42: orchestrator.DeleteConfigValueResponse
+	(*ListConfigValuesRequest)(nil),   // 43: orchestrator.ListConfigValuesRequest
+	(*ListConfigValuesResponse)(nil),  // 44: orchestrator.ListConfigValuesResponse
+	(*ContainerSpec)(nil),             // 45: orchestrator.ContainerSpec
+	(*ComposeStackSpec)(nil),          // 46: orchestrator.ComposeStackSpec
+	(WorkloadPhase)(0),                // 47: orchestrator.WorkloadPhase
+	(*Workload)(nil),                  // 48: orchestrator.Workload
+	(*Node)(nil),                      // 49: orchestrator.Node
+	(*IngressRule)(nil),               // 50: orchestrator.IngressRule
+	(*Service)(nil),                   // 51: orchestrator.Service
+	(*Secret)(nil),                    // 52: orchestrator.Secret
+	(*ConfigValue)(nil),               // 53: orchestrator.ConfigValue
+	(*RemoveWorkloadRequest)(nil),     // 54: orchestrator.RemoveWorkloadRequest
+	(*RemoveWorkloadResponse)(nil),    // 55: orchestrator.RemoveWorkloadResponse
 }
 var file_control_proto_depIdxs = []int32{
-	37, // 0: orchestrator.SubmitContainerRequest.spec:type_name -> orchestrator.ContainerSpec
-	38, // 1: orchestrator.SubmitStackRequest.spec:type_name -> orchestrator.ComposeStackSpec
-	39, // 2: orchestrator.ListWorkloadsRequest.phases:type_name -> orchestrator.WorkloadPhase
-	40, // 3: orchestrator.ListWorkloadsResponse.workloads:type_name -> orchestrator.Workload
-	41, // 4: orchestrator.ListNodesResponse.nodes:type_name -> orchestrator.Node
-	41, // 5: orchestrator.GetClusterStateResponse.nodes:type_name -> orchestrator.Node
-	40, // 6: orchestrator.GetClusterStateResponse.workloads:type_name -> orchestrator.Workload
-	42, // 7: orchestrator.ListIngressResponse.rules:type_name -> orchestrator.IngressRule
-	43, // 8: orchestrator.ListServiceResponse.services:type_name -> orchestrator.Service
-	44, // 9: orchestrator.ListSecretsResponse.secrets:type_name -> orchestrator.Secret
-	0,  // 10: orchestrator.ControlService.SubmitContainer:input_type -> orchestrator.SubmitContainerRequest
-	1,  // 11: orchestrator.ControlService.SubmitStack:input_type -> orchestrator.SubmitStackRequest
-	45, // 12: orchestrator.ControlService.RemoveWorkload:input_type -> orchestrator.RemoveWorkloadRequest
-	3,  // 13: orchestrator.ControlService.ListWorkloads:input_type -> orchestrator.ListWorkloadsRequest
-	5,  // 14: orchestrator.ControlService.ListNodes:input_type -> orchestrator.ListNodesRequest
-	7,  // 15: orchestrator.ControlService.DrainNode:input_type -> orchestrator.DrainNodeRequest
-	9,  // 16: orchestrator.ControlService.GetClusterState:input_type -> orchestrator.GetClusterStateRequest
-	11, // 17: orchestrator.ControlService.CreateIngress:input_type -> orchestrator.CreateIngressRequest
-	13, // 18: orchestrator.ControlService.DeleteIngress:input_type -> orchestrator.DeleteIngressRequest
-	15, // 19: orchestrator.ControlService.ListIngress:input_type -> orchestrator.ListIngressRequest
-	17, // 20: orchestrator.ControlService.CreateService:input_type -> orchestrator.CreateServiceRequest
-	19, // 21: orchestrator.ControlService.DeleteService:input_type -> orchestrator.DeleteServiceRequest
-	21, // 22: orchestrator.ControlService.ListService:input_type -> orchestrator.ListServiceRequest
-	31, // 23: orchestrator.ControlService.CreateSecret:input_type -> orchestrator.CreateSecretRequest
-	33, // 24: orchestrator.ControlService.DeleteSecret:input_type -> orchestrator.DeleteSecretRequest
-	35, // 25: orchestrator.ControlService.ListSecrets:input_type -> orchestrator.ListSecretsRequest
-	23, // 26: orchestrator.ControlService.SetOpenBaoConfig:input_type -> orchestrator.SetOpenBaoConfigRequest
-	25, // 27: orchestrator.ControlService.GetOpenBaoStatus:input_type -> orchestrator.GetOpenBaoStatusRequest
-	27, // 28: orchestrator.ControlService.GetBaoSealStatus:input_type -> orchestrator.GetBaoSealStatusRequest
-	29, // 29: orchestrator.ControlService.UnsealBao:input_type -> orchestrator.UnsealBaoRequest
-	2,  // 30: orchestrator.ControlService.SubmitContainer:output_type -> orchestrator.SubmitResponse
-	2,  // 31: orchestrator.ControlService.SubmitStack:output_type -> orchestrator.SubmitResponse
-	46, // 32: orchestrator.ControlService.RemoveWorkload:output_type -> orchestrator.RemoveWorkloadResponse
-	4,  // 33: orchestrator.ControlService.ListWorkloads:output_type -> orchestrator.ListWorkloadsResponse
-	6,  // 34: orchestrator.ControlService.ListNodes:output_type -> orchestrator.ListNodesResponse
-	8,  // 35: orchestrator.ControlService.DrainNode:output_type -> orchestrator.DrainNodeResponse
-	10, // 36: orchestrator.ControlService.GetClusterState:output_type -> orchestrator.GetClusterStateResponse
-	12, // 37: orchestrator.ControlService.CreateIngress:output_type -> orchestrator.CreateIngressResponse
-	14, // 38: orchestrator.ControlService.DeleteIngress:output_type -> orchestrator.DeleteIngressResponse
-	16, // 39: orchestrator.ControlService.ListIngress:output_type -> orchestrator.ListIngressResponse
-	18, // 40: orchestrator.ControlService.CreateService:output_type -> orchestrator.CreateServiceResponse
-	20, // 41: orchestrator.ControlService.DeleteService:output_type -> orchestrator.DeleteServiceResponse
-	22, // 42: orchestrator.ControlService.ListService:output_type -> orchestrator.ListServiceResponse
-	32, // 43: orchestrator.ControlService.CreateSecret:output_type -> orchestrator.CreateSecretResponse
-	34, // 44: orchestrator.ControlService.DeleteSecret:output_type -> orchestrator.DeleteSecretResponse
-	36, // 45: orchestrator.ControlService.ListSecrets:output_type -> orchestrator.ListSecretsResponse
-	24, // 46: orchestrator.ControlService.SetOpenBaoConfig:output_type -> orchestrator.SetOpenBaoConfigResponse
-	26, // 47: orchestrator.ControlService.GetOpenBaoStatus:output_type -> orchestrator.GetOpenBaoStatusResponse
-	28, // 48: orchestrator.ControlService.GetBaoSealStatus:output_type -> orchestrator.GetBaoSealStatusResponse
-	30, // 49: orchestrator.ControlService.UnsealBao:output_type -> orchestrator.UnsealBaoResponse
-	30, // [30:50] is the sub-list for method output_type
-	10, // [10:30] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	45, // 0: orchestrator.SubmitContainerRequest.spec:type_name -> orchestrator.ContainerSpec
+	46, // 1: orchestrator.SubmitStackRequest.spec:type_name -> orchestrator.ComposeStackSpec
+	47, // 2: orchestrator.ListWorkloadsRequest.phases:type_name -> orchestrator.WorkloadPhase
+	48, // 3: orchestrator.ListWorkloadsResponse.workloads:type_name -> orchestrator.Workload
+	49, // 4: orchestrator.ListNodesResponse.nodes:type_name -> orchestrator.Node
+	49, // 5: orchestrator.GetClusterStateResponse.nodes:type_name -> orchestrator.Node
+	48, // 6: orchestrator.GetClusterStateResponse.workloads:type_name -> orchestrator.Workload
+	50, // 7: orchestrator.ListIngressResponse.rules:type_name -> orchestrator.IngressRule
+	51, // 8: orchestrator.ListServiceResponse.services:type_name -> orchestrator.Service
+	52, // 9: orchestrator.ListSecretsResponse.secrets:type_name -> orchestrator.Secret
+	53, // 10: orchestrator.ListConfigValuesResponse.config_values:type_name -> orchestrator.ConfigValue
+	0,  // 11: orchestrator.ControlService.SubmitContainer:input_type -> orchestrator.SubmitContainerRequest
+	1,  // 12: orchestrator.ControlService.SubmitStack:input_type -> orchestrator.SubmitStackRequest
+	54, // 13: orchestrator.ControlService.RemoveWorkload:input_type -> orchestrator.RemoveWorkloadRequest
+	3,  // 14: orchestrator.ControlService.ListWorkloads:input_type -> orchestrator.ListWorkloadsRequest
+	5,  // 15: orchestrator.ControlService.ListNodes:input_type -> orchestrator.ListNodesRequest
+	7,  // 16: orchestrator.ControlService.DrainNode:input_type -> orchestrator.DrainNodeRequest
+	9,  // 17: orchestrator.ControlService.GetClusterState:input_type -> orchestrator.GetClusterStateRequest
+	11, // 18: orchestrator.ControlService.CreateIngress:input_type -> orchestrator.CreateIngressRequest
+	13, // 19: orchestrator.ControlService.DeleteIngress:input_type -> orchestrator.DeleteIngressRequest
+	15, // 20: orchestrator.ControlService.ListIngress:input_type -> orchestrator.ListIngressRequest
+	17, // 21: orchestrator.ControlService.CreateService:input_type -> orchestrator.CreateServiceRequest
+	19, // 22: orchestrator.ControlService.DeleteService:input_type -> orchestrator.DeleteServiceRequest
+	21, // 23: orchestrator.ControlService.ListService:input_type -> orchestrator.ListServiceRequest
+	31, // 24: orchestrator.ControlService.CreateSecret:input_type -> orchestrator.CreateSecretRequest
+	33, // 25: orchestrator.ControlService.DeleteSecret:input_type -> orchestrator.DeleteSecretRequest
+	35, // 26: orchestrator.ControlService.ListSecrets:input_type -> orchestrator.ListSecretsRequest
+	37, // 27: orchestrator.ControlService.CreateConfigValue:input_type -> orchestrator.CreateConfigValueRequest
+	39, // 28: orchestrator.ControlService.UpdateConfigValue:input_type -> orchestrator.UpdateConfigValueRequest
+	41, // 29: orchestrator.ControlService.DeleteConfigValue:input_type -> orchestrator.DeleteConfigValueRequest
+	43, // 30: orchestrator.ControlService.ListConfigValues:input_type -> orchestrator.ListConfigValuesRequest
+	23, // 31: orchestrator.ControlService.SetOpenBaoConfig:input_type -> orchestrator.SetOpenBaoConfigRequest
+	25, // 32: orchestrator.ControlService.GetOpenBaoStatus:input_type -> orchestrator.GetOpenBaoStatusRequest
+	27, // 33: orchestrator.ControlService.GetBaoSealStatus:input_type -> orchestrator.GetBaoSealStatusRequest
+	29, // 34: orchestrator.ControlService.UnsealBao:input_type -> orchestrator.UnsealBaoRequest
+	2,  // 35: orchestrator.ControlService.SubmitContainer:output_type -> orchestrator.SubmitResponse
+	2,  // 36: orchestrator.ControlService.SubmitStack:output_type -> orchestrator.SubmitResponse
+	55, // 37: orchestrator.ControlService.RemoveWorkload:output_type -> orchestrator.RemoveWorkloadResponse
+	4,  // 38: orchestrator.ControlService.ListWorkloads:output_type -> orchestrator.ListWorkloadsResponse
+	6,  // 39: orchestrator.ControlService.ListNodes:output_type -> orchestrator.ListNodesResponse
+	8,  // 40: orchestrator.ControlService.DrainNode:output_type -> orchestrator.DrainNodeResponse
+	10, // 41: orchestrator.ControlService.GetClusterState:output_type -> orchestrator.GetClusterStateResponse
+	12, // 42: orchestrator.ControlService.CreateIngress:output_type -> orchestrator.CreateIngressResponse
+	14, // 43: orchestrator.ControlService.DeleteIngress:output_type -> orchestrator.DeleteIngressResponse
+	16, // 44: orchestrator.ControlService.ListIngress:output_type -> orchestrator.ListIngressResponse
+	18, // 45: orchestrator.ControlService.CreateService:output_type -> orchestrator.CreateServiceResponse
+	20, // 46: orchestrator.ControlService.DeleteService:output_type -> orchestrator.DeleteServiceResponse
+	22, // 47: orchestrator.ControlService.ListService:output_type -> orchestrator.ListServiceResponse
+	32, // 48: orchestrator.ControlService.CreateSecret:output_type -> orchestrator.CreateSecretResponse
+	34, // 49: orchestrator.ControlService.DeleteSecret:output_type -> orchestrator.DeleteSecretResponse
+	36, // 50: orchestrator.ControlService.ListSecrets:output_type -> orchestrator.ListSecretsResponse
+	38, // 51: orchestrator.ControlService.CreateConfigValue:output_type -> orchestrator.CreateConfigValueResponse
+	40, // 52: orchestrator.ControlService.UpdateConfigValue:output_type -> orchestrator.UpdateConfigValueResponse
+	42, // 53: orchestrator.ControlService.DeleteConfigValue:output_type -> orchestrator.DeleteConfigValueResponse
+	44, // 54: orchestrator.ControlService.ListConfigValues:output_type -> orchestrator.ListConfigValuesResponse
+	24, // 55: orchestrator.ControlService.SetOpenBaoConfig:output_type -> orchestrator.SetOpenBaoConfigResponse
+	26, // 56: orchestrator.ControlService.GetOpenBaoStatus:output_type -> orchestrator.GetOpenBaoStatusResponse
+	28, // 57: orchestrator.ControlService.GetBaoSealStatus:output_type -> orchestrator.GetBaoSealStatusResponse
+	30, // 58: orchestrator.ControlService.UnsealBao:output_type -> orchestrator.UnsealBaoResponse
+	35, // [35:59] is the sub-list for method output_type
+	11, // [11:35] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_control_proto_init() }
@@ -2264,7 +2699,7 @@ func file_control_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_control_proto_rawDesc), len(file_control_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   37,
+			NumMessages:   45,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

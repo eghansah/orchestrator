@@ -84,6 +84,8 @@ doneFlags:
 		serviceCmd(server, rest)
 	case "secret":
 		secretCmd(server, rest)
+	case "config":
+		configCmd(server, rest)
 	case "bao":
 		baoCmd(server, rest)
 	case "export":

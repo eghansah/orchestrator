@@ -58,6 +58,18 @@ service ControlService {
   // ListSecrets returns all secret metadata (never plaintext values).
   rpc ListSecrets(ListSecretsRequest) returns (ListSecretsResponse);
 
+  // CreateConfigValue stores a new named, plaintext config value in Raft state.
+  rpc CreateConfigValue(CreateConfigValueRequest) returns (CreateConfigValueResponse);
+
+  // UpdateConfigValue overwrites the value of an existing config value, looked up by name.
+  rpc UpdateConfigValue(UpdateConfigValueRequest) returns (UpdateConfigValueResponse);
+
+  // DeleteConfigValue removes a config value from Raft state.
+  rpc DeleteConfigValue(DeleteConfigValueRequest) returns (DeleteConfigValueResponse);
+
+  // ListConfigValues returns all config values, including their plaintext values.
+  rpc ListConfigValues(ListConfigValuesRequest) returns (ListConfigValuesResponse);
+
   // SetOpenBaoConfig stores the OpenBao connection configuration in cluster state.
   rpc SetOpenBaoConfig(SetOpenBaoConfigRequest) returns (SetOpenBaoConfigResponse);
 
@@ -259,4 +271,40 @@ message ListSecretsRequest {}
 
 message ListSecretsResponse {
   repeated Secret secrets = 1; // metadata only — no values
+}
+
+message CreateConfigValueRequest {
+  string name  = 1; // unique cluster-wide label
+  string value = 2; // plaintext; stored directly in Raft state
+}
+
+message CreateConfigValueResponse {
+  string config_id = 1;
+  bool   accepted  = 2;
+  string reason    = 3;
+}
+
+message UpdateConfigValueRequest {
+  string name  = 1; // existing config value's name
+  string value = 2; // new plaintext value
+}
+
+message UpdateConfigValueResponse {
+  bool   accepted = 1;
+  string reason   = 2;
+}
+
+message DeleteConfigValueRequest {
+  string config_id = 1;
+}
+
+message DeleteConfigValueResponse {
+  bool   accepted = 1;
+  string reason   = 2;
+}
+
+message ListConfigValuesRequest {}
+
+message ListConfigValuesResponse {
+  repeated ConfigValue config_values = 1; // includes plaintext values
 }

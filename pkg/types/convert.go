@@ -99,6 +99,7 @@ func ContainerSpecToProto(s ContainerSpec) *gen.ContainerSpec {
 		Labels:           s.Labels,
 		Namespace:        s.Namespace,
 		SecretRefs:       s.SecretRefs,
+		ConfigRefs:       s.ConfigRefs,
 		Replicas:         int32(s.Replicas),
 		InsecureRegistry: s.InsecureRegistry,
 	}
@@ -123,6 +124,7 @@ func ContainerSpecFromProto(ps *gen.ContainerSpec) ContainerSpec {
 		Labels:           ps.Labels,
 		Namespace:        ps.Namespace,
 		SecretRefs:       ps.SecretRefs,
+		ConfigRefs:       ps.ConfigRefs,
 		Replicas:         int(ps.Replicas),
 		InsecureRegistry: ps.InsecureRegistry,
 	}
@@ -137,6 +139,7 @@ func ComposeStackSpecToProto(s ComposeStackSpec) *gen.ComposeStackSpec {
 		Name:             s.Name,
 		ComposeYaml:      s.ComposeYAML,
 		SecretRefs:       s.SecretRefs,
+		ConfigRefs:       s.ConfigRefs,
 		Replicas:         int32(s.Replicas),
 		InsecureRegistry: s.InsecureRegistry,
 		SecretMounts:     mounts,
@@ -152,6 +155,7 @@ func ComposeStackSpecFromProto(ps *gen.ComposeStackSpec) ComposeStackSpec {
 		Name:             ps.Name,
 		ComposeYAML:      ps.ComposeYaml,
 		SecretRefs:       ps.SecretRefs,
+		ConfigRefs:       ps.ConfigRefs,
 		Replicas:         int(ps.Replicas),
 		InsecureRegistry: ps.InsecureRegistry,
 		SecretMounts:     mounts,
@@ -173,6 +177,26 @@ func SecretFromProto(ps *gen.Secret) Secret {
 		Name:      ps.Name,
 		BaoPath:   ps.BaoPath,
 		CreatedAt: time.Unix(ps.CreatedAt, 0),
+	}
+}
+
+func ConfigValueToProto(c ConfigValue) *gen.ConfigValue {
+	return &gen.ConfigValue{
+		Id:        c.ID,
+		Name:      c.Name,
+		Value:     c.Value,
+		CreatedAt: c.CreatedAt.Unix(),
+		UpdatedAt: c.UpdatedAt.Unix(),
+	}
+}
+
+func ConfigValueFromProto(pc *gen.ConfigValue) ConfigValue {
+	return ConfigValue{
+		ID:        pc.Id,
+		Name:      pc.Name,
+		Value:     pc.Value,
+		CreatedAt: time.Unix(pc.CreatedAt, 0),
+		UpdatedAt: time.Unix(pc.UpdatedAt, 0),
 	}
 }
 

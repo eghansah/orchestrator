@@ -17,6 +17,7 @@ import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Table from "@cloudscape-design/components/table";
 import Textarea from "@cloudscape-design/components/textarea";
 import { api, BaoSealStatus, ClusterState, OpenBaoStatus, Secret, formatAge } from "../api";
+import "./secrets.css";
 
 interface Props {
   state: ClusterState | null;
@@ -32,7 +33,13 @@ export default function Secrets({ state, loading, refetch, onNavigate }: Props) 
   const [selected, setSelected] = useState<Secret[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ name: "", value: "" });
+  const [showCreateValue, setShowCreateValue] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const [showEdit, setShowEdit] = useState(false);
+  const [editValue, setEditValue] = useState("");
+  const [showEditValue, setShowEditValue] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
 
   // OpenBao connection state
   const [baoStatus, setBaoStatus] = useState<OpenBaoStatus | null>(null);
@@ -151,6 +158,27 @@ export default function Secrets({ state, loading, refetch, onNavigate }: Props) 
       addFlash("error", String(e));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleUpdate() {
+    if (selected.length !== 1 || !editValue) {
+      addFlash("error", "A new value is required");
+      return;
+    }
+    const target = selected[0];
+    setEditSaving(true);
+    try {
+      await api.updateSecret(target.id, { value: editValue });
+      addFlash("success", `Updated "${target.name}"`);
+      setShowEdit(false);
+      setEditValue("");
+      setSelected([]);
+      refetch();
+    } catch (e) {
+      addFlash("error", String(e));
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -315,6 +343,16 @@ export default function Secrets({ state, loading, refetch, onNavigate }: Props) 
                       Delete
                     </Button>
                     <Button
+                      disabled={selected.length !== 1 || !baoConnected}
+                      onClick={() => {
+                        setEditValue("");
+                        setShowEditValue(false);
+                        setShowEdit(true);
+                      }}
+                    >
+                      Edit value
+                    </Button>
+                    <Button
                       variant="primary"
                       disabled={!baoConnected}
                       onClick={() => setShowCreate(true)}
@@ -373,13 +411,68 @@ export default function Secrets({ state, loading, refetch, onNavigate }: Props) 
             <FormField
               label="Value"
               description="Plaintext value written directly to OpenBao. Not retrievable after creation."
+              secondaryControl={
+                <Button
+                  variant="inline-link"
+                  onClick={() => setShowCreateValue((v) => !v)}
+                >
+                  {showCreateValue ? "Hide" : "Show"}
+                </Button>
+              }
             >
-              <Textarea
-                value={form.value}
-                onChange={(e) => setForm((f) => ({ ...f, value: e.detail.value }))}
-                placeholder="super-secret-value"
-                rows={4}
-              />
+              <div className={showCreateValue ? undefined : "secret-value-masked"}>
+                <Textarea
+                  value={form.value}
+                  onChange={(e) => setForm((f) => ({ ...f, value: e.detail.value }))}
+                  placeholder="super-secret-value"
+                  rows={4}
+                  spellcheck={false}
+                />
+              </div>
+            </FormField>
+          </SpaceBetween>
+        </Modal>
+
+        {/* Edit secret value modal */}
+        <Modal
+          visible={showEdit}
+          header={`Edit value${selected.length === 1 ? ` — ${selected[0].name}` : ""}`}
+          onDismiss={() => { setShowEdit(false); setEditValue(""); }}
+          footer={
+            <Box float="right">
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button variant="link" onClick={() => { setShowEdit(false); setEditValue(""); }}>
+                  Cancel
+                </Button>
+                <Button variant="primary" loading={editSaving} onClick={handleUpdate}>
+                  Save
+                </Button>
+              </SpaceBetween>
+            </Box>
+          }
+        >
+          <SpaceBetween size="m">
+            <FormField
+              label="New value"
+              description="Overwrites the existing value at the same OpenBao path. The current value cannot be displayed here."
+              secondaryControl={
+                <Button
+                  variant="inline-link"
+                  onClick={() => setShowEditValue((v) => !v)}
+                >
+                  {showEditValue ? "Hide" : "Show"}
+                </Button>
+              }
+            >
+              <div className={showEditValue ? undefined : "secret-value-masked"}>
+                <Textarea
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.detail.value)}
+                  placeholder="new-secret-value"
+                  rows={4}
+                  spellcheck={false}
+                />
+              </div>
             </FormField>
           </SpaceBetween>
         </Modal>

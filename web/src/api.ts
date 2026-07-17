@@ -67,6 +67,7 @@ export interface ClusterState {
   container_stats: ContainerStats[];
   registries: Registry[];
   secrets: Secret[];
+  config_values: ConfigValue[];
   trusted_cas: TrustedCA[];
 }
 
@@ -187,6 +188,8 @@ export interface WorkloadTemplate {
   compose_yaml?: string;
   image?: string;
   insecure_registry?: boolean;
+  secret_refs?: Record<string, string>;
+  config_refs?: Record<string, string>;
   created_at: number; // unix seconds
 }
 
@@ -203,6 +206,8 @@ export interface CreateTemplateRequest {
   labels?: Record<string, string>;
   namespace?: string;
   insecure_registry?: boolean;
+  secret_refs?: Record<string, string>;
+  config_refs?: Record<string, string>;
 }
 
 export interface Registry {
@@ -224,6 +229,14 @@ export interface Secret {
   id: string;
   name: string;
   created_at: number; // unix seconds
+}
+
+export interface ConfigValue {
+  id: string;
+  name: string;
+  value: string;
+  created_at: number; // unix seconds
+  updated_at: number; // unix seconds
 }
 
 export interface TrustedCA {
@@ -253,6 +266,19 @@ export interface UpdateTrustedCARequest {
 
 export interface CreateSecretRequest {
   name: string;
+  value: string;
+}
+
+export interface UpdateSecretRequest {
+  value: string;
+}
+
+export interface CreateConfigValueRequest {
+  name: string;
+  value: string;
+}
+
+export interface UpdateConfigValueRequest {
   value: string;
 }
 
@@ -551,6 +577,15 @@ export const api = {
     request<Secret>("POST", "/api/secrets", req),
   deleteSecret: (id: string) =>
     request<{ accepted: boolean }>("POST", `/api/secrets/${id}/delete`),
+  updateSecret: (id: string, req: UpdateSecretRequest) =>
+    request<Secret>("POST", `/api/secrets/${id}/update`, req),
+  listConfigValues: () => request<ConfigValue[]>("GET", "/api/config-values"),
+  createConfigValue: (req: CreateConfigValueRequest) =>
+    request<ConfigValue>("POST", "/api/config-values", req),
+  updateConfigValue: (id: string, req: UpdateConfigValueRequest) =>
+    request<ConfigValue>("POST", `/api/config-values/${id}/update`, req),
+  deleteConfigValue: (id: string) =>
+    request<{ accepted: boolean }>("POST", `/api/config-values/${id}/delete`),
   getOpenBaoStatus: () => request<OpenBaoStatus>("GET", "/api/openbao/status"),
   setOpenBaoConfig: (req: SetOpenBaoConfigRequest) =>
     request<{ accepted: boolean }>("POST", "/api/openbao/config", req),

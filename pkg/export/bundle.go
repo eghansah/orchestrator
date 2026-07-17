@@ -23,6 +23,7 @@ type Bundle struct {
 	IngressRules []IngressEntry   `yaml:"ingress_rules,omitempty"`
 	Services     []ServiceEntry   `yaml:"services,omitempty"`
 	Secrets      []SecretEntry    `yaml:"secrets,omitempty"`
+	ConfigValues []ConfigEntry    `yaml:"config_values,omitempty"`
 	Registries   []RegistryEntry  `yaml:"registries,omitempty"`
 	Templates    []TemplateEntry  `yaml:"templates,omitempty"`
 }
@@ -59,6 +60,13 @@ type ServiceEntry struct {
 type SecretEntry struct {
 	Name    string `yaml:"name"`
 	BaoPath string `yaml:"bao_path,omitempty"`
+}
+
+// ConfigEntry carries the real value — unlike SecretEntry, config values
+// aren't sensitive, so export/import can fully round-trip them.
+type ConfigEntry struct {
+	Name  string `yaml:"name"`
+	Value string `yaml:"value"`
 }
 
 type RegistryEntry struct {
@@ -138,6 +146,13 @@ func FromState(state internraft.ClusterState) Bundle {
 		b.Secrets = append(b.Secrets, SecretEntry{
 			Name:    sec.Name,
 			BaoPath: sec.BaoPath,
+		})
+	}
+
+	for _, cv := range state.ConfigValues {
+		b.ConfigValues = append(b.ConfigValues, ConfigEntry{
+			Name:  cv.Name,
+			Value: cv.Value,
 		})
 	}
 

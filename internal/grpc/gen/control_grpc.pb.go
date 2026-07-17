@@ -19,26 +19,30 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ControlService_SubmitContainer_FullMethodName  = "/orchestrator.ControlService/SubmitContainer"
-	ControlService_SubmitStack_FullMethodName      = "/orchestrator.ControlService/SubmitStack"
-	ControlService_RemoveWorkload_FullMethodName   = "/orchestrator.ControlService/RemoveWorkload"
-	ControlService_ListWorkloads_FullMethodName    = "/orchestrator.ControlService/ListWorkloads"
-	ControlService_ListNodes_FullMethodName        = "/orchestrator.ControlService/ListNodes"
-	ControlService_DrainNode_FullMethodName        = "/orchestrator.ControlService/DrainNode"
-	ControlService_GetClusterState_FullMethodName  = "/orchestrator.ControlService/GetClusterState"
-	ControlService_CreateIngress_FullMethodName    = "/orchestrator.ControlService/CreateIngress"
-	ControlService_DeleteIngress_FullMethodName    = "/orchestrator.ControlService/DeleteIngress"
-	ControlService_ListIngress_FullMethodName      = "/orchestrator.ControlService/ListIngress"
-	ControlService_CreateService_FullMethodName    = "/orchestrator.ControlService/CreateService"
-	ControlService_DeleteService_FullMethodName    = "/orchestrator.ControlService/DeleteService"
-	ControlService_ListService_FullMethodName      = "/orchestrator.ControlService/ListService"
-	ControlService_CreateSecret_FullMethodName     = "/orchestrator.ControlService/CreateSecret"
-	ControlService_DeleteSecret_FullMethodName     = "/orchestrator.ControlService/DeleteSecret"
-	ControlService_ListSecrets_FullMethodName      = "/orchestrator.ControlService/ListSecrets"
-	ControlService_SetOpenBaoConfig_FullMethodName = "/orchestrator.ControlService/SetOpenBaoConfig"
-	ControlService_GetOpenBaoStatus_FullMethodName = "/orchestrator.ControlService/GetOpenBaoStatus"
-	ControlService_GetBaoSealStatus_FullMethodName = "/orchestrator.ControlService/GetBaoSealStatus"
-	ControlService_UnsealBao_FullMethodName        = "/orchestrator.ControlService/UnsealBao"
+	ControlService_SubmitContainer_FullMethodName   = "/orchestrator.ControlService/SubmitContainer"
+	ControlService_SubmitStack_FullMethodName       = "/orchestrator.ControlService/SubmitStack"
+	ControlService_RemoveWorkload_FullMethodName    = "/orchestrator.ControlService/RemoveWorkload"
+	ControlService_ListWorkloads_FullMethodName     = "/orchestrator.ControlService/ListWorkloads"
+	ControlService_ListNodes_FullMethodName         = "/orchestrator.ControlService/ListNodes"
+	ControlService_DrainNode_FullMethodName         = "/orchestrator.ControlService/DrainNode"
+	ControlService_GetClusterState_FullMethodName   = "/orchestrator.ControlService/GetClusterState"
+	ControlService_CreateIngress_FullMethodName     = "/orchestrator.ControlService/CreateIngress"
+	ControlService_DeleteIngress_FullMethodName     = "/orchestrator.ControlService/DeleteIngress"
+	ControlService_ListIngress_FullMethodName       = "/orchestrator.ControlService/ListIngress"
+	ControlService_CreateService_FullMethodName     = "/orchestrator.ControlService/CreateService"
+	ControlService_DeleteService_FullMethodName     = "/orchestrator.ControlService/DeleteService"
+	ControlService_ListService_FullMethodName       = "/orchestrator.ControlService/ListService"
+	ControlService_CreateSecret_FullMethodName      = "/orchestrator.ControlService/CreateSecret"
+	ControlService_DeleteSecret_FullMethodName      = "/orchestrator.ControlService/DeleteSecret"
+	ControlService_ListSecrets_FullMethodName       = "/orchestrator.ControlService/ListSecrets"
+	ControlService_CreateConfigValue_FullMethodName = "/orchestrator.ControlService/CreateConfigValue"
+	ControlService_UpdateConfigValue_FullMethodName = "/orchestrator.ControlService/UpdateConfigValue"
+	ControlService_DeleteConfigValue_FullMethodName = "/orchestrator.ControlService/DeleteConfigValue"
+	ControlService_ListConfigValues_FullMethodName  = "/orchestrator.ControlService/ListConfigValues"
+	ControlService_SetOpenBaoConfig_FullMethodName  = "/orchestrator.ControlService/SetOpenBaoConfig"
+	ControlService_GetOpenBaoStatus_FullMethodName  = "/orchestrator.ControlService/GetOpenBaoStatus"
+	ControlService_GetBaoSealStatus_FullMethodName  = "/orchestrator.ControlService/GetBaoSealStatus"
+	ControlService_UnsealBao_FullMethodName         = "/orchestrator.ControlService/UnsealBao"
 )
 
 // ControlServiceClient is the client API for ControlService service.
@@ -81,6 +85,14 @@ type ControlServiceClient interface {
 	DeleteSecret(ctx context.Context, in *DeleteSecretRequest, opts ...grpc.CallOption) (*DeleteSecretResponse, error)
 	// ListSecrets returns all secret metadata (never plaintext values).
 	ListSecrets(ctx context.Context, in *ListSecretsRequest, opts ...grpc.CallOption) (*ListSecretsResponse, error)
+	// CreateConfigValue stores a new named, plaintext config value in Raft state.
+	CreateConfigValue(ctx context.Context, in *CreateConfigValueRequest, opts ...grpc.CallOption) (*CreateConfigValueResponse, error)
+	// UpdateConfigValue overwrites the value of an existing config value, looked up by name.
+	UpdateConfigValue(ctx context.Context, in *UpdateConfigValueRequest, opts ...grpc.CallOption) (*UpdateConfigValueResponse, error)
+	// DeleteConfigValue removes a config value from Raft state.
+	DeleteConfigValue(ctx context.Context, in *DeleteConfigValueRequest, opts ...grpc.CallOption) (*DeleteConfigValueResponse, error)
+	// ListConfigValues returns all config values, including their plaintext values.
+	ListConfigValues(ctx context.Context, in *ListConfigValuesRequest, opts ...grpc.CallOption) (*ListConfigValuesResponse, error)
 	// SetOpenBaoConfig stores the OpenBao connection configuration in cluster state.
 	SetOpenBaoConfig(ctx context.Context, in *SetOpenBaoConfigRequest, opts ...grpc.CallOption) (*SetOpenBaoConfigResponse, error)
 	// GetOpenBaoStatus returns the current configuration and a live connection health check.
@@ -261,6 +273,46 @@ func (c *controlServiceClient) ListSecrets(ctx context.Context, in *ListSecretsR
 	return out, nil
 }
 
+func (c *controlServiceClient) CreateConfigValue(ctx context.Context, in *CreateConfigValueRequest, opts ...grpc.CallOption) (*CreateConfigValueResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateConfigValueResponse)
+	err := c.cc.Invoke(ctx, ControlService_CreateConfigValue_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlServiceClient) UpdateConfigValue(ctx context.Context, in *UpdateConfigValueRequest, opts ...grpc.CallOption) (*UpdateConfigValueResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateConfigValueResponse)
+	err := c.cc.Invoke(ctx, ControlService_UpdateConfigValue_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlServiceClient) DeleteConfigValue(ctx context.Context, in *DeleteConfigValueRequest, opts ...grpc.CallOption) (*DeleteConfigValueResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteConfigValueResponse)
+	err := c.cc.Invoke(ctx, ControlService_DeleteConfigValue_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlServiceClient) ListConfigValues(ctx context.Context, in *ListConfigValuesRequest, opts ...grpc.CallOption) (*ListConfigValuesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListConfigValuesResponse)
+	err := c.cc.Invoke(ctx, ControlService_ListConfigValues_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *controlServiceClient) SetOpenBaoConfig(ctx context.Context, in *SetOpenBaoConfigRequest, opts ...grpc.CallOption) (*SetOpenBaoConfigResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SetOpenBaoConfigResponse)
@@ -341,6 +393,14 @@ type ControlServiceServer interface {
 	DeleteSecret(context.Context, *DeleteSecretRequest) (*DeleteSecretResponse, error)
 	// ListSecrets returns all secret metadata (never plaintext values).
 	ListSecrets(context.Context, *ListSecretsRequest) (*ListSecretsResponse, error)
+	// CreateConfigValue stores a new named, plaintext config value in Raft state.
+	CreateConfigValue(context.Context, *CreateConfigValueRequest) (*CreateConfigValueResponse, error)
+	// UpdateConfigValue overwrites the value of an existing config value, looked up by name.
+	UpdateConfigValue(context.Context, *UpdateConfigValueRequest) (*UpdateConfigValueResponse, error)
+	// DeleteConfigValue removes a config value from Raft state.
+	DeleteConfigValue(context.Context, *DeleteConfigValueRequest) (*DeleteConfigValueResponse, error)
+	// ListConfigValues returns all config values, including their plaintext values.
+	ListConfigValues(context.Context, *ListConfigValuesRequest) (*ListConfigValuesResponse, error)
 	// SetOpenBaoConfig stores the OpenBao connection configuration in cluster state.
 	SetOpenBaoConfig(context.Context, *SetOpenBaoConfigRequest) (*SetOpenBaoConfigResponse, error)
 	// GetOpenBaoStatus returns the current configuration and a live connection health check.
@@ -408,6 +468,18 @@ func (UnimplementedControlServiceServer) DeleteSecret(context.Context, *DeleteSe
 }
 func (UnimplementedControlServiceServer) ListSecrets(context.Context, *ListSecretsRequest) (*ListSecretsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListSecrets not implemented")
+}
+func (UnimplementedControlServiceServer) CreateConfigValue(context.Context, *CreateConfigValueRequest) (*CreateConfigValueResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateConfigValue not implemented")
+}
+func (UnimplementedControlServiceServer) UpdateConfigValue(context.Context, *UpdateConfigValueRequest) (*UpdateConfigValueResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateConfigValue not implemented")
+}
+func (UnimplementedControlServiceServer) DeleteConfigValue(context.Context, *DeleteConfigValueRequest) (*DeleteConfigValueResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteConfigValue not implemented")
+}
+func (UnimplementedControlServiceServer) ListConfigValues(context.Context, *ListConfigValuesRequest) (*ListConfigValuesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListConfigValues not implemented")
 }
 func (UnimplementedControlServiceServer) SetOpenBaoConfig(context.Context, *SetOpenBaoConfigRequest) (*SetOpenBaoConfigResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetOpenBaoConfig not implemented")
@@ -730,6 +802,78 @@ func _ControlService_ListSecrets_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlService_CreateConfigValue_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateConfigValueRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).CreateConfigValue(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_CreateConfigValue_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).CreateConfigValue(ctx, req.(*CreateConfigValueRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlService_UpdateConfigValue_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateConfigValueRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).UpdateConfigValue(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_UpdateConfigValue_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).UpdateConfigValue(ctx, req.(*UpdateConfigValueRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlService_DeleteConfigValue_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteConfigValueRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).DeleteConfigValue(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_DeleteConfigValue_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).DeleteConfigValue(ctx, req.(*DeleteConfigValueRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlService_ListConfigValues_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListConfigValuesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).ListConfigValues(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_ListConfigValues_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).ListConfigValues(ctx, req.(*ListConfigValuesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ControlService_SetOpenBaoConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SetOpenBaoConfigRequest)
 	if err := dec(in); err != nil {
@@ -872,6 +1016,22 @@ var ControlService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListSecrets",
 			Handler:    _ControlService_ListSecrets_Handler,
+		},
+		{
+			MethodName: "CreateConfigValue",
+			Handler:    _ControlService_CreateConfigValue_Handler,
+		},
+		{
+			MethodName: "UpdateConfigValue",
+			Handler:    _ControlService_UpdateConfigValue_Handler,
+		},
+		{
+			MethodName: "DeleteConfigValue",
+			Handler:    _ControlService_DeleteConfigValue_Handler,
+		},
+		{
+			MethodName: "ListConfigValues",
+			Handler:    _ControlService_ListConfigValues_Handler,
 		},
 		{
 			MethodName: "SetOpenBaoConfig",

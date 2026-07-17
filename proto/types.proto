@@ -18,6 +18,7 @@ message ContainerSpec {
   map<string, string> secret_refs = 9; // env_var_name → secret_name; resolved at placement
   int32  replicas    = 10; // desired replica count; 0/1 = single instance
   bool   insecure_registry = 11; // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
+  map<string, string> config_refs = 12; // env_var_name → config_name; resolved at placement (plaintext, no OpenBao)
 }
 
 message ComposeStackSpec {
@@ -27,6 +28,7 @@ message ComposeStackSpec {
   int32  replicas    = 4; // desired replica count; 0/1 = single instance
   bool   insecure_registry = 5; // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
   repeated ComposeSecretMount secret_mounts = 6; // per-service file-mounted secrets; resolved at placement
+  map<string, string> config_refs = 7; // env_var_name → config_name; resolved at placement (plaintext, no OpenBao)
 }
 
 // ComposeSecretMount declares that Service should get SecretName mounted as a
@@ -57,6 +59,17 @@ message Secret {
   string name       = 2;
   int64  created_at = 3; // unix seconds
   string bao_path   = 4; // KV v2 path within the configured mount, e.g. "orchestrator/db-password"
+}
+
+// ConfigValue holds a named, plaintext, cluster-wide config value stored
+// directly in Raft state (no OpenBao involved). Unlike Secret, the value
+// itself is part of the message — config values are never sensitive.
+message ConfigValue {
+  string id         = 1;
+  string name       = 2;
+  string value      = 3;
+  int64  created_at = 4; // unix seconds
+  int64  updated_at = 5; // unix seconds
 }
 
 // OpenBaoConfig holds connection parameters for the cluster's OpenBao instance.

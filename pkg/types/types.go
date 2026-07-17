@@ -53,6 +53,7 @@ type ContainerSpec struct {
 	Labels           map[string]string `yaml:"labels,omitempty"`
 	Namespace        string            `yaml:"namespace,omitempty"`         // nerdctl namespace; defaults to "orchestrator"
 	SecretRefs       map[string]string `yaml:"secret_refs,omitempty"`       // env_var_name → secret_name; resolved at placement
+	ConfigRefs       map[string]string `yaml:"config_refs,omitempty"`       // env_var_name → config_name; resolved at placement (plaintext, no OpenBao)
 	Replicas         int               `yaml:"replicas,omitempty"`          // desired replica count; 0 or 1 = single instance
 	InsecureRegistry bool              `yaml:"insecure_registry,omitempty"` // pass --insecure-registry to nerdctl (plain-HTTP or self-signed registries)
 }
@@ -61,6 +62,7 @@ type ComposeStackSpec struct {
 	Name             string               `yaml:"name"`
 	ComposeYAML      string               `yaml:"compose_yaml"`                // inline compose file content
 	SecretRefs       map[string]string    `yaml:"secret_refs,omitempty"`       // env_var_name → secret_name; resolved at placement
+	ConfigRefs       map[string]string    `yaml:"config_refs,omitempty"`       // env_var_name → config_name; resolved at placement (plaintext, no OpenBao)
 	SecretMounts     []ComposeSecretMount `yaml:"secret_mounts,omitempty"`     // per-service file-mounted secrets; resolved at placement
 	ResolvedEnv      []string             `yaml:"-"`                           // runtime only; never exported
 	Replicas         int                  `yaml:"replicas,omitempty"`          // desired replica count; 0 or 1 = single instance
@@ -264,6 +266,18 @@ type Secret struct {
 	Name      string // unique cluster-wide label
 	BaoPath   string // KV v2 path within OpenBaoConfig.Mount
 	CreatedAt time.Time
+}
+
+// ConfigValue is a named, plaintext, cluster-wide config value stored directly
+// in Raft state (no OpenBao involved). Unlike Secret, the value itself lives
+// on the struct — config values are never sensitive and are resolved into env
+// vars at placement time same as SecretRefs, but with no external round trip.
+type ConfigValue struct {
+	ID        string
+	Name      string // unique cluster-wide label
+	Value     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // OpenBaoConfig holds the connection parameters for the cluster's OpenBao instance.

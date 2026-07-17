@@ -30,6 +30,20 @@ const KIND_OPTIONS = [
 
 const emptyForm = (): CreateTemplateRequest => ({ name: "", description: "", kind: "stack", compose_yaml: "", image: "", insecure_registry: false });
 
+interface RefEntry { envVar: string; name: string }
+
+function refsToEntries(refs?: Record<string, string>): RefEntry[] {
+  return Object.entries(refs ?? {}).map(([envVar, name]) => ({ envVar, name }));
+}
+
+function entriesToRefs(entries: RefEntry[]): Record<string, string> | undefined {
+  const refs: Record<string, string> = {};
+  for (const e of entries) {
+    if (e.envVar) refs[e.envVar] = e.name;
+  }
+  return Object.keys(refs).length ? refs : undefined;
+}
+
 // Phases that mean a deployed workload is still live; in any of these the
 // template's Deploy button becomes Redeploy (which replaces the workload).
 const ACTIVE_PHASES = new Set(["pending", "scheduled", "running"]);
@@ -49,6 +63,8 @@ export default function Templates({ state, loading, error, refetch, onNavigate: 
   const [showNew, setShowNew] = useState(false);
   const [editTarget, setEditTarget] = useState<WorkloadTemplate | null>(null);
   const [form, setForm] = useState<CreateTemplateRequest>(emptyForm());
+  const [secretRefRows, setSecretRefRows] = useState<RefEntry[]>([]);
+  const [configRefRows, setConfigRefRows] = useState<RefEntry[]>([]);
   const [saving, setSaving] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<WorkloadTemplate | null>(null);
@@ -75,6 +91,8 @@ export default function Templates({ state, loading, error, refetch, onNavigate: 
 
   function openNew() {
     setForm(emptyForm());
+    setSecretRefRows([]);
+    setConfigRefRows([]);
     setEditTarget(null);
     setShowNew(true);
   }
@@ -88,20 +106,27 @@ export default function Templates({ state, loading, error, refetch, onNavigate: 
       image: t.image ?? "",
       insecure_registry: t.insecure_registry ?? false,
     });
+    setSecretRefRows(refsToEntries(t.secret_refs));
+    setConfigRefRows(refsToEntries(t.config_refs));
     setEditTarget(t);
     setShowNew(true);
   }
 
   async function handleSave() {
     if (!form.name) { addFlash("error", "Name is required"); return; }
+    const payload: CreateTemplateRequest = {
+      ...form,
+      secret_refs: entriesToRefs(secretRefRows),
+      config_refs: entriesToRefs(configRefRows),
+    };
     setSaving(true);
     try {
       if (editTarget) {
-        const updated = await api.updateTemplate(editTarget.id, form);
+        const updated = await api.updateTemplate(editTarget.id, payload);
         setTemplates((ts) => ts.map((t) => (t.id === editTarget.id ? updated : t)));
         addFlash("success", `Template "${updated.name}" updated`);
       } else {
-        const created = await api.createTemplate(form);
+        const created = await api.createTemplate(payload);
         setTemplates((ts) => [...ts, created]);
         addFlash("success", `Template "${created.name}" created`);
       }
@@ -245,6 +270,56 @@ export default function Templates({ state, loading, error, refetch, onNavigate: 
               <Input value={form.image ?? ""} onChange={(e) => setForm((f) => ({ ...f, image: e.detail.value }))} placeholder="nginx:latest" />
             </FormField>
           )}
+          <FormField
+            label="Secret refs"
+            description="Inject a secret as an env var: ENV_VAR → secret name (resolved from OpenBao at deploy time)"
+          >
+            <SpaceBetween size="xs">
+              {secretRefRows.map((row, i) => (
+                <SpaceBetween key={i} direction="horizontal" size="xs">
+                  <Input
+                    value={row.envVar}
+                    onChange={(e) => setSecretRefRows((rows) => rows.map((r, j) => (j === i ? { ...r, envVar: e.detail.value } : r)))}
+                    placeholder="ENV_VAR"
+                  />
+                  <Input
+                    value={row.name}
+                    onChange={(e) => setSecretRefRows((rows) => rows.map((r, j) => (j === i ? { ...r, name: e.detail.value } : r)))}
+                    placeholder="secret_name"
+                  />
+                  <Button iconName="close" variant="icon" onClick={() => setSecretRefRows((rows) => rows.filter((_, j) => j !== i))} />
+                </SpaceBetween>
+              ))}
+              <Button iconName="add-plus" onClick={() => setSecretRefRows((rows) => [...rows, { envVar: "", name: "" }])}>
+                Add secret ref
+              </Button>
+            </SpaceBetween>
+          </FormField>
+          <FormField
+            label="Config refs"
+            description="Inject a shared config value as an env var: ENV_VAR → config value name (plaintext, resolved at deploy time)"
+          >
+            <SpaceBetween size="xs">
+              {configRefRows.map((row, i) => (
+                <SpaceBetween key={i} direction="horizontal" size="xs">
+                  <Input
+                    value={row.envVar}
+                    onChange={(e) => setConfigRefRows((rows) => rows.map((r, j) => (j === i ? { ...r, envVar: e.detail.value } : r)))}
+                    placeholder="ENV_VAR"
+                  />
+                  <Input
+                    value={row.name}
+                    onChange={(e) => setConfigRefRows((rows) => rows.map((r, j) => (j === i ? { ...r, name: e.detail.value } : r)))}
+                    placeholder="config_value_name"
+                  />
+                  <Button iconName="close" variant="icon" onClick={() => setConfigRefRows((rows) => rows.filter((_, j) => j !== i))} />
+                </SpaceBetween>
+              ))}
+              <Button iconName="add-plus" onClick={() => setConfigRefRows((rows) => [...rows, { envVar: "", name: "" }])}>
+                Add config ref
+              </Button>
+            </SpaceBetween>
+          </FormField>
           <Checkbox
             checked={form.insecure_registry ?? false}
             onChange={(e) => setForm((f) => ({ ...f, insecure_registry: e.detail.checked }))}

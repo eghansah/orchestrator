@@ -37,6 +37,8 @@ const (
 	cmdSetOpenBaoConfig              // store OpenBao connection config
 	cmdApplyTrustedCA                // add or update a trusted CA certificate
 	cmdRemoveTrustedCA               // remove a trusted CA certificate
+	cmdApplyConfigValue              // add or update a config value
+	cmdRemoveConfigValue             // remove a config value
 )
 
 type command struct {
@@ -70,6 +72,7 @@ type ClusterState struct {
 	Registries      map[string]types.Registry         `json:"registries"`
 	Templates       map[string]types.WorkloadTemplate `json:"templates"`
 	Secrets         map[string]types.Secret           `json:"secrets"`
+	ConfigValues    map[string]types.ConfigValue      `json:"config_values"`
 	TrustedCAs      map[string]types.TrustedCA        `json:"trusted_cas"`
 	OpenBaoConfig   *types.OpenBaoConfig              `json:"openbao_config,omitempty"`
 	NextPort        uint32                            `json:"next_port"`         // container port pool
@@ -90,6 +93,7 @@ func newClusterState() ClusterState {
 		NextServicePort: svcPortPoolStart,
 		Templates:       make(map[string]types.WorkloadTemplate),
 		Secrets:         make(map[string]types.Secret),
+		ConfigValues:    make(map[string]types.ConfigValue),
 		TrustedCAs:      make(map[string]types.TrustedCA),
 		MeshCIDR:        defaultMeshCIDR,
 	}
@@ -503,6 +507,28 @@ func (f *fsm) Apply(l *raft.Log) any {
 			return err
 		}
 		delete(f.state.TrustedCAs, id)
+
+	case cmdApplyConfigValue:
+		var cv types.ConfigValue
+		if err := json.Unmarshal(cmd.Data, &cv); err != nil {
+			return err
+		}
+		if f.state.ConfigValues == nil {
+			f.state.ConfigValues = make(map[string]types.ConfigValue)
+		}
+		for _, existing := range f.state.ConfigValues {
+			if existing.Name == cv.Name && existing.ID != cv.ID {
+				return fmt.Errorf("config value name %q already exists", cv.Name)
+			}
+		}
+		f.state.ConfigValues[cv.ID] = cv
+
+	case cmdRemoveConfigValue:
+		var id string
+		if err := json.Unmarshal(cmd.Data, &id); err != nil {
+			return err
+		}
+		delete(f.state.ConfigValues, id)
 	}
 	return nil
 }

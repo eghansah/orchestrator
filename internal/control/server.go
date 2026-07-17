@@ -135,9 +135,19 @@ func (s *Server) scheduleAndPlace(ctx context.Context, wl types.Workload) (*gen.
 		wl = committed
 	}
 
-	// Build a placement copy with secret refs resolved into env vars. The
-	// original workload in Raft retains only the refs, never the values.
-	placed, err := s.resolveSecrets(ctx, wl)
+	// Build a placement copy with config refs resolved into env vars first —
+	// this is a pure Raft-state lookup, so it must succeed independent of
+	// OpenBao's availability, unlike the secret resolution below.
+	placed, err := s.resolveConfigRefs(wl)
+	if err != nil {
+		wl.Phase = types.PhaseFailed
+		_ = s.peer.ApplyWorkload(wl)
+		return &gen.SubmitResponse{Accepted: false, Reason: "resolve config: " + err.Error()}, nil
+	}
+
+	// Then resolve secret refs into env vars. The original workload in Raft
+	// retains only the refs, never the values.
+	placed, err = s.resolveSecrets(ctx, placed)
 	if err != nil {
 		wl.Phase = types.PhaseFailed
 		_ = s.peer.ApplyWorkload(wl)
@@ -154,6 +164,56 @@ func (s *Server) scheduleAndPlace(ctx context.Context, wl types.Workload) (*gen.
 	wl.Phase = types.PhaseRunning
 	_ = s.peer.ApplyWorkload(wl)
 	return &gen.SubmitResponse{WorkloadId: wl.ID, Accepted: true}, nil
+}
+
+// resolveConfigRefs returns a shallow copy of wl with ConfigRefs resolved into
+// Env entries by looking up plaintext values already held in Raft state. No
+// external client is involved, so this always succeeds regardless of whether
+// OpenBao is configured or reachable.
+func (s *Server) resolveConfigRefs(wl types.Workload) (types.Workload, error) {
+	state := s.peer.State()
+
+	resolveRefs := func(refs map[string]string, env []string) ([]string, error) {
+		if len(refs) == 0 {
+			return env, nil
+		}
+		out := make([]string, len(env))
+		copy(out, env)
+		for envVar, configName := range refs {
+			var found *types.ConfigValue
+			for _, cv := range state.ConfigValues {
+				if cv.Name == configName {
+					found = &cv
+					break
+				}
+			}
+			if found == nil {
+				return nil, fmt.Errorf("config value %q not found", configName)
+			}
+			out = append(out, envVar+"="+found.Value)
+		}
+		return out, nil
+	}
+
+	if wl.Container != nil {
+		specCopy := *wl.Container
+		resolved, err := resolveRefs(specCopy.ConfigRefs, specCopy.Env)
+		if err != nil {
+			return wl, err
+		}
+		specCopy.Env = resolved
+		wl.Container = &specCopy
+	}
+	if wl.Stack != nil {
+		specCopy := *wl.Stack
+		resolved, err := resolveRefs(specCopy.ConfigRefs, specCopy.ResolvedEnv)
+		if err != nil {
+			return wl, err
+		}
+		specCopy.ResolvedEnv = resolved
+		wl.Stack = &specCopy
+	}
+	return wl, nil
 }
 
 // resolveSecrets returns a shallow copy of wl with SecretRefs resolved into
@@ -596,6 +656,88 @@ func (s *Server) ListSecrets(_ context.Context, _ *gen.ListSecretsRequest) (*gen
 		secrets = append(secrets, types.SecretToProto(sec))
 	}
 	return &gen.ListSecretsResponse{Secrets: secrets}, nil
+}
+
+// ── Config values ─────────────────────────────────────────────────────────────
+
+func (s *Server) CreateConfigValue(_ context.Context, req *gen.CreateConfigValueRequest) (*gen.CreateConfigValueResponse, error) {
+	if req.Name == "" {
+		return nil, status.Error(codes.InvalidArgument, "name is required")
+	}
+	if req.Value == "" {
+		return nil, status.Error(codes.InvalidArgument, "value is required")
+	}
+	if err := s.requireLeader(); err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	cv := types.ConfigValue{
+		ID:        newID(),
+		Name:      req.Name,
+		Value:     req.Value,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.peer.ApplyConfigValue(cv); err != nil {
+		return nil, status.Errorf(codes.Internal, "apply config value to raft: %v", err)
+	}
+	return &gen.CreateConfigValueResponse{ConfigId: cv.ID, Accepted: true}, nil
+}
+
+func (s *Server) UpdateConfigValue(_ context.Context, req *gen.UpdateConfigValueRequest) (*gen.UpdateConfigValueResponse, error) {
+	if req.Name == "" {
+		return nil, status.Error(codes.InvalidArgument, "name is required")
+	}
+	if req.Value == "" {
+		return nil, status.Error(codes.InvalidArgument, "value is required")
+	}
+	if err := s.requireLeader(); err != nil {
+		return nil, err
+	}
+	state := s.peer.State()
+	var found *types.ConfigValue
+	for _, cv := range state.ConfigValues {
+		if cv.Name == req.Name {
+			c := cv
+			found = &c
+			break
+		}
+	}
+	if found == nil {
+		return nil, status.Errorf(codes.NotFound, "config value %q not found", req.Name)
+	}
+	found.Value = req.Value
+	found.UpdatedAt = time.Now()
+	if err := s.peer.ApplyConfigValue(*found); err != nil {
+		return nil, status.Errorf(codes.Internal, "apply config value to raft: %v", err)
+	}
+	return &gen.UpdateConfigValueResponse{Accepted: true}, nil
+}
+
+func (s *Server) DeleteConfigValue(_ context.Context, req *gen.DeleteConfigValueRequest) (*gen.DeleteConfigValueResponse, error) {
+	if req.ConfigId == "" {
+		return nil, status.Error(codes.InvalidArgument, "config_id is required")
+	}
+	if err := s.requireLeader(); err != nil {
+		return nil, err
+	}
+	state := s.peer.State()
+	if _, ok := state.ConfigValues[req.ConfigId]; !ok {
+		return nil, status.Errorf(codes.NotFound, "config value %q not found", req.ConfigId)
+	}
+	if err := s.peer.RemoveConfigValue(req.ConfigId); err != nil {
+		return nil, status.Errorf(codes.Internal, "remove config value: %v", err)
+	}
+	return &gen.DeleteConfigValueResponse{Accepted: true}, nil
+}
+
+func (s *Server) ListConfigValues(_ context.Context, _ *gen.ListConfigValuesRequest) (*gen.ListConfigValuesResponse, error) {
+	state := s.peer.State()
+	values := make([]*gen.ConfigValue, 0, len(state.ConfigValues))
+	for _, cv := range state.ConfigValues {
+		values = append(values, types.ConfigValueToProto(cv))
+	}
+	return &gen.ListConfigValuesResponse{ConfigValues: values}, nil
 }
 
 // ── OpenBao configuration ─────────────────────────────────────────────────────

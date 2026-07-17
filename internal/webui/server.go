@@ -205,6 +205,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/secrets", a(s.handleListSecrets))
 	mux.Handle("POST /api/secrets", a(s.handleCreateSecret))
 	mux.Handle("POST /api/secrets/{id}/delete", a(s.handleDeleteSecret))
+	mux.Handle("POST /api/secrets/{id}/update", a(s.handleUpdateSecret))
+	mux.Handle("GET /api/config-values", a(s.handleListConfigValues))
+	mux.Handle("POST /api/config-values", a(s.handleCreateConfigValue))
+	mux.Handle("POST /api/config-values/{id}/update", a(s.handleUpdateConfigValue))
+	mux.Handle("POST /api/config-values/{id}/delete", a(s.handleDeleteConfigValue))
 	mux.Handle("GET /api/openbao/status", a(s.handleOpenBaoStatus))
 	mux.Handle("POST /api/openbao/config", a(s.handleSetOpenBaoConfig))
 	mux.Handle("GET /api/openbao/seal-status", a(s.handleBaoSealStatus))
@@ -469,6 +474,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		ContainerStats   []containerStatsJSON  `json:"container_stats"`
 		Registries       []registryJSON        `json:"registries"`
 		Secrets          []secretJSON          `json:"secrets"`
+		ConfigValues     []configValueJSON     `json:"config_values"`
 		TrustedCAs       []trustedCAJSON       `json:"trusted_cas"`
 	}
 
@@ -485,6 +491,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		ContainerStats:   []containerStatsJSON{},
 		Registries:       []registryJSON{},
 		Secrets:          []secretJSON{},
+		ConfigValues:     []configValueJSON{},
 		TrustedCAs:       []trustedCAJSON{},
 	}
 
@@ -579,6 +586,10 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		out.Secrets = append(out.Secrets, secretJSON{ID: sec.ID, Name: sec.Name, CreatedAt: sec.CreatedAt.Unix()})
 	}
 
+	for _, cv := range state.ConfigValues {
+		out.ConfigValues = append(out.ConfigValues, configValueToJSON(cv))
+	}
+
 	for _, ca := range state.TrustedCAs {
 		out.TrustedCAs = append(out.TrustedCAs, trustedCAToJSON(ca))
 	}
@@ -593,6 +604,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(out.ContainerStats, func(i, j int) bool { return out.ContainerStats[i].Name < out.ContainerStats[j].Name })
 	sort.Slice(out.Registries, func(i, j int) bool { return out.Registries[i].Name < out.Registries[j].Name })
 	sort.Slice(out.Secrets, func(i, j int) bool { return out.Secrets[i].Name < out.Secrets[j].Name })
+	sort.Slice(out.ConfigValues, func(i, j int) bool { return out.ConfigValues[i].Name < out.ConfigValues[j].Name })
 	sort.Slice(out.TrustedCAs, func(i, j int) bool { return out.TrustedCAs[i].Label < out.TrustedCAs[j].Label })
 
 	writeJSON(w, out)
@@ -2107,17 +2119,21 @@ type templateRequestJSON struct {
 	Labels           map[string]string `json:"labels,omitempty"`
 	Namespace        string            `json:"namespace,omitempty"`
 	InsecureRegistry bool              `json:"insecure_registry,omitempty"`
+	SecretRefs       map[string]string `json:"secret_refs,omitempty"` // env_var_name → secret_name; resolved at placement
+	ConfigRefs       map[string]string `json:"config_refs,omitempty"` // env_var_name → config_name; resolved at placement
 }
 
 type templateJSON struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	Description      string `json:"description"`
-	Kind             string `json:"kind"`
-	ComposeYAML      string `json:"compose_yaml,omitempty"`
-	Image            string `json:"image,omitempty"`
-	InsecureRegistry bool   `json:"insecure_registry,omitempty"`
-	CreatedAt        int64  `json:"created_at"`
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	Description      string            `json:"description"`
+	Kind             string            `json:"kind"`
+	ComposeYAML      string            `json:"compose_yaml,omitempty"`
+	Image            string            `json:"image,omitempty"`
+	InsecureRegistry bool              `json:"insecure_registry,omitempty"`
+	SecretRefs       map[string]string `json:"secret_refs,omitempty"`
+	ConfigRefs       map[string]string `json:"config_refs,omitempty"`
+	CreatedAt        int64             `json:"created_at"`
 }
 
 func templateToJSON(t types.WorkloadTemplate) templateJSON {
@@ -2131,10 +2147,14 @@ func templateToJSON(t types.WorkloadTemplate) templateJSON {
 	if t.Stack != nil {
 		out.ComposeYAML = t.Stack.ComposeYAML
 		out.InsecureRegistry = t.Stack.InsecureRegistry
+		out.SecretRefs = t.Stack.SecretRefs
+		out.ConfigRefs = t.Stack.ConfigRefs
 	}
 	if t.Container != nil {
 		out.Image = t.Container.Image
 		out.InsecureRegistry = t.Container.InsecureRegistry
+		out.SecretRefs = t.Container.SecretRefs
+		out.ConfigRefs = t.Container.ConfigRefs
 	}
 	return out
 }
@@ -2147,7 +2167,12 @@ func templateFromRequest(req templateRequestJSON) (types.WorkloadTemplate, error
 	switch req.Kind {
 	case "stack":
 		t.Kind = types.KindStack
-		t.Stack = &types.ComposeStackSpec{ComposeYAML: req.ComposeYAML, InsecureRegistry: req.InsecureRegistry}
+		t.Stack = &types.ComposeStackSpec{
+			ComposeYAML:      req.ComposeYAML,
+			InsecureRegistry: req.InsecureRegistry,
+			SecretRefs:       req.SecretRefs,
+			ConfigRefs:       req.ConfigRefs,
+		}
 	case "container":
 		t.Kind = types.KindContainer
 		spec := types.ContainerSpec{
@@ -2157,6 +2182,8 @@ func templateFromRequest(req templateRequestJSON) (types.WorkloadTemplate, error
 			Labels:           req.Labels,
 			Namespace:        req.Namespace,
 			InsecureRegistry: req.InsecureRegistry,
+			SecretRefs:       req.SecretRefs,
+			ConfigRefs:       req.ConfigRefs,
 		}
 		for _, p := range req.Ports {
 			spec.Ports = append(spec.Ports, types.PortMapping{ContainerPort: p.ContainerPort, Protocol: p.Protocol})
@@ -2286,8 +2313,10 @@ func (s *Server) handleDeployTemplate(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "template has no container spec")
 			return
 		}
+		containerSpec := types.ContainerSpecToProto(*t.Container)
+		containerSpec.Name = t.Name
 		resp, err = s.ctrl.SubmitContainer(r.Context(), &gen.SubmitContainerRequest{
-			Spec: types.ContainerSpecToProto(*t.Container),
+			Spec: containerSpec,
 		})
 	default:
 		writeError(w, http.StatusBadRequest, "unknown template kind")
@@ -2544,6 +2573,146 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 		_ = bao.Delete(r.Context(), sec.BaoPath)
 	}
 	if err := s.peer.RemoveSecret(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"accepted": true})
+}
+
+func (s *Server) handleUpdateSecret(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	state := s.peer.State()
+	sec, ok := state.Secrets[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "secret not found")
+		return
+	}
+	var req struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Value == "" {
+		writeError(w, http.StatusBadRequest, "value is required")
+		return
+	}
+	bao, err := s.ctrl.BaoClient(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if err := bao.Health(r.Context()); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "openbao unreachable: "+err.Error())
+		return
+	}
+	// Overwrites the value at the existing KV v2 path; ID/Name/BaoPath are
+	// unchanged so no Raft log entry is needed — only OpenBao state moves.
+	if err := bao.Write(r.Context(), sec.BaoPath, req.Value); err != nil {
+		writeError(w, http.StatusInternalServerError, "write to openbao: "+err.Error())
+		return
+	}
+	writeJSON(w, secretJSON{ID: sec.ID, Name: sec.Name, CreatedAt: sec.CreatedAt.Unix()})
+}
+
+type configValueJSON struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Value     string `json:"value"`
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+func newConfigValueID() string {
+	b := make([]byte, 8)
+	_, _ = crand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
+
+func configValueToJSON(cv types.ConfigValue) configValueJSON {
+	return configValueJSON{ID: cv.ID, Name: cv.Name, Value: cv.Value, CreatedAt: cv.CreatedAt.Unix(), UpdatedAt: cv.UpdatedAt.Unix()}
+}
+
+func (s *Server) handleListConfigValues(w http.ResponseWriter, _ *http.Request) {
+	state := s.peer.State()
+	out := make([]configValueJSON, 0, len(state.ConfigValues))
+	for _, cv := range state.ConfigValues {
+		out = append(out, configValueToJSON(cv))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ID < out[j].ID
+	})
+	writeJSON(w, out)
+}
+
+func (s *Server) handleCreateConfigValue(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" || req.Value == "" {
+		writeError(w, http.StatusBadRequest, "name and value are required")
+		return
+	}
+	now := time.Now().UTC()
+	cv := types.ConfigValue{
+		ID:        newConfigValueID(),
+		Name:      req.Name,
+		Value:     req.Value,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.peer.ApplyConfigValue(cv); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, configValueToJSON(cv))
+}
+
+func (s *Server) handleUpdateConfigValue(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	state := s.peer.State()
+	cv, ok := state.ConfigValues[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "config value not found")
+		return
+	}
+	var req struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Value == "" {
+		writeError(w, http.StatusBadRequest, "value is required")
+		return
+	}
+	cv.Value = req.Value
+	cv.UpdatedAt = time.Now().UTC()
+	if err := s.peer.ApplyConfigValue(cv); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, configValueToJSON(cv))
+}
+
+func (s *Server) handleDeleteConfigValue(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	state := s.peer.State()
+	if _, ok := state.ConfigValues[id]; !ok {
+		writeError(w, http.StatusNotFound, "config value not found")
+		return
+	}
+	if err := s.peer.RemoveConfigValue(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -3029,7 +3198,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 func (s *Server) applyBundle(ctx context.Context, b *export.Bundle, overwrite bool) importReport {
 	report := importReport{Imported: map[string]int{
 		"workloads": 0, "domains": 0, "ingress_rules": 0,
-		"services": 0, "secrets": 0, "registries": 0, "templates": 0,
+		"services": 0, "secrets": 0, "config_values": 0, "registries": 0, "templates": 0,
 	}}
 	state := s.peer.State()
 
@@ -3193,6 +3362,37 @@ func (s *Server) applyBundle(ctx context.Context, b *export.Bundle, overwrite bo
 			continue
 		}
 		report.Imported["secrets"]++
+	}
+
+	// ── 5b. Config values (real values — plaintext, not sensitive) ────────────
+	existingConfigByName := make(map[string]types.ConfigValue)
+	for _, cv := range state.ConfigValues {
+		existingConfigByName[cv.Name] = cv
+	}
+	for _, ce := range b.ConfigValues {
+		existing, exists := existingConfigByName[ce.Name]
+		if exists && !overwrite {
+			report.Skipped = append(report.Skipped, "config value "+ce.Name+" already exists")
+			continue
+		}
+		cv := types.ConfigValue{
+			ID:        newConfigValueID(),
+			Name:      ce.Name,
+			Value:     ce.Value,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		if exists {
+			// Reuse the existing ID so this is an update, not a name collision
+			// (the FSM rejects two different IDs sharing the same name).
+			cv.ID = existing.ID
+			cv.CreatedAt = existing.CreatedAt
+		}
+		if err := s.peer.ApplyConfigValue(cv); err != nil {
+			report.Errors = append(report.Errors, "config value "+ce.Name+": "+err.Error())
+			continue
+		}
+		report.Imported["config_values"]++
 	}
 
 	// ── 6. Registries ─────────────────────────────────────────────────────────

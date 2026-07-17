@@ -20,12 +20,13 @@ func runContainerCmd(server string, args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	name := fs.String("name", "", "container name (required)")
 	replicas := fs.Int("replicas", 1, "number of instances to run across nodes")
-	var ports, envs, volumes, labels, secrets stringList
+	var ports, envs, volumes, labels, secrets, configs stringList
 	fs.Var(&ports, "p", "container port to expose `PORT[/PROTO]` (repeatable); host port is auto-assigned")
 	fs.Var(&envs, "e", "environment variable `KEY=VALUE` (repeatable)")
 	fs.Var(&volumes, "v", "volume `SOURCE:TARGET[:ro]` (repeatable)")
 	fs.Var(&labels, "l", "label `KEY=VALUE` (repeatable)")
 	fs.Var(&secrets, "secret", "inject secret as env var `ENV_VAR=secret_name` (repeatable)")
+	fs.Var(&configs, "config", "inject config value as env var `ENV_VAR=config_name` (repeatable)")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: ctl run --name NAME [flags] IMAGE [COMMAND...]")
 		fmt.Fprintln(os.Stderr, "  -v accepts SOURCE:TARGET[:ro] or secret:SECRET_NAME[:TARGET[:MODE]]")
@@ -92,6 +93,7 @@ func runContainerCmd(server string, args []string) {
 			Volumes:    parseVolumes(volumes),
 			Labels:     parseLabels(labels),
 			SecretRefs: parseSecretRefs(secrets),
+			ConfigRefs: parseConfigRefs(configs),
 			Replicas:   int32(*replicas),
 		},
 	})
@@ -108,11 +110,12 @@ func runStackCmd(server string, args []string) {
 	fs := flag.NewFlagSet("stack", flag.ExitOnError)
 	name := fs.String("name", "", "stack name (required)")
 	file := fs.String("f", "", "path to compose file (required)")
-	var secrets, secretMounts stringList
+	var secrets, secretMounts, configs stringList
 	fs.Var(&secrets, "secret", "inject secret as env var `ENV_VAR=secret_name` (repeatable)")
 	fs.Var(&secretMounts, "secret-mount", "mount secret as a file `SERVICE:secret_name[:target[:mode]]` (repeatable)")
+	fs.Var(&configs, "config", "inject config value as env var `ENV_VAR=config_name` (repeatable)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: ctl stack --name NAME -f FILE [--secret ENV_VAR=secret_name] [--secret-mount SERVICE:secret_name[:target[:mode]]]")
+		fmt.Fprintln(os.Stderr, "Usage: ctl stack --name NAME -f FILE [--secret ENV_VAR=secret_name] [--secret-mount SERVICE:secret_name[:target[:mode]]] [--config ENV_VAR=config_name]")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
@@ -139,6 +142,7 @@ func runStackCmd(server string, args []string) {
 			ComposeYaml:  string(data),
 			SecretRefs:   parseSecretRefs(secrets),
 			SecretMounts: parseSecretMounts(secretMounts),
+			ConfigRefs:   parseConfigRefs(configs),
 		},
 	})
 	if err != nil {
@@ -267,6 +271,22 @@ func parseSecretRefs(refs []string) map[string]string {
 			m[k] = v
 		} else {
 			die("invalid --secret %q: expected ENV_VAR=secret_name", kv)
+		}
+	}
+	return m
+}
+
+// parseConfigRefs converts "ENV_VAR=config_name" entries into a map.
+func parseConfigRefs(refs []string) map[string]string {
+	if len(refs) == 0 {
+		return nil
+	}
+	m := make(map[string]string, len(refs))
+	for _, kv := range refs {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			m[k] = v
+		} else {
+			die("invalid --config %q: expected ENV_VAR=config_name", kv)
 		}
 	}
 	return m
