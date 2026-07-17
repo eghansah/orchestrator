@@ -52,11 +52,27 @@ instead of `localhost` and reach each other directly across nodes.
 
 ## 🟡 crond — distributed cron service
 
-DB-backed distributed cron with exactly-once execution via a PostgreSQL unique
-constraint. Deferred for later implementation; notes only, no design doc yet.
+Master schedules cron jobs onto any available node (not leader-only
+execution). Deferred for later implementation; notes only, no design doc yet.
 
+- **Requirements:**
+  - Master/leader decides placement; jobs can run on any available node, not
+    just the leader.
+  - Jobs are tagged per-job as **at-least-once** or **at-most-once** delivery
+    semantics.
+  - Node downtime must affect job execution accordingly — i.e. failure/absence
+    of the node a job would run on has to be accounted for (missed run,
+    reschedule elsewhere, or reported as failed depending on the at-least/
+    at-most-once tag), not silently ignored.
+  - Need a way to view a record of job run status/history (success/failure,
+    which node, timing).
+  - Open question: use Temporal for scheduling/execution/workflow tracking
+    instead of hand-rolling it, vs. the earlier DB-unique-constraint design
+    (see prior notes) — needs re-evaluation against the any-node-placement and
+    at-least/at-most-once requirements.
 - **Needs:** design doc; decide whether the schedule store is Raft state or an
-  external Postgres; leader-only vs. any-node execution; retry/missed-run policy.
+  external Postgres (or Temporal); retry/missed-run policy; job status query
+  API/UI.
 
 ## 🟡 OpenBao secret rotation policies
 
