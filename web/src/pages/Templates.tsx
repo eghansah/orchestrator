@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
@@ -14,7 +14,18 @@ import Select from "@cloudscape-design/components/select";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Table from "@cloudscape-design/components/table";
 import Textarea from "@cloudscape-design/components/textarea";
-import { ClusterState, CreateTemplateRequest, WorkloadTemplate, api, formatAge } from "../api";
+import { ClusterState, CreateTemplateRequest, Volume, WorkloadTemplate, api, formatAge } from "../api";
+import {
+  MountEntry,
+  RefEntry,
+  SecretVolumeEntry,
+  entriesToMounts,
+  entriesToRefs,
+  entriesToSecretVolumes,
+  mountsToEntries,
+  refsToEntries,
+  volumesToSecretEntries,
+} from "../workloadRefs";
 
 interface Props {
   state: ClusterState | null;
@@ -31,19 +42,6 @@ const KIND_OPTIONS = [
 
 const emptyForm = (): CreateTemplateRequest => ({ name: "", description: "", kind: "stack", compose_yaml: "", image: "", insecure_registry: false });
 
-interface RefEntry { envVar: string; name: string }
-
-function refsToEntries(refs?: Record<string, string>): RefEntry[] {
-  return Object.entries(refs ?? {}).map(([envVar, name]) => ({ envVar, name }));
-}
-
-function entriesToRefs(entries: RefEntry[]): Record<string, string> | undefined {
-  const refs: Record<string, string> = {};
-  for (const e of entries) {
-    if (e.envVar) refs[e.envVar] = e.name;
-  }
-  return Object.keys(refs).length ? refs : undefined;
-}
 
 // Phases that mean a deployed workload is still live; in any of these the
 // template's Deploy button becomes Redeploy (which replaces the workload).
@@ -66,11 +64,17 @@ export default function Templates({ state, loading, error, refetch, onNavigate }
   const [form, setForm] = useState<CreateTemplateRequest>(emptyForm());
   const [secretRefRows, setSecretRefRows] = useState<RefEntry[]>([]);
   const [configRefRows, setConfigRefRows] = useState<RefEntry[]>([]);
+  const [secretMountRows, setSecretMountRows] = useState<MountEntry[]>([]);
+  const [containerSecretVolumeRows, setContainerSecretVolumeRows] = useState<SecretVolumeEntry[]>([]);
+  const [otherVolumes, setOtherVolumes] = useState<Volume[]>([]); // non-secret volumes preserved from the loaded template
   const [saving, setSaving] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<WorkloadTemplate | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deploying, setDeploying] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const importFileInputRef = useRef<HTMLInputElement>(null);
 
   function addFlash(type: FlashbarProps.Type, msg: string) {
     const id = String(Date.now());
@@ -94,6 +98,9 @@ export default function Templates({ state, loading, error, refetch, onNavigate }
     setForm(emptyForm());
     setSecretRefRows([]);
     setConfigRefRows([]);
+    setSecretMountRows([]);
+    setContainerSecretVolumeRows([]);
+    setOtherVolumes([]);
     setEditTarget(null);
     setShowNew(true);
   }
@@ -109,6 +116,9 @@ export default function Templates({ state, loading, error, refetch, onNavigate }
     });
     setSecretRefRows(refsToEntries(t.secret_refs));
     setConfigRefRows(refsToEntries(t.config_refs));
+    setSecretMountRows(mountsToEntries(t.secret_mounts));
+    setContainerSecretVolumeRows(volumesToSecretEntries(t.volumes));
+    setOtherVolumes((t.volumes ?? []).filter((v) => v.type !== "secret"));
     setEditTarget(t);
     setShowNew(true);
   }
@@ -119,6 +129,8 @@ export default function Templates({ state, loading, error, refetch, onNavigate }
       ...form,
       secret_refs: entriesToRefs(secretRefRows),
       config_refs: entriesToRefs(configRefRows),
+      secret_mounts: isStack ? entriesToMounts(secretMountRows) : undefined,
+      volumes: isStack ? undefined : entriesToSecretVolumes(containerSecretVolumeRows, otherVolumes),
     };
     setSaving(true);
     try {
@@ -172,6 +184,40 @@ export default function Templates({ state, loading, error, refetch, onNavigate }
     }
   }
 
+  async function handleExportTemplate(t: WorkloadTemplate) {
+    setExporting(t.id);
+    try {
+      const blob = await api.exportTemplate(t.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `template-${t.name}.yaml`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      addFlash("error", String(e));
+    } finally {
+      setExporting(null);
+    }
+  }
+
+  async function handleImportFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file next time
+    if (!file) return;
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const created = await api.importTemplate(text, false);
+      setTemplates((ts) => [...ts, created]);
+      addFlash("success", `Template "${created.name}" imported`);
+    } catch (err) {
+      addFlash("error", String(err));
+    } finally {
+      setImporting(false);
+    }
+  }
+
   const isStack = form.kind === "stack";
 
   return (
@@ -195,6 +241,16 @@ export default function Templates({ state, loading, error, refetch, onNavigate }
           actions={
             <SpaceBetween direction="horizontal" size="xs">
               <Button iconName="refresh" onClick={() => { refetch(); loadTemplates(); }}>Refresh</Button>
+              <Button iconName="upload" loading={importing} onClick={() => importFileInputRef.current?.click()}>
+                Import from file
+              </Button>
+              <input
+                ref={importFileInputRef}
+                type="file"
+                accept=".yaml,.yml"
+                style={{ display: "none" }}
+                onChange={handleImportFile}
+              />
               <Button variant="primary" iconName="add-plus" onClick={openNew}>New template</Button>
             </SpaceBetween>
           }
@@ -229,6 +285,7 @@ export default function Templates({ state, loading, error, refetch, onNavigate }
                     {deployedNames.has(t.name) ? "Redeploy" : "Deploy"}
                   </Button>
                   <Button variant="inline-link" onClick={() => openEdit(t)}>Edit</Button>
+                  <Button variant="inline-link" loading={exporting === t.id} onClick={() => handleExportTemplate(t)}>Export</Button>
                   <Button variant="inline-link" onClick={() => setDeleteTarget(t)}>Delete</Button>
                 </SpaceBetween>
               ),
@@ -334,6 +391,74 @@ export default function Templates({ state, loading, error, refetch, onNavigate }
               </Button>
             </SpaceBetween>
           </FormField>
+          {isStack ? (
+            <FormField
+              label="Secret mounts"
+              description="Mount a secret as a file: service → secret name → target path (default /run/secrets/<secret name>), resolved onto a tmpfs-backed staging dir at deploy time"
+            >
+              <SpaceBetween size="xs">
+                {secretMountRows.map((row, i) => (
+                  <SpaceBetween key={i} direction="horizontal" size="xs">
+                    <Input
+                      value={row.service}
+                      onChange={(e) => setSecretMountRows((rows) => rows.map((r, j) => (j === i ? { ...r, service: e.detail.value } : r)))}
+                      placeholder="service"
+                    />
+                    <Input
+                      value={row.secretName}
+                      onChange={(e) => setSecretMountRows((rows) => rows.map((r, j) => (j === i ? { ...r, secretName: e.detail.value } : r)))}
+                      placeholder="secret_name"
+                    />
+                    <Input
+                      value={row.target}
+                      onChange={(e) => setSecretMountRows((rows) => rows.map((r, j) => (j === i ? { ...r, target: e.detail.value } : r)))}
+                      placeholder="/run/secrets/secret_name"
+                    />
+                    <Input
+                      value={row.mode}
+                      onChange={(e) => setSecretMountRows((rows) => rows.map((r, j) => (j === i ? { ...r, mode: e.detail.value } : r)))}
+                      placeholder="0400"
+                    />
+                    <Button iconName="close" variant="icon" onClick={() => setSecretMountRows((rows) => rows.filter((_, j) => j !== i))} />
+                  </SpaceBetween>
+                ))}
+                <Button iconName="add-plus" onClick={() => setSecretMountRows((rows) => [...rows, { service: "", secretName: "", target: "", mode: "" }])}>
+                  Add secret mount
+                </Button>
+              </SpaceBetween>
+            </FormField>
+          ) : (
+            <FormField
+              label="Secret file mounts"
+              description="Mount a secret as a file at /run/secrets/<secret name> (or a custom target) inside the container, resolved onto a tmpfs-backed staging dir at deploy time. Mode defaults to 0400."
+            >
+              <SpaceBetween size="xs">
+                {containerSecretVolumeRows.map((row, i) => (
+                  <SpaceBetween key={i} direction="horizontal" size="xs">
+                    <Input
+                      value={row.secretName}
+                      onChange={(e) => setContainerSecretVolumeRows((rows) => rows.map((r, j) => (j === i ? { ...r, secretName: e.detail.value } : r)))}
+                      placeholder="secret_name"
+                    />
+                    <Input
+                      value={row.target}
+                      onChange={(e) => setContainerSecretVolumeRows((rows) => rows.map((r, j) => (j === i ? { ...r, target: e.detail.value } : r)))}
+                      placeholder="/run/secrets/secret_name"
+                    />
+                    <Input
+                      value={row.mode}
+                      onChange={(e) => setContainerSecretVolumeRows((rows) => rows.map((r, j) => (j === i ? { ...r, mode: e.detail.value } : r)))}
+                      placeholder="0400"
+                    />
+                    <Button iconName="close" variant="icon" onClick={() => setContainerSecretVolumeRows((rows) => rows.filter((_, j) => j !== i))} />
+                  </SpaceBetween>
+                ))}
+                <Button iconName="add-plus" onClick={() => setContainerSecretVolumeRows((rows) => [...rows, { secretName: "", target: "", mode: "" }])}>
+                  Add secret file mount
+                </Button>
+              </SpaceBetween>
+            </FormField>
+          )}
           <Checkbox
             checked={form.insecure_registry ?? false}
             onChange={(e) => setForm((f) => ({ ...f, insecure_registry: e.detail.checked }))}

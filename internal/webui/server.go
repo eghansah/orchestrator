@@ -196,6 +196,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/templates/{id}/update", a(s.handleUpdateTemplate))
 	mux.Handle("POST /api/templates/{id}/delete", a(s.handleDeleteTemplate))
 	mux.Handle("POST /api/templates/{id}/deploy", a(s.handleDeployTemplate))
+	mux.Handle("GET /api/templates/{id}/export", a(s.handleExportTemplate))
+	mux.Handle("POST /api/templates/import", a(s.handleImportTemplate))
 	mux.Handle("GET /api/containers/{name}/logs", a(s.handleContainerLogs))
 	mux.Handle("GET /api/containers/{name}/inspect", a(s.handleInspectContainer))
 	mux.Handle("POST /api/containers/{name}/restart", a(s.handleRestartContainer))
@@ -652,15 +654,33 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStack(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name        string `json:"name"`
-		ComposeYAML string `json:"compose_yaml"`
+		Name         string            `json:"name"`
+		ComposeYAML  string            `json:"compose_yaml"`
+		SecretRefs   map[string]string `json:"secret_refs,omitempty"`
+		ConfigRefs   map[string]string `json:"config_refs,omitempty"`
+		SecretMounts []secretMountJSON `json:"secret_mounts,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	var secretMounts []*gen.ComposeSecretMount
+	for _, m := range req.SecretMounts {
+		secretMounts = append(secretMounts, &gen.ComposeSecretMount{
+			Service:    m.Service,
+			SecretName: m.SecretName,
+			Target:     m.Target,
+			Mode:       m.Mode,
+		})
+	}
 	resp, err := s.ctrl.SubmitStack(r.Context(), &gen.SubmitStackRequest{
-		Spec: &gen.ComposeStackSpec{Name: req.Name, ComposeYaml: req.ComposeYAML},
+		Spec: &gen.ComposeStackSpec{
+			Name:         req.Name,
+			ComposeYaml:  req.ComposeYAML,
+			SecretRefs:   req.SecretRefs,
+			ConfigRefs:   req.ConfigRefs,
+			SecretMounts: secretMounts,
+		},
 	})
 	if err != nil {
 		st, _ := status.FromError(err)
@@ -2112,16 +2132,32 @@ type templateRequestJSON struct {
 		ContainerPort uint32 `json:"container_port"`
 		Protocol      string `json:"protocol"`
 	} `json:"ports,omitempty"`
-	Volumes []struct {
-		Source   string `json:"source"`
-		Target   string `json:"target"`
-		ReadOnly bool   `json:"read_only"`
-	} `json:"volumes,omitempty"`
+	Volumes          []volumeJSON      `json:"volumes,omitempty"`
 	Labels           map[string]string `json:"labels,omitempty"`
 	Namespace        string            `json:"namespace,omitempty"`
 	InsecureRegistry bool              `json:"insecure_registry,omitempty"`
 	SecretRefs       map[string]string `json:"secret_refs,omitempty"` // env_var_name → secret_name; resolved at placement
 	ConfigRefs       map[string]string `json:"config_refs,omitempty"` // env_var_name → config_name; resolved at placement
+	SecretMounts     []secretMountJSON `json:"secret_mounts,omitempty"`
+}
+
+// volumeJSON mirrors types.VolumeMount. Type "secret" mounts a secret as a
+// file at Target (default "/run/secrets/<Source>") on a container-kind
+// workload; Source is the secret name in that case, resolved from OpenBao at
+// placement time. The stack equivalent is secretMountJSON/ComposeSecretMount.
+type volumeJSON struct {
+	Source   string `json:"source"`
+	Target   string `json:"target,omitempty"`
+	ReadOnly bool   `json:"read_only,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Mode     uint32 `json:"mode,omitempty"`
+}
+
+type secretMountJSON struct {
+	Service    string `json:"service"`
+	SecretName string `json:"secret_name"`
+	Target     string `json:"target,omitempty"`
+	Mode       uint32 `json:"mode,omitempty"`
 }
 
 type templateJSON struct {
@@ -2132,8 +2168,10 @@ type templateJSON struct {
 	ComposeYAML      string            `json:"compose_yaml,omitempty"`
 	Image            string            `json:"image,omitempty"`
 	InsecureRegistry bool              `json:"insecure_registry,omitempty"`
+	Volumes          []volumeJSON      `json:"volumes,omitempty"`
 	SecretRefs       map[string]string `json:"secret_refs,omitempty"`
 	ConfigRefs       map[string]string `json:"config_refs,omitempty"`
+	SecretMounts     []secretMountJSON `json:"secret_mounts,omitempty"`
 	CreatedAt        int64             `json:"created_at"`
 }
 
@@ -2150,12 +2188,29 @@ func templateToJSON(t types.WorkloadTemplate) templateJSON {
 		out.InsecureRegistry = t.Stack.InsecureRegistry
 		out.SecretRefs = t.Stack.SecretRefs
 		out.ConfigRefs = t.Stack.ConfigRefs
+		for _, m := range t.Stack.SecretMounts {
+			out.SecretMounts = append(out.SecretMounts, secretMountJSON{
+				Service:    m.Service,
+				SecretName: m.SecretName,
+				Target:     m.Target,
+				Mode:       m.Mode,
+			})
+		}
 	}
 	if t.Container != nil {
 		out.Image = t.Container.Image
 		out.InsecureRegistry = t.Container.InsecureRegistry
 		out.SecretRefs = t.Container.SecretRefs
 		out.ConfigRefs = t.Container.ConfigRefs
+		for _, v := range t.Container.Volumes {
+			out.Volumes = append(out.Volumes, volumeJSON{
+				Source:   v.Source,
+				Target:   v.Target,
+				ReadOnly: v.ReadOnly,
+				Type:     string(v.Type),
+				Mode:     v.Mode,
+			})
+		}
 	}
 	return out
 }
@@ -2168,12 +2223,21 @@ func templateFromRequest(req templateRequestJSON) (types.WorkloadTemplate, error
 	switch req.Kind {
 	case "stack":
 		t.Kind = types.KindStack
-		t.Stack = &types.ComposeStackSpec{
+		stack := &types.ComposeStackSpec{
 			ComposeYAML:      req.ComposeYAML,
 			InsecureRegistry: req.InsecureRegistry,
 			SecretRefs:       req.SecretRefs,
 			ConfigRefs:       req.ConfigRefs,
 		}
+		for _, m := range req.SecretMounts {
+			stack.SecretMounts = append(stack.SecretMounts, types.ComposeSecretMount{
+				Service:    m.Service,
+				SecretName: m.SecretName,
+				Target:     m.Target,
+				Mode:       m.Mode,
+			})
+		}
+		t.Stack = stack
 	case "container":
 		t.Kind = types.KindContainer
 		spec := types.ContainerSpec{
@@ -2190,7 +2254,13 @@ func templateFromRequest(req templateRequestJSON) (types.WorkloadTemplate, error
 			spec.Ports = append(spec.Ports, types.PortMapping{ContainerPort: p.ContainerPort, Protocol: p.Protocol})
 		}
 		for _, v := range req.Volumes {
-			spec.Volumes = append(spec.Volumes, types.VolumeMount{Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly})
+			spec.Volumes = append(spec.Volumes, types.VolumeMount{
+				Source:   v.Source,
+				Target:   v.Target,
+				ReadOnly: v.ReadOnly,
+				Type:     types.VolumeType(v.Type),
+				Mode:     v.Mode,
+			})
 		}
 		t.Container = &spec
 	default:
@@ -2329,6 +2399,81 @@ func (s *Server) handleDeployTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, resp)
+}
+
+// handleExportTemplate downloads a single template as a portable YAML file,
+// independent of the full-cluster export bundle.
+func (s *Server) handleExportTemplate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	state := s.peer.State()
+	t, ok := state.Templates[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "template not found")
+		return
+	}
+	bundle := export.TemplateFromWorkload(t)
+	data, err := bundle.Marshal()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "marshal: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/yaml")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="template-%s.yaml"`, sanitizeFilename(t.Name)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// handleImportTemplate creates (or, with ?overwrite=true, replaces) a single
+// template from a previously exported single-template YAML file.
+func (s *Server) handleImportTemplate(w http.ResponseWriter, r *http.Request) {
+	overwrite := r.URL.Query().Get("overwrite") == "true"
+	data, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "read body: "+err.Error())
+		return
+	}
+	bundle, err := export.UnmarshalTemplate(data)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	state := s.peer.State()
+	id := newTemplateID()
+	createdAt := time.Now()
+	for _, existing := range state.Templates {
+		if existing.Name != bundle.Template.Name {
+			continue
+		}
+		if !overwrite {
+			writeError(w, http.StatusConflict, fmt.Sprintf("template %q already exists", bundle.Template.Name))
+			return
+		}
+		id = existing.ID
+		createdAt = existing.CreatedAt
+		break
+	}
+
+	t := templateFromEntry(bundle.Template, id, createdAt)
+	if err := s.peer.ApplyTemplate(t); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, templateToJSON(t))
+}
+
+// sanitizeFilename strips characters that would break a Content-Disposition
+// header or be unwelcome in a downloaded filename, keeping alphanumerics,
+// dots, dashes, and underscores.
+func sanitizeFilename(name string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
+			return r
+		default:
+			return '-'
+		}
+	}, name)
 }
 
 func newTemplateID() string {
@@ -3253,36 +3398,12 @@ func (s *Server) applyBundle(ctx context.Context, b *export.Bundle, overwrite bo
 		}
 		var submitErr error
 		if we.Kind == "container" && we.Container != nil {
-			ports := make([]*gen.PortMapping, len(we.Container.Ports))
-			for i, p := range we.Container.Ports {
-				ports[i] = &gen.PortMapping{ContainerPort: p.ContainerPort, Protocol: p.Protocol}
-			}
-			vols := make([]*gen.VolumeMount, len(we.Container.Volumes))
-			for i, v := range we.Container.Volumes {
-				vols[i] = &gen.VolumeMount{Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly}
-			}
 			_, submitErr = s.ctrl.SubmitContainer(ctx, &gen.SubmitContainerRequest{
-				Spec: &gen.ContainerSpec{
-					Name:       we.Container.Name,
-					Image:      we.Container.Image,
-					Command:    we.Container.Command,
-					Env:        we.Container.Env,
-					Ports:      ports,
-					Volumes:    vols,
-					Labels:     we.Container.Labels,
-					Namespace:  we.Container.Namespace,
-					SecretRefs: we.Container.SecretRefs,
-					Replicas:   int32(we.Container.Replicas),
-				},
+				Spec: types.ContainerSpecToProto(*we.Container),
 			})
 		} else if we.Kind == "stack" && we.Stack != nil {
 			_, submitErr = s.ctrl.SubmitStack(ctx, &gen.SubmitStackRequest{
-				Spec: &gen.ComposeStackSpec{
-					Name:        we.Stack.Name,
-					ComposeYaml: we.Stack.ComposeYAML,
-					SecretRefs:  we.Stack.SecretRefs,
-					Replicas:    int32(we.Stack.Replicas),
-				},
+				Spec: types.ComposeStackSpecToProto(*we.Stack),
 			})
 		}
 		if submitErr != nil {
@@ -3431,19 +3552,7 @@ func (s *Server) applyBundle(ctx context.Context, b *export.Bundle, overwrite bo
 			report.Skipped = append(report.Skipped, "template "+te.Name+" already exists")
 			continue
 		}
-		t := types.WorkloadTemplate{
-			ID:          newTemplateID(),
-			Name:        te.Name,
-			Description: te.Description,
-			CreatedAt:   time.Now(),
-		}
-		if te.Kind == "container" && te.Container != nil {
-			t.Kind = types.KindContainer
-			t.Container = te.Container
-		} else if te.Kind == "stack" && te.Stack != nil {
-			t.Kind = types.KindStack
-			t.Stack = te.Stack
-		}
+		t := templateFromEntry(te, newTemplateID(), time.Now())
 		if err := s.peer.ApplyTemplate(t); err != nil {
 			report.Errors = append(report.Errors, "template "+te.Name+": "+err.Error())
 			continue
@@ -3452,4 +3561,24 @@ func (s *Server) applyBundle(ctx context.Context, b *export.Bundle, overwrite bo
 	}
 
 	return report
+}
+
+// templateFromEntry builds a types.WorkloadTemplate from a portable export
+// entry, assigning the given ID and CreatedAt (a fresh ID/timestamp for new
+// templates, or the existing ones to preserve identity on overwrite).
+func templateFromEntry(te export.TemplateEntry, id string, createdAt time.Time) types.WorkloadTemplate {
+	t := types.WorkloadTemplate{
+		ID:          id,
+		Name:        te.Name,
+		Description: te.Description,
+		CreatedAt:   createdAt,
+	}
+	if te.Kind == "container" && te.Container != nil {
+		t.Kind = types.KindContainer
+		t.Container = te.Container
+	} else if te.Kind == "stack" && te.Stack != nil {
+		t.Kind = types.KindStack
+		t.Stack = te.Stack
+	}
+	return t
 }

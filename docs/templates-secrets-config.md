@@ -27,12 +27,13 @@ Or use the **Secrets** and **Config** pages in the web console.
 
 ## Reference them in a template
 
-On the Templates page, open **New template** (or **Edit** on an existing one). Below the image / compose YAML field you'll find two repeatable row editors:
+On the Templates page, open **New template** (or **Edit** on an existing one). Below the image / compose YAML field you'll find repeatable row editors:
 
 - **Secret refs** — `ENV_VAR → secret name`
 - **Config refs** — `ENV_VAR → config value name`
+- **Secret mounts** — `service → secret name → target path → mode` (compose stack templates only)
 
-Each row injects one environment variable, resolved at deploy time.
+Each secret/config ref row injects one environment variable, resolved at deploy time. Secret mounts are different: instead of an env var, the secret's plaintext is written to a file inside the named service's container, staged through a tmpfs-backed directory on the host so it's never persisted to disk. Leave target blank to default to `/run/secrets/<secret name>`, and mode blank to default to `0400`.
 
 ### Container template example
 
@@ -64,9 +65,13 @@ services:
 
 Set the same `DB_PASSWORD` / `DB_HOST` / `DB_PORT` refs on the template as in the container example above.
 
+## One-off stack deploys
+
+The **Workloads** page's **Submit Compose Stack** modal has the same three row editors (Secret refs, Config refs, Secret mounts) for deploying a stack directly, without saving it as a template first.
+
 ## Equivalent `ctl` commands
 
-Templates are web-console-only, but the same refs work for one-off, non-template deploys:
+The same refs also work from the CLI, for one-off, non-template deploys:
 
 ```bash
 ctl run --name billing-api \
@@ -83,4 +88,4 @@ ctl stack --name billing-stack -f docker-compose.yml \
 
 - Config values with no OpenBao configured at all still resolve fine — config resolution never depends on OpenBao's availability.
 - Rotating `db-password` (`ctl secret create` again won't work — use the web console's Secrets page "Edit value", which overwrites the value at the existing OpenBao path) or updating `db-ip` (`ctl config update db-ip --value 10.0.0.6`) takes effect the next time the template is deployed; it does not retroactively affect already-running containers until they're redeployed.
-- `ctl export` / `ctl import` (or the web console's Export/Import page) carries `secret_refs`/`config_refs` on templates through as name references. Config *values* export with their real value (safe to round-trip); secret values never do — you'll need to recreate secrets with real values on the target cluster.
+- `ctl export` / `ctl import` (or the web console's Export/Import page) carries `secret_refs`/`config_refs`/`secret_mounts` on templates through as name references. Config *values* export with their real value (safe to round-trip); secret values never do — you'll need to recreate secrets with real values on the target cluster.

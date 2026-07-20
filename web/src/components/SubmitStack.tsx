@@ -9,6 +9,7 @@ import Modal from "@cloudscape-design/components/modal";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Textarea from "@cloudscape-design/components/textarea";
 import { api } from "../api";
+import { MountEntry, RefEntry, entriesToMounts, entriesToRefs } from "../workloadRefs";
 
 // Returns true if the YAML contains port bindings that expose on all interfaces
 // (i.e. missing the 127.0.0.1: prefix), e.g. "8080:80" or "0.0.0.0:8080:80",
@@ -48,6 +49,9 @@ const empty = { name: "", compose_yaml: "" };
 
 export default function SubmitStack({ visible, onDismiss, onSuccess, onError }: Props) {
   const [fields, setFields] = useState(empty);
+  const [secretRefRows, setSecretRefRows] = useState<RefEntry[]>([]);
+  const [configRefRows, setConfigRefRows] = useState<RefEntry[]>([]);
+  const [secretMountRows, setSecretMountRows] = useState<MountEntry[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
   function set(key: keyof typeof empty) {
@@ -56,6 +60,9 @@ export default function SubmitStack({ visible, onDismiss, onSuccess, onError }: 
 
   function reset() {
     setFields(empty);
+    setSecretRefRows([]);
+    setConfigRefRows([]);
+    setSecretMountRows([]);
   }
 
   async function handleSubmit() {
@@ -68,6 +75,9 @@ export default function SubmitStack({ visible, onDismiss, onSuccess, onError }: 
       const res = await api.submitStack({
         name: fields.name.trim(),
         compose_yaml: fields.compose_yaml,
+        secret_refs: entriesToRefs(secretRefRows),
+        config_refs: entriesToRefs(configRefRows),
+        secret_mounts: entriesToMounts(secretMountRows),
       });
       if (!res.accepted) {
         onError(`Rejected: ${res.reason}`);
@@ -113,6 +123,91 @@ export default function SubmitStack({ visible, onDismiss, onSuccess, onError }: 
               placeholder={PLACEHOLDER_YAML}
               onChange={(e) => set("compose_yaml")(e.detail.value)}
             />
+          </FormField>
+          <FormField
+            label="Secret refs"
+            description="Inject a secret as an env var: ENV_VAR → secret name (resolved from OpenBao at deploy time)"
+          >
+            <SpaceBetween size="xs">
+              {secretRefRows.map((row, i) => (
+                <SpaceBetween key={i} direction="horizontal" size="xs">
+                  <Input
+                    value={row.envVar}
+                    onChange={(e) => setSecretRefRows((rows) => rows.map((r, j) => (j === i ? { ...r, envVar: e.detail.value } : r)))}
+                    placeholder="ENV_VAR"
+                  />
+                  <Input
+                    value={row.name}
+                    onChange={(e) => setSecretRefRows((rows) => rows.map((r, j) => (j === i ? { ...r, name: e.detail.value } : r)))}
+                    placeholder="secret_name"
+                  />
+                  <Button iconName="close" variant="icon" onClick={() => setSecretRefRows((rows) => rows.filter((_, j) => j !== i))} />
+                </SpaceBetween>
+              ))}
+              <Button iconName="add-plus" onClick={() => setSecretRefRows((rows) => [...rows, { envVar: "", name: "" }])}>
+                Add secret ref
+              </Button>
+            </SpaceBetween>
+          </FormField>
+          <FormField
+            label="Config refs"
+            description="Inject a shared config value as an env var: ENV_VAR → config value name (plaintext, resolved at deploy time)"
+          >
+            <SpaceBetween size="xs">
+              {configRefRows.map((row, i) => (
+                <SpaceBetween key={i} direction="horizontal" size="xs">
+                  <Input
+                    value={row.envVar}
+                    onChange={(e) => setConfigRefRows((rows) => rows.map((r, j) => (j === i ? { ...r, envVar: e.detail.value } : r)))}
+                    placeholder="ENV_VAR"
+                  />
+                  <Input
+                    value={row.name}
+                    onChange={(e) => setConfigRefRows((rows) => rows.map((r, j) => (j === i ? { ...r, name: e.detail.value } : r)))}
+                    placeholder="config_value_name"
+                  />
+                  <Button iconName="close" variant="icon" onClick={() => setConfigRefRows((rows) => rows.filter((_, j) => j !== i))} />
+                </SpaceBetween>
+              ))}
+              <Button iconName="add-plus" onClick={() => setConfigRefRows((rows) => [...rows, { envVar: "", name: "" }])}>
+                Add config ref
+              </Button>
+            </SpaceBetween>
+          </FormField>
+          <FormField
+            label="Secret mounts"
+            description="Mount a secret as a file: service → secret name → target path (default /run/secrets/<secret name>), resolved onto a tmpfs-backed staging dir at deploy time"
+          >
+            <SpaceBetween size="xs">
+              {secretMountRows.map((row, i) => (
+                <SpaceBetween key={i} direction="horizontal" size="xs">
+                  <Input
+                    value={row.service}
+                    onChange={(e) => setSecretMountRows((rows) => rows.map((r, j) => (j === i ? { ...r, service: e.detail.value } : r)))}
+                    placeholder="service"
+                  />
+                  <Input
+                    value={row.secretName}
+                    onChange={(e) => setSecretMountRows((rows) => rows.map((r, j) => (j === i ? { ...r, secretName: e.detail.value } : r)))}
+                    placeholder="secret_name"
+                  />
+                  <Input
+                    value={row.target}
+                    onChange={(e) => setSecretMountRows((rows) => rows.map((r, j) => (j === i ? { ...r, target: e.detail.value } : r)))}
+                    placeholder="/run/secrets/secret_name"
+                  />
+                  <Input
+                    value={row.mode}
+                    onChange={(e) => setSecretMountRows((rows) => rows.map((r, j) => (j === i ? { ...r, mode: e.detail.value } : r)))}
+                    placeholder="0400"
+                  />
+                  <Button iconName="close" variant="icon" onClick={() => setSecretMountRows((rows) => rows.filter((_, j) => j !== i))} />
+                </SpaceBetween>
+              ))}
+              <Button iconName="add-plus" onClick={() => setSecretMountRows((rows) => [...rows, { service: "", secretName: "", target: "", mode: "" }])}>
+                Add secret mount
+              </Button>
+            </SpaceBetween>
           </FormField>
           {hasDirectHostBinding(fields.compose_yaml) && (
             <Alert type="warning" header="Direct host binding detected">

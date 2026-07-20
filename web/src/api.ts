@@ -103,6 +103,9 @@ export interface RunRequest {
 export interface StackRequest {
   name: string;
   compose_yaml: string;
+  secret_refs?: Record<string, string>;
+  config_refs?: Record<string, string>;
+  secret_mounts?: SecretMount[];
 }
 
 export interface IngressRule {
@@ -180,6 +183,21 @@ export interface CreateUserRequest {
   username: string; // AD username; no password — authentication is handled by LDAP
 }
 
+export interface SecretMount {
+  service: string;
+  secret_name: string;
+  target?: string;
+  mode?: number;
+}
+
+export interface Volume {
+  source: string;
+  target?: string;
+  read_only?: boolean;
+  type?: string; // "bind" | "volume" | "secret"; empty/omitted treated as "bind"
+  mode?: number; // file perm bits; only meaningful when type === "secret"
+}
+
 export interface WorkloadTemplate {
   id: string;
   name: string;
@@ -188,8 +206,10 @@ export interface WorkloadTemplate {
   compose_yaml?: string;
   image?: string;
   insecure_registry?: boolean;
+  volumes?: Volume[];
   secret_refs?: Record<string, string>;
   config_refs?: Record<string, string>;
+  secret_mounts?: SecretMount[];
   created_at: number; // unix seconds
 }
 
@@ -202,12 +222,13 @@ export interface CreateTemplateRequest {
   command?: string[];
   env?: string[];
   ports?: { container_port: number; protocol: string }[];
-  volumes?: { source: string; target: string; read_only: boolean }[];
+  volumes?: Volume[];
   labels?: Record<string, string>;
   namespace?: string;
   insecure_registry?: boolean;
   secret_refs?: Record<string, string>;
   config_refs?: Record<string, string>;
+  secret_mounts?: SecretMount[];
 }
 
 export interface Registry {
@@ -551,6 +572,21 @@ export const api = {
     request<{ accepted: boolean }>("POST", `/api/templates/${id}/delete`),
   deployTemplate: (id: string) =>
     request<{ accepted: boolean; workload_id?: string; reason?: string }>("POST", `/api/templates/${id}/deploy`),
+  exportTemplate: async (id: string): Promise<Blob> => {
+    const resp = await fetch(getBasePath() + `/api/templates/${id}/export`, {
+      headers: { Authorization: `Bearer ${_token}` },
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`HTTP ${resp.status}: ${text}`);
+    }
+    return resp.blob();
+  },
+  importTemplate: (yamlText: string, overwrite: boolean) =>
+    request<WorkloadTemplate>("POST", `/api/templates/import${overwrite ? "?overwrite=true" : ""}`, undefined, {
+      body: yamlText,
+      contentType: "application/yaml",
+    }),
   getContainerLogs: (name: string, tail = 200) =>
     request<{ logs: string }>("GET", `/api/containers/${encodeURIComponent(name)}/logs?tail=${tail}`),
   inspectContainer: (name: string) =>

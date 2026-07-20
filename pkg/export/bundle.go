@@ -166,26 +166,63 @@ func FromState(state internraft.ClusterState) Bundle {
 	}
 
 	for _, t := range state.Templates {
-		e := TemplateEntry{Name: t.Name, Description: t.Description}
-		switch {
-		case t.Container != nil:
-			e.Kind = "container"
-			spec := *t.Container
-			e.Container = &spec
-		case t.Stack != nil:
-			e.Kind = "stack"
-			spec := *t.Stack
-			e.Stack = &spec
-		}
-		b.Templates = append(b.Templates, e)
+		b.Templates = append(b.Templates, toTemplateEntry(t))
 	}
 
 	return b
 }
 
+func toTemplateEntry(t types.WorkloadTemplate) TemplateEntry {
+	e := TemplateEntry{Name: t.Name, Description: t.Description}
+	switch {
+	case t.Container != nil:
+		e.Kind = "container"
+		spec := *t.Container
+		e.Container = &spec
+	case t.Stack != nil:
+		e.Kind = "stack"
+		spec := *t.Stack
+		e.Stack = &spec
+	}
+	return e
+}
+
 // Marshal serializes the bundle to YAML.
 func (b *Bundle) Marshal() ([]byte, error) {
 	return yaml.Marshal(b)
+}
+
+// TemplateBundle is the portable single-template export format, used to
+// share or back up one template independent of a full cluster bundle.
+type TemplateBundle struct {
+	APIVersion string        `yaml:"api_version"`
+	Template   TemplateEntry `yaml:"template"`
+}
+
+// TemplateFromWorkload builds a single-template export bundle.
+func TemplateFromWorkload(t types.WorkloadTemplate) TemplateBundle {
+	return TemplateBundle{APIVersion: apiVersion, Template: toTemplateEntry(t)}
+}
+
+// Marshal serializes the template bundle to YAML.
+func (b *TemplateBundle) Marshal() ([]byte, error) {
+	return yaml.Marshal(b)
+}
+
+// UnmarshalTemplate parses a YAML-encoded single-template bundle. Returns an
+// error if the api_version is missing/mismatched or the template has no name.
+func UnmarshalTemplate(data []byte) (*TemplateBundle, error) {
+	var b TemplateBundle
+	if err := yaml.Unmarshal(data, &b); err != nil {
+		return nil, fmt.Errorf("parse template bundle: %w", err)
+	}
+	if b.APIVersion != apiVersion {
+		return nil, fmt.Errorf("unsupported api_version %q (expected %q)", b.APIVersion, apiVersion)
+	}
+	if b.Template.Name == "" {
+		return nil, fmt.Errorf("template bundle missing name")
+	}
+	return &b, nil
 }
 
 // Unmarshal parses a YAML-encoded bundle. Returns an error if the api_version
