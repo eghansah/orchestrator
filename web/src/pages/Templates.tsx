@@ -24,6 +24,7 @@ import {
   entriesToSecretVolumes,
   mountsToEntries,
   refsToEntries,
+  validateMountEntries,
   volumesToSecretEntries,
 } from "../workloadRefs";
 
@@ -125,6 +126,10 @@ export default function Templates({ state, loading, error, refetch, onNavigate }
 
   async function handleSave() {
     if (!form.name) { addFlash("error", "Name is required"); return; }
+    if (isStack) {
+      const mountErr = validateMountEntries(secretMountRows);
+      if (mountErr) { addFlash("error", mountErr); return; }
+    }
     const payload: CreateTemplateRequest = {
       ...form,
       secret_refs: entriesToRefs(secretRefRows),
@@ -394,7 +399,7 @@ export default function Templates({ state, loading, error, refetch, onNavigate }
           {isStack ? (
             <FormField
               label="Secret mounts"
-              description="Mount a secret as a file: service → secret name → target path (default /run/secrets/<secret name>), resolved onto a tmpfs-backed staging dir at deploy time"
+              description="Mount a secret as a file: service → secret name → target path (default /run/secrets/<secret name>), resolved onto a tmpfs-backed staging dir at deploy time. Service is the service name as it appears under services: in the Compose YAML above (e.g. web) — the container the secret file gets mounted into."
             >
               <SpaceBetween size="xs">
                 {secretMountRows.map((row, i) => (
@@ -402,7 +407,7 @@ export default function Templates({ state, loading, error, refetch, onNavigate }
                     <Input
                       value={row.service}
                       onChange={(e) => setSecretMountRows((rows) => rows.map((r, j) => (j === i ? { ...r, service: e.detail.value } : r)))}
-                      placeholder="service"
+                      placeholder="service name, e.g. web"
                     />
                     <Input
                       value={row.secretName}

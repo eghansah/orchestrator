@@ -26,6 +26,21 @@ export function entriesToMounts(entries: MountEntry[]): SecretMount[] | undefine
   return mounts.length ? mounts : undefined;
 }
 
+// validateMountEntries flags rows that are half-filled (only one of
+// service/secretName set) so the caller can block save instead of having
+// entriesToMounts silently drop the row.
+export function validateMountEntries(entries: MountEntry[]): string | null {
+  for (const e of entries) {
+    if (e.secretName && !e.service) {
+      return `Secret mount for "${e.secretName}" is missing a service name`;
+    }
+    if (e.service && !e.secretName) {
+      return `Secret mount for service "${e.service}" is missing a secret name`;
+    }
+  }
+  return null;
+}
+
 export interface SecretVolumeEntry { secretName: string; target: string; mode: string }
 
 // volumesToSecretEntries extracts the secret-typed volumes from a container

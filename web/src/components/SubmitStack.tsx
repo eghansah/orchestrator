@@ -9,7 +9,7 @@ import Modal from "@cloudscape-design/components/modal";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Textarea from "@cloudscape-design/components/textarea";
 import { api } from "../api";
-import { MountEntry, RefEntry, entriesToMounts, entriesToRefs } from "../workloadRefs";
+import { MountEntry, RefEntry, entriesToMounts, entriesToRefs, validateMountEntries } from "../workloadRefs";
 
 // Returns true if the YAML contains port bindings that expose on all interfaces
 // (i.e. missing the 127.0.0.1: prefix), e.g. "8080:80" or "0.0.0.0:8080:80",
@@ -70,6 +70,8 @@ export default function SubmitStack({ visible, onDismiss, onSuccess, onError }: 
       onError("Name and Compose YAML are required");
       return;
     }
+    const mountErr = validateMountEntries(secretMountRows);
+    if (mountErr) { onError(mountErr); return; }
     setSubmitting(true);
     try {
       const res = await api.submitStack({
@@ -176,7 +178,7 @@ export default function SubmitStack({ visible, onDismiss, onSuccess, onError }: 
           </FormField>
           <FormField
             label="Secret mounts"
-            description="Mount a secret as a file: service → secret name → target path (default /run/secrets/<secret name>), resolved onto a tmpfs-backed staging dir at deploy time"
+            description="Mount a secret as a file: service → secret name → target path (default /run/secrets/<secret name>), resolved onto a tmpfs-backed staging dir at deploy time. Service is the service name as it appears under services: in the Compose YAML above (e.g. web) — the container the secret file gets mounted into."
           >
             <SpaceBetween size="xs">
               {secretMountRows.map((row, i) => (
@@ -184,7 +186,7 @@ export default function SubmitStack({ visible, onDismiss, onSuccess, onError }: 
                   <Input
                     value={row.service}
                     onChange={(e) => setSecretMountRows((rows) => rows.map((r, j) => (j === i ? { ...r, service: e.detail.value } : r)))}
-                    placeholder="service"
+                    placeholder="service name, e.g. web"
                   />
                   <Input
                     value={row.secretName}
