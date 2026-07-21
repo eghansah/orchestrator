@@ -1203,6 +1203,36 @@ func nerdctlCmd(ctx context.Context, bin, namespace, sockAddr string, args ...st
 	return cmd
 }
 
+// runningImageDigest resolves the manifest digest that the named container's
+// image reference currently points to in the local image store. It does not
+// rely on any locally cached bookkeeping (the ingressd.json/meshrouterd.json
+// state files) — those can be stale, missing, or predate digest tracking
+// entirely, in which case a reconciler that trusts them alone can conclude
+// "no action needed" while the running container is actually serving
+// different content. Returns "" if the container isn't running or its image
+// can't be resolved, so callers should treat "" as "unknown", not "match".
+func runningImageDigest(ctx context.Context, bin, namespace, sockAddr, name string) string {
+	imgOut, err := nerdctlCmd(ctx, bin, namespace, sockAddr,
+		"inspect", "--type=container", "--format", "{{.Image}}", name).Output()
+	if err != nil {
+		return ""
+	}
+	imageRef := strings.TrimSpace(string(imgOut))
+	if imageRef == "" {
+		return ""
+	}
+	digOut, err := nerdctlCmd(ctx, bin, namespace, sockAddr,
+		"inspect", "--type=image", "--format", "{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}", imageRef).Output()
+	if err != nil {
+		return ""
+	}
+	repoDigest := strings.TrimSpace(string(digOut))
+	if i := strings.LastIndex(repoDigest, "@"); i >= 0 {
+		return repoDigest[i+1:]
+	}
+	return ""
+}
+
 // reconcileIngressd ensures the ingressd container is running with the ports
 // specified in cfg. If the container exists with different settings it is stopped
 // and restarted. Called once on startup after the local registry is up.
@@ -1229,6 +1259,17 @@ func reconcileIngressd(ctx context.Context, cfg config) {
 	inspectOut, err := nerdctlCmd(ctx, cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr,
 		"inspect", "--format", "{{.State.Status}}", name).Output()
 	running := err == nil && strings.TrimSpace(string(inspectOut)) == "running"
+
+	// Our own bookkeeping can say "unchanged" while the running container is
+	// actually serving different content (stale/missing/pre-digest state
+	// file). Verify against ground truth before trusting it.
+	if running && !stale && cfg.ingressdImageDigest != "" {
+		if actual := runningImageDigest(ctx, cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr, name); actual != "" && actual != cfg.ingressdImageDigest {
+			slog.Info("ingressd running container's image does not match embedded image, replacing",
+				"running_digest", actual, "expected_digest", cfg.ingressdImageDigest)
+			stale = true
+		}
+	}
 
 	if stale && running {
 		slog.Info("ingressd settings or image changed, replacing container",
@@ -1382,6 +1423,17 @@ func reconcileMeshRouter(ctx context.Context, cfg config, meshAddr, meshCIDR str
 	inspectOut, err := nerdctlCmd(ctx, cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr,
 		"inspect", "--format", "{{.State.Status}}", name).Output()
 	running := err == nil && strings.TrimSpace(string(inspectOut)) == "running"
+
+	// Our own bookkeeping can say "unchanged" while the running container is
+	// actually serving different content (stale/missing/pre-digest state
+	// file). Verify against ground truth before trusting it.
+	if running && !stale && cfg.meshrouterdImageDigest != "" {
+		if actual := runningImageDigest(ctx, cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr, name); actual != "" && actual != cfg.meshrouterdImageDigest {
+			slog.Info("meshrouterd running container's image does not match embedded image, replacing",
+				"running_digest", actual, "expected_digest", cfg.meshrouterdImageDigest)
+			stale = true
+		}
+	}
 
 	if stale && running {
 		slog.Info("meshrouterd settings or image changed, replacing container",
