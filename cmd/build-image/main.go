@@ -135,7 +135,7 @@ func main() {
 	cf = cf.DeepCopy()
 	cf.Config.Entrypoint = []string{ep}
 	cf.Config.Cmd = nil
-	cf.Config.User = "root"
+	cf.Config.User = "0:0"
 	cf.Config.WorkingDir = "/"
 	if *extraEnv != "" {
 		cf.Config.Env = append(cf.Config.Env, strings.Split(*extraEnv, ",")...)
