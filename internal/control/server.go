@@ -287,7 +287,7 @@ func (s *Server) resolveSecrets(ctx context.Context, wl types.Workload) (types.W
 	}
 	if wl.Stack != nil {
 		specCopy := *wl.Stack
-		resolved, err := resolveRefs(specCopy.SecretRefs, nil)
+		resolved, err := resolveRefs(specCopy.SecretRefs, specCopy.ResolvedEnv)
 		if err != nil {
 			return wl, err
 		}

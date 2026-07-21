@@ -120,7 +120,26 @@ func (r *Reconciler) tryPlace(ctx context.Context, wl types.Workload, excluded m
 		return
 	}
 
-	if err := r.ctrl.placeOnNode(ctx, addr, certDER, committed); err != nil {
+	// Resolve config and secret refs into env vars/files before placing, the
+	// same way scheduleAndPlace does for the initial submit — otherwise a
+	// reconciler-driven re-placement (after a crash, reboot, or manual
+	// removal) would run with the refs unresolved.
+	placed, err := r.ctrl.resolveConfigRefs(committed)
+	if err != nil {
+		slog.Warn("reconciler: resolve config failed", "workload", wl.ID, "err", err)
+		committed.Phase = types.PhaseFailed
+		_ = r.ctrl.peer.ApplyWorkload(committed)
+		return
+	}
+	placed, err = r.ctrl.resolveSecrets(ctx, placed)
+	if err != nil {
+		slog.Warn("reconciler: resolve secrets failed", "workload", wl.ID, "err", err)
+		committed.Phase = types.PhaseFailed
+		_ = r.ctrl.peer.ApplyWorkload(committed)
+		return
+	}
+
+	if err := r.ctrl.placeOnNode(ctx, addr, certDER, placed); err != nil {
 		slog.Warn("reconciler: place failed", "workload", wl.ID, "node", nodeID, "err", err)
 		committed.Phase = types.PhaseFailed
 		_ = r.ctrl.peer.ApplyWorkload(committed)
