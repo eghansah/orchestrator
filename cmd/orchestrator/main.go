@@ -105,6 +105,8 @@ type config struct {
 
 func parseFlags() config {
 	var cfg config
+	var showVersion bool
+	flag.BoolVar(&showVersion, "version", false, "print the version and exit")
 	flag.StringVar(&cfg.nodeID, "node-id", "", "unique node identifier (default: hostname)")
 	flag.StringVar(&cfg.grpcAddr, "grpc-addr", "127.0.0.1:7946", "gRPC listen address (host:port)")
 	flag.StringVar(&cfg.raftAddr, "raft-addr", "127.0.0.1:7947", "Raft TCP listen address (host:port)")
@@ -142,6 +144,14 @@ func parseFlags() config {
 	flag.StringVar(&cfg.ldapUserFilter, "ldap-user-filter", "", "LDAP search filter with %%s for username; required when --ldap-group-dn is set (e.g. (sAMAccountName=%%s))")
 	flag.StringVar(&cfg.ldapGroupDN, "ldap-group-dn", "", "optional: restrict login to members of this group DN")
 	flag.Parse()
+
+	if showVersion {
+		fmt.Println(version)
+		os.Exit(0)
+	}
+	if flag.NArg() > 0 {
+		dieOnErr(fmt.Errorf("unexpected argument %q: orchestrator takes no positional arguments (did you mean -%s?)", flag.Arg(0), flag.Arg(0)), "parse flags")
+	}
 
 	if (cfg.webTLSCert == "") != (cfg.webTLSKey == "") {
 		dieOnErr(fmt.Errorf("--web-tls-cert and --web-tls-key must be set together"), "parse flags")

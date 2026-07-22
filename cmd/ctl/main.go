@@ -18,6 +18,9 @@ import (
 const defaultServer = "localhost:7946"
 const defaultWebBase = "http://localhost:7948"
 
+// version is stamped at build time via -ldflags "-X main.version=...".
+var version = "dev"
+
 var (
 	dialTimeout = 10 * time.Second
 	adminToken  string // set in main() from --token flag / env / file
@@ -36,9 +39,12 @@ func main() {
 	webBase := defaultWebBase
 	args := os.Args[1:]
 
-	// Consume --server, --web, and --token before the subcommand.
+	// Consume --server, --web, --token, and --version before the subcommand.
 	for len(args) >= 1 {
 		switch {
+		case args[0] == "--version" || args[0] == "-version":
+			fmt.Println(version)
+			os.Exit(0)
 		case (args[0] == "--server" || args[0] == "-server") && len(args) >= 2:
 			server = args[1]
 			args = args[2:]
@@ -92,6 +98,8 @@ doneFlags:
 		exportCmd(webBase, rest)
 	case "import":
 		importCmd(webBase, rest)
+	case "version":
+		fmt.Println(version)
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -121,11 +129,13 @@ Commands:
   bao     Check OpenBao seal status and submit unseal key shares
   export  Download a portable YAML cluster configuration bundle
   import  Apply a YAML cluster configuration bundle
+  version Print the ctl version
 
 Flags:
   --server HOST:PORT   orchestrator gRPC address (default: localhost:7946)
   --web URL            web console base URL for export/import (default: http://localhost:7948)
   --token TOKEN        admin token (default: ORCHESTRATOR_TOKEN env or ~/.config/orchestrator/token)
+  --version            print the ctl version and exit
 
 Run 'ctl COMMAND --help' for per-command flags.
 `)
