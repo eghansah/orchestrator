@@ -138,9 +138,19 @@ func verifyTmpfs(dir string) error {
 // after verifying root is tmpfs-backed. subdir scopes each file under its
 // owning container (single containers) or compose service (stacks) so
 // multiple secrets/services don't collide. mode defaults to 0400.
+//
+// root is wiped before staging so redeploys start from a clean slate: staged
+// files are written read-only (0400 by default), so without this, rewriting
+// a file staged by a previous deploy would fail to open for write with
+// EACCES even for the owning user, since owner write permission isn't root-
+// exempt. This also drops any secret files a previous deploy staged that the
+// new spec no longer references.
 func stageSecretFiles(root string, files []types.ResolvedSecretFile, subdir func(types.ResolvedSecretFile) string) error {
 	if len(files) == 0 {
 		return nil
+	}
+	if err := os.RemoveAll(root); err != nil {
+		return fmt.Errorf("clear secret staging dir %s: %w", root, err)
 	}
 	if err := verifyTmpfs(root); err != nil {
 		return err

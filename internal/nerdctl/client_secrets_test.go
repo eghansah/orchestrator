@@ -76,6 +76,33 @@ func TestStageSecretFiles_WritesContentAndMode(t *testing.T) {
 	}
 }
 
+// TestStageSecretFiles_RedeployOverwritesReadOnlyFile guards against a
+// redeploy regression: staged files are written 0400 (read-only), so
+// restaging into the same root without clearing it first used to fail with
+// EACCES on the second deploy, since owner write permission isn't
+// root-exempt even for the file's own owner.
+func TestStageSecretFiles_RedeployOverwritesReadOnlyFile(t *testing.T) {
+	root := tmpfsTestDir(t)
+	files := []types.ResolvedSecretFile{
+		{Name: "db-pass", Plaintext: "hunter2"},
+	}
+	subdir := func(types.ResolvedSecretFile) string { return "auth" }
+	if err := stageSecretFiles(root, files, subdir); err != nil {
+		t.Fatalf("first stageSecretFiles: %v", err)
+	}
+	files[0].Plaintext = "hunter3"
+	if err := stageSecretFiles(root, files, subdir); err != nil {
+		t.Fatalf("second stageSecretFiles (redeploy) failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "auth", "db-pass"))
+	if err != nil {
+		t.Fatalf("read restaged file: %v", err)
+	}
+	if string(data) != "hunter3" {
+		t.Errorf("got %q, want %q", data, "hunter3")
+	}
+}
+
 func TestStageSecretFiles_NoFilesIsNoop(t *testing.T) {
 	// A root that doesn't exist and isn't tmpfs would fail verifyTmpfs if
 	// reached; passing no files must short-circuit before that check.
