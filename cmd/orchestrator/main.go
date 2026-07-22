@@ -211,7 +211,18 @@ func main() {
 	}
 	nc, err := nerdctl.NewClient(cfg.nerdctlBin, cfg.namespace, cfg.containerdAddr, cfg.dataDir, nerdctlDNSIP, nerdctlDNSPort)
 	dieOnErr(err, "create nerdctl client")
-	slog.Info("containerd socket", "address", nc.Address())
+	// Resolve cfg.containerdAddr to the address nc actually settled on (nc.NewClient
+	// auto-detects when the flag is empty). reconcileIngressd/reconcileMeshRouter run
+	// their own raw nerdctl invocations via cfg.containerdAddr rather than through nc,
+	// so without this they'd leave it empty and let nerdctl fall back to its own
+	// internal default detection — a separate code path from nc's, which can resolve
+	// to a different address string. nerdctl hashes the address string to pick its
+	// on-disk state directory, so containers created under one resolution and later
+	// operated on under the other end up with split, inconsistent bookkeeping (e.g.
+	// `nerdctl logs` failing with a missing log-config.json even though the container
+	// is running and `nerdctl restart`/`inspect` work fine).
+	cfg.containerdAddr = nc.Address()
+	slog.Info("containerd socket", "address", cfg.containerdAddr)
 	if err := nc.Probe(ctx); err != nil {
 		slog.Error("nerdctl probe failed — is nerdctl installed in rootless mode?", "err", err)
 		os.Exit(1)
