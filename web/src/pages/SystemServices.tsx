@@ -6,6 +6,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Table from "@cloudscape-design/components/table";
 import { api, SystemServiceInfo } from "../api";
+import SystemWarnings from "../components/SystemWarnings";
 
 function statusIndicator(s: SystemServiceInfo["status"]) {
   switch (s) {
@@ -74,6 +75,7 @@ export default function SystemServices() {
 
   return (
     <SpaceBetween size="l">
+      <SystemWarnings />
       <Table
         header={
           <Header

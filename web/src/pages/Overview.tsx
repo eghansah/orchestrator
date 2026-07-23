@@ -4,9 +4,11 @@ import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Container from "@cloudscape-design/components/container";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import Header from "@cloudscape-design/components/header";
+import SpaceBetween from "@cloudscape-design/components/space-between";
 import Spinner from "@cloudscape-design/components/spinner";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import { ClusterState } from "../api";
+import SystemWarnings from "../components/SystemWarnings";
 
 interface Props {
   state: ClusterState | null;
@@ -57,24 +59,27 @@ export default function Overview({ state, loading, error, refetch }: Props) {
 
   return (
     <ContentLayout header={overviewHeader(refetch)}>
-      <Container>
-        <ColumnLayout columns={3} variant="text-grid">
-          <Metric
-            label="Leader"
-            value={
-              state?.is_leader ? (
-                <StatusIndicator type="success">{state.leader_id || "—"}</StatusIndicator>
-              ) : (
-                <StatusIndicator type="warning">
-                  {state?.leader_id || "Electing…"}
-                </StatusIndicator>
-              )
-            }
-          />
-          <Metric label="Nodes" value={nodes} />
-          <Metric label="Workloads" value={`${running} running / ${total} total`} />
-        </ColumnLayout>
-      </Container>
+      <SpaceBetween size="l">
+        <SystemWarnings />
+        <Container>
+          <ColumnLayout columns={3} variant="text-grid">
+            <Metric
+              label="Leader"
+              value={
+                state?.is_leader ? (
+                  <StatusIndicator type="success">{state.leader_id || "—"}</StatusIndicator>
+                ) : (
+                  <StatusIndicator type="warning">
+                    {state?.leader_id || "Electing…"}
+                  </StatusIndicator>
+                )
+              }
+            />
+            <Metric label="Nodes" value={nodes} />
+            <Metric label="Workloads" value={`${running} running / ${total} total`} />
+          </ColumnLayout>
+        </Container>
+      </SpaceBetween>
     </ContentLayout>
   );
 }

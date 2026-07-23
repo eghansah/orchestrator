@@ -412,6 +412,10 @@ export interface SystemServiceInfo {
   controllable: boolean;
 }
 
+export interface SystemDiagnostics {
+  warnings: string[];
+}
+
 // ── Auth token ────────────────────────────────────────────────────────────────
 
 const TOKEN_KEY = "orchestrator_token";
@@ -644,6 +648,7 @@ export const api = {
     request<VolumeInspectResult>("GET", `/api/volumes/${encodeURIComponent(name)}/inspect`),
   getChangelog: () => request<ChangelogRelease[]>("GET", "/api/system/changelog"),
   listSystemServices: () => request<SystemServiceInfo[]>("GET", "/api/system/services"),
+  getSystemDiagnostics: () => request<SystemDiagnostics>("GET", "/api/system/diagnostics"),
   startSystemService: (name: string) =>
     request<{ ok: boolean }>("POST", `/api/system/services/${encodeURIComponent(name)}/start`),
   stopSystemService: (name: string) =>

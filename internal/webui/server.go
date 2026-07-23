@@ -232,6 +232,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/system/services/{name}/start", a(s.handleSystemServiceStart))
 	mux.Handle("POST /api/system/services/{name}/stop", a(s.handleSystemServiceStop))
 	mux.Handle("GET /api/system/changelog", a(s.handleChangelog))
+	mux.Handle("GET /api/system/diagnostics", a(s.handleSystemDiagnostics))
 
 	// SPA: serve embedded dist/ with index.html fallback for client-side routing.
 	sub, _ := fs.Sub(distFS, "dist")
