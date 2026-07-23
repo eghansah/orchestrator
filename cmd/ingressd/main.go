@@ -321,6 +321,7 @@ func (d *daemon) generateHAProxyCfg(cfg ingresscfg.Config) string {
 		} else {
 			fmt.Fprintf(&sb, "    bind %s%s\n", bind, proxyOpt)
 		}
+		sb.WriteString("    capture request header Host len 64\n")
 		for _, b := range routed {
 			id := safeID(b.ID)
 			if b.Host != "" {
