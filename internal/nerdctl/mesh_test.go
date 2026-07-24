@@ -37,12 +37,12 @@ func TestBuildRunArgs_MeshAttach(t *testing.T) {
 		t.Errorf("did not expect --network when mesh disabled: %v", off)
 	}
 
-	// With a mesh network: --network mesh0 present, and immediately after --name
-	// so it precedes image/command.
+	// With a mesh network: attached alongside (not instead of) the default
+	// bridge network, immediately after --name so both precede image/command.
 	on := buildRunArgs("wl-1", spec, pas, "", 0, "mesh0", nil)
-	idx := slices.Index(on, "--network")
-	if idx == -1 || on[idx+1] != "mesh0" {
-		t.Fatalf("expected --network mesh0 in args: %v", on)
+	joinedOn := strings.Join(on, " ")
+	if !strings.Contains(joinedOn, "--network bridge --network mesh0") {
+		t.Fatalf("expected bridge and mesh0 both attached: %v", on)
 	}
 	// Mesh attach must not disturb the existing loopback port publish.
 	joined := strings.Join(on, " ")
@@ -66,7 +66,7 @@ func TestBuildRunArgs_StableWithDNSAndCommand(t *testing.T) {
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"run -d --name api",
-		"--network mesh0",
+		"--network bridge --network mesh0",
 		"-e FOO=bar",
 		"--dns 10.0.0.1 --dns-search svc.local",
 		"--dns-opt port:5353",

@@ -543,17 +543,22 @@ func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types
 
 // buildRunArgs assembles the `nerdctl run` argument list for a managed container.
 // It is pure (no exec) so the command line can be unit-tested. When meshNetwork
-// is non-empty the container is additionally attached to that network so it
-// receives a mesh IP from the node's /24, on top of the existing loopback port
-// publishing used by the proxy. See docs/mesh-network.md. secretMounts are
-// staged host:target:ro bind mounts for secret-typed volumes; like all other
-// flags they must be appended before spec.Image, since `nerdctl run [OPTIONS]
-// IMAGE [COMMAND]` treats anything after IMAGE as the container's own command
-// line rather than a run option.
+// is non-empty the container is attached to it in addition to (not instead of)
+// the default bridge network: a bare `--network meshNetwork` would make the
+// mesh network the container's only network, so its default route — and thus
+// all non-mesh egress, e.g. reaching a plain host on the LAN — would depend on
+// the mesh network's own NAT path rather than the bridge's. Keeping bridge as
+// well means normal egress and the existing loopback port publishing used by
+// the proxy are unaffected; the mesh network only adds a second address for
+// cross-node reachability. See docs/mesh-network.md. secretMounts are staged
+// host:target:ro bind mounts for secret-typed volumes; like all other flags
+// they must be appended before spec.Image, since `nerdctl run [OPTIONS] IMAGE
+// [COMMAND]` treats anything after IMAGE as the container's own command line
+// rather than a run option.
 func buildRunArgs(workloadID string, spec types.ContainerSpec, portAllocations []types.PortAllocation, dnsIP string, dnsPort uint32, meshNetwork string, secretMounts []string) []string {
 	args := []string{"run", "-d", "--name", spec.Name}
 	if meshNetwork != "" {
-		args = append(args, "--network", meshNetwork)
+		args = append(args, "--network", "bridge", "--network", meshNetwork)
 	}
 	for _, env := range spec.Env {
 		args = append(args, "-e", env)
