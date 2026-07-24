@@ -88,6 +88,7 @@ func detectK3s() bool {
 
 func (s *Server) handleSystemDiagnostics(w http.ResponseWriter, _ *http.Request) {
 	warnings := checkPort443Conflict()
+	warnings = append(warnings, checkMeshCIDROverlap(s.peer.State().MeshCIDR)...)
 	if warnings == nil {
 		warnings = []string{}
 	}
