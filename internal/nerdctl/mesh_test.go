@@ -32,14 +32,14 @@ func TestBuildRunArgs_MeshAttach(t *testing.T) {
 	pas := []types.PortAllocation{{ContainerPort: 80, AllocatedPort: 41000, Protocol: "tcp"}}
 
 	// Without a mesh network: no --network flag.
-	off := buildRunArgs("wl-1", spec, pas, "", 0, "")
+	off := buildRunArgs("wl-1", spec, pas, "", 0, "", nil)
 	if slices.Contains(off, "--network") {
 		t.Errorf("did not expect --network when mesh disabled: %v", off)
 	}
 
 	// With a mesh network: --network mesh0 present, and immediately after --name
 	// so it precedes image/command.
-	on := buildRunArgs("wl-1", spec, pas, "", 0, "mesh0")
+	on := buildRunArgs("wl-1", spec, pas, "", 0, "mesh0", nil)
 	idx := slices.Index(on, "--network")
 	if idx == -1 || on[idx+1] != "mesh0" {
 		t.Fatalf("expected --network mesh0 in args: %v", on)
@@ -62,7 +62,7 @@ func TestBuildRunArgs_StableWithDNSAndCommand(t *testing.T) {
 		Command: []string{"sh", "-c", "sleep 1"},
 		Env:     []string{"FOO=bar"},
 	}
-	args := buildRunArgs("wl-2", spec, nil, "10.0.0.1", 5353, "mesh0")
+	args := buildRunArgs("wl-2", spec, nil, "10.0.0.1", 5353, "mesh0", nil)
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"run -d --name api",

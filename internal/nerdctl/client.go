@@ -520,10 +520,7 @@ func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types
 		}
 	}
 
-	args := buildRunArgs(workloadID, spec, portAllocations, c.dnsIP, c.dnsPort, c.meshNet())
-	for _, m := range secretMounts {
-		args = append(args, "-v", m)
-	}
+	args := buildRunArgs(workloadID, spec, portAllocations, c.dnsIP, c.dnsPort, c.meshNet(), secretMounts)
 	insecure := spec.InsecureRegistry || isLocalhostImage(spec.Image)
 
 	hostsDir := ""
@@ -548,8 +545,12 @@ func (c *Client) RunContainer(ctx context.Context, workloadID string, spec types
 // It is pure (no exec) so the command line can be unit-tested. When meshNetwork
 // is non-empty the container is additionally attached to that network so it
 // receives a mesh IP from the node's /24, on top of the existing loopback port
-// publishing used by the proxy. See docs/mesh-network.md.
-func buildRunArgs(workloadID string, spec types.ContainerSpec, portAllocations []types.PortAllocation, dnsIP string, dnsPort uint32, meshNetwork string) []string {
+// publishing used by the proxy. See docs/mesh-network.md. secretMounts are
+// staged host:target:ro bind mounts for secret-typed volumes; like all other
+// flags they must be appended before spec.Image, since `nerdctl run [OPTIONS]
+// IMAGE [COMMAND]` treats anything after IMAGE as the container's own command
+// line rather than a run option.
+func buildRunArgs(workloadID string, spec types.ContainerSpec, portAllocations []types.PortAllocation, dnsIP string, dnsPort uint32, meshNetwork string, secretMounts []string) []string {
 	args := []string{"run", "-d", "--name", spec.Name}
 	if meshNetwork != "" {
 		args = append(args, "--network", meshNetwork)
@@ -580,6 +581,9 @@ func buildRunArgs(workloadID string, spec types.ContainerSpec, portAllocations [
 			mount += ":ro"
 		}
 		args = append(args, "-v", mount)
+	}
+	for _, m := range secretMounts {
+		args = append(args, "-v", m)
 	}
 	for k, v := range spec.Labels {
 		args = append(args, "--label", fmt.Sprintf("%s=%s", k, v))
@@ -770,9 +774,15 @@ func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStac
 	if err := os.WriteFile(composeFile, []byte(composeYAML), 0o600); err != nil {
 		return fmt.Errorf("write compose file: %w", err)
 	}
+	// Passed explicitly to nerdctl below via --env-file: unlike Docker Compose,
+	// nerdctl doesn't reliably auto-discover a .env file sitting next to the
+	// compose file (containerd/nerdctl#1213), so ${VAR} interpolation for
+	// secret/config refs would otherwise fail with "environment variable
+	// needs to be set" even though the file is written right here.
+	envFile := ""
 	if len(spec.ResolvedEnv) > 0 {
 		envContent := strings.Join(spec.ResolvedEnv, "\n") + "\n"
-		envFile := filepath.Join(dir, ".env")
+		envFile = filepath.Join(dir, ".env")
 		if err := os.WriteFile(envFile, []byte(envContent), 0o600); err != nil {
 			return fmt.Errorf("write env file: %w", err)
 		}
@@ -786,7 +796,12 @@ func (c *Client) ComposeUp(ctx context.Context, _ string, spec types.ComposeStac
 			hostsDir = dir
 		}
 	}
-	_, err = c.exec(ctx, spec.InsecureRegistry, hostsDir, "compose", "-f", composeFile, "--project-name", spec.Name, "up", "-d")
+	composeArgs := []string{"compose", "-f", composeFile, "--project-name", spec.Name}
+	if envFile != "" {
+		composeArgs = append(composeArgs, "--env-file", envFile)
+	}
+	composeArgs = append(composeArgs, "up", "-d")
+	_, err = c.exec(ctx, spec.InsecureRegistry, hostsDir, composeArgs...)
 	return err
 }
 

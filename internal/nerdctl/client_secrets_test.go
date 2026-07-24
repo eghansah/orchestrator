@@ -123,12 +123,42 @@ func TestBuildRunArgs_SkipsSecretVolumes(t *testing.T) {
 			{Type: types.VolumeTypeSecret, Source: "db-pass", Target: "/run/secrets/db-pass"},
 		},
 	}
-	args := buildRunArgs("wl-1", spec, nil, "", 0, "")
+	args := buildRunArgs("wl-1", spec, nil, "", 0, "", nil)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "/host/data:/data") {
 		t.Errorf("expected bind mount to be present, got args: %v", args)
 	}
 	if strings.Contains(joined, "db-pass") {
 		t.Errorf("secret volume entry leaked into raw -v args: %v", args)
+	}
+}
+
+// TestBuildRunArgs_SecretMountsPrecedeImage guards against a regression where
+// staged secret bind mounts were appended to the run args after the image
+// name: `nerdctl run [OPTIONS] IMAGE [COMMAND]` treats anything after IMAGE as
+// the container's own command line, not a run option, so a -v flag placed
+// there is silently swallowed instead of mounting the secret.
+func TestBuildRunArgs_SecretMountsPrecedeImage(t *testing.T) {
+	spec := types.ContainerSpec{Name: "web", Image: "example.com/app:latest"}
+	secretMounts := []string{"/run/user/1000/orchestrator/secrets/web/db-pass:/run/secrets/db-pass:ro"}
+	args := buildRunArgs("wl-1", spec, nil, "", 0, "", secretMounts)
+
+	imgIdx, mountIdx := -1, -1
+	for i, a := range args {
+		if a == spec.Image {
+			imgIdx = i
+		}
+		if a == secretMounts[0] {
+			mountIdx = i
+		}
+	}
+	if mountIdx == -1 {
+		t.Fatalf("secret mount missing from args: %v", args)
+	}
+	if imgIdx == -1 {
+		t.Fatalf("image missing from args: %v", args)
+	}
+	if mountIdx > imgIdx {
+		t.Errorf("secret mount at index %d comes after image at index %d; nerdctl would treat it as a container command arg, not a run flag: %v", mountIdx, imgIdx, args)
 	}
 }
