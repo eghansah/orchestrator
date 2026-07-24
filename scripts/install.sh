@@ -19,6 +19,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Read early: the XDG_RUNTIME_DIR persistence loop below checks it before
+# argument parsing (and thus before the "defaults" block) runs.
+DRY_RUN=false
+
 # ── logging ──────────────────────────────────────────────────────────────────
 log()  { printf '[install.sh] %s\n' "$*"; }
 warn() { printf '[install.sh][WARN] %s\n' "$*" >&2; }
